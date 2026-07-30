@@ -47,14 +47,25 @@ jobs:
           rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
 
-      - name: Deploy via SCP
+      - name: Deploy jar
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: deploy_package/
+          source: deploy_package/translator.jar
+          target: ${{ secrets.SERVER_PATH }}
+          command_timeout: 5m
+
+      - name: Deploy ocr-worker + scripts
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: deploy_package/ocr-worker,deploy_package/deploy.ps1
           target: ${{ secrets.SERVER_PATH }}
           strip_components: 1
 
