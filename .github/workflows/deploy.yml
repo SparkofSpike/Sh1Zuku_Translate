@@ -47,21 +47,23 @@ jobs:
           rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
 
-      - name: Deploy via tar+SSH
-        env:
-          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          cat > ~/.ssh/deploy_key << 'KEYEOF'
+${{ secrets.SERVER_SSH_KEY }}
+KEYEOF
           chmod 600 ~/.ssh/deploy_key
-          # Use tar over SSH to avoid Windows SCP issues
-          tar czf - -C deploy_package . | ssh -o StrictHostKeyChecking=no \
-              -o BatchMode=yes \
-              -o ConnectTimeout=30 \
-              -p ${{ secrets.SERVER_PORT }} \
-              -i ~/.ssh/deploy_key \
-              ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-              "tar xzf - -C D:/Sh1ZukuTranslate"
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy via rsync
+        env:
+          PORT: ${{ secrets.SERVER_PORT }}
+          USER: ${{ secrets.SERVER_USER }}
+          HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          rsync -avz --delete -e "ssh -p ${PORT} -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes" \
+            deploy_package/ "${USER}@${HOST}:D:/Sh1ZukuTranslate/"
 
       - name: Restart services
         uses: appleboy/ssh-action@v1
