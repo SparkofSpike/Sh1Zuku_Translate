@@ -68,13 +68,14 @@ jobs:
       - name: Deploy via SCP
         uses: easingthemes/ssh-deploy@v4
         with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
-          remote-host: ${{ secrets.SERVER_HOST }}
-          remote-port: ${{ secrets.SERVER_PORT }}
-          remote-user: ${{ secrets.SERVER_USER }}
-          source: deploy_package/
-          target: ${{ secrets.SERVER_PATH }}
-          remove: true
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          REMOTE_HOST: ${{ secrets.SERVER_HOST }}
+          REMOTE_PORT: ${{ secrets.SERVER_PORT }}
+          REMOTE_USER: ${{ secrets.SERVER_USER }}
+          SOURCE: deploy_package/
+          TARGET: ${{ secrets.SERVER_PATH }}
+          ARGS: -rltgoDzvO
+          EXCLUDE: ""
 
       # ===================== Restart Services =====================
       - name: Restart services on server
