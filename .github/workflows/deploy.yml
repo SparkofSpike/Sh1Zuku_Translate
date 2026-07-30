@@ -1,17 +1,16 @@
-name: Build & Deploy
+name: Build
 
 on:
   push:
     branches: [main, master]
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       # ===================== Checkout =====================
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       # ===================== Build Frontend =====================
       - name: Setup Node.js
@@ -50,10 +49,9 @@ jobs:
         run: |
           cd ShizukuTranslate
           mvn clean package -DskipTests
-          # Rename jar to translator.jar for consistent deployment
           cp target/*.jar target/translator.jar
 
-      # ===================== Package Deployment =====================
+      # ===================== Package =====================
       - name: Package deploy files
         run: |
           mkdir -p deploy_package/logs
@@ -63,33 +61,12 @@ jobs:
           rm -rf deploy_package/ocr-worker/.venv
           rm -rf deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
+          zip -r deploy_package.zip deploy_package/
 
-      # ===================== Deploy to Windows Server =====================
-      - name: Deploy via SCP
-        uses: easingthemes/ssh-deploy@v4
+      # ===================== Upload Artifact =====================
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          REMOTE_HOST: ${{ secrets.SERVER_HOST }}
-          REMOTE_PORT: ${{ secrets.SERVER_PORT }}
-          REMOTE_USER: ${{ secrets.SERVER_USER }}
-          SOURCE: deploy_package/
-          TARGET: ${{ secrets.SERVER_PATH }}
-          ARGS: -rltgoDzvO
-          EXCLUDE: ""
-
-      # ===================== Restart Services =====================
-      - name: Restart services on server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          port: ${{ secrets.SERVER_PORT }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd /d D:\Sh1ZukuTranslate
-            taskkill /f /im java.exe 2>nul
-            taskkill /f /im python.exe 2>nul
-            timeout /t 3 /nobreak >nul
-            start /B python ocr-worker\ocr_server.py > logs\ocr.log 2>&1
-            timeout /t 5 /nobreak >nul
-            start /B java -jar translator.jar > logs\backend.log 2>&1
+          name: shizuku-deploy
+          path: deploy_package.zip
+          retention-days: 7
