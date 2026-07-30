@@ -7,12 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      # ===================== Checkout =====================
       - uses: actions/checkout@v4
 
-      # ===================== Build Frontend =====================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -20,53 +17,62 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ShizukuTranslate-frontend/package-lock.json
 
-      - name: Install frontend dependencies
-        run: |
-          cd ShizukuTranslate-frontend
-          npm ci
-
       - name: Build frontend
         run: |
           cd ShizukuTranslate-frontend
-          npm run build
+          npm ci && npm run build
 
-      # ===================== Copy to Backend Static =====================
-      - name: Copy frontend dist to backend static
+      - name: Copy to backend static
         run: |
           rm -rf ShizukuTranslate/src/main/resources/static
           mkdir -p ShizukuTranslate/src/main/resources/static
           cp -r ShizukuTranslate-frontend/dist/* ShizukuTranslate/src/main/resources/static/
 
-      # ===================== Build Backend =====================
-      - name: Setup JDK 21
+      - name: Build backend
         uses: actions/setup-java@v4
         with:
           java-version: 21
           distribution: 'temurin'
           cache: 'maven'
-
-      - name: Build backend with Maven
-        run: |
+      - run: |
           cd ShizukuTranslate
           mvn clean package -DskipTests
           cp target/*.jar target/translator.jar
 
-      # ===================== Package =====================
-      - name: Package deploy files
+      - name: Package
         run: |
           mkdir -p deploy_package/logs
           cp ShizukuTranslate/target/translator.jar deploy_package/
           cp -r ocr-worker deploy_package/
-          rm -rf deploy_package/ocr-worker/venv
-          rm -rf deploy_package/ocr-worker/.venv
-          rm -rf deploy_package/ocr-worker/__pycache__
+          rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
-          zip -r deploy_package.zip deploy_package/
 
-      # ===================== Upload Artifact =====================
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - name: Deploy via SCP
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+          PORT: ${{ secrets.SERVER_PORT }}
+          USER: ${{ secrets.SERVER_USER }}
+          TARGET: ${{ secrets.SERVER_PATH }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no -P "$PORT" -i ~/.ssh/deploy_key \
+              -r deploy_package/* "${USER}@${HOST}:${TARGET}/"
+
+      - name: Restart services
+        uses: appleboy/ssh-action@v1
         with:
-          name: shizuku-deploy
-          path: deploy_package.zip
-          retention-days: 7
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /d D:\Sh1ZukuTranslate
+            taskkill /f /im java.exe 2>nul
+            taskkill /f /im python.exe 2>nul
+            timeout /t 3 /nobreak >nul
+            start /B python ocr-worker\ocr_server.py > logs\ocr.log 2>&1
+            timeout /t 5 /nobreak >nul
+            start /B java -jar translator.jar > logs\backend.log 2>&1
