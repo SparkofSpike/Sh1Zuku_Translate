@@ -1,4 +1,4 @@
-name: Build & Deploy
+name: Build
 
 on:
   push:
@@ -46,31 +46,23 @@ jobs:
           cp -r ocr-worker deploy_package/
           rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
-          # Compress jar to speed up transfer
-          gzip -k deploy_package/translator.jar
+          # Create compressed archive for transfer
+          tar czf deploy_package.tar.gz -C deploy_package .
+          # Split into 4MB chunks to avoid Windows SCP issues
+          split -b 4m deploy_package.tar.gz deploy_chunk_
+          ls -la deploy_chunk_*
 
-      - name: Deploy ocr-worker + scripts (small files)
+      - name: Upload chunks
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: deploy_package/ocr-worker,deploy_package/deploy.ps1,deploy_package/logs
-          target: ${{ secrets.SERVER_PATH }}
-          strip_components: 1
-
-      - name: Deploy jar (compressed)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          port: ${{ secrets.SERVER_PORT }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: deploy_package/translator.jar.gz
+          source: deploy_chunk_*
           target: ${{ secrets.SERVER_PATH }}
 
-      - name: Decompress and restart
+      - name: Reassemble and restart
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -79,7 +71,10 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /d D:\Sh1ZukuTranslate
-            gzip -d -f translator.jar.gz 2>nul
+            powershell -Command "$chunks=Get-ChildItem deploy_chunk_*|Sort-Object Name;$data=@();foreach($c in $chunks){$data+=[System.IO.File]::ReadAllBytes($c.FullName);del $c.FullName};[System.IO.File]::WriteAllBytes('pkg.tgz',$data)"
+            gzip -d -f pkg.tgz 2>nul
+            tar xf pkg.tar 2>nul
+            del pkg.tar 2>nul
             taskkill /f /im java.exe 2>nul
             taskkill /f /im python.exe 2>nul
             timeout /t 3 /nobreak >nul
