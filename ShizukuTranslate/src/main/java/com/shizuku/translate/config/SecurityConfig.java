@@ -27,7 +27,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/api/v1/presets").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
-                        .requestMatchers("/api/v1/stats/**").permitAll()
+                        // .requestMatchers("/api/v1/stats/**").permitAll() — removed, restricted to authenticated users only
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().permitAll()
                 )
