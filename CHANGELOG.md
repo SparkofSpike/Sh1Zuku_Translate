@@ -41,9 +41,18 @@
 - `.github/workflows/deploy.ps1`：Windows 服务器手动重启脚本
 - CI 构建验证通过：后端 `mvn compile` ✅，前端 `npm run build` ✅
 
+### 后续修复 (2026-07-30)
+- **SSE 流式修复**：`api/index.ts` 中 `translateStream()` 的 `fetch` 请求缺少 JWT Token 头，导致后端返回 401 卡死。同时 Spring Boot 的 `SseEmitter` 发送 `data:{...}`（冒号后无空格），前端 `startsWith('data: ')` 无法匹配，所有 SSE 事件被静默忽略。修复 Token 传递 + 改用 `startsWith('data:')` 兼容两种格式
+- **doneReceived 标记**：后端关闭 SSE 连接后 `fetch` 误抛网络错误覆盖翻译结果，增加 `doneReceived` 标记，done 后忽略所有后续错误
+- **三态按钮**：翻译按钮改为三态：
+  - `idle` → 「开始翻译」（默认）
+  - `preparing` → 「网页处理中... 点击取消」（红色，`#e03131`）
+  - `ai-processing` → 「AI 处理中... 点击取消」（蓝色，`#1971c2`）
+  - 任意阶段点击按钮取消翻译（中断 HTTP 请求或 SSE 流）
+- **服务器持久化**：解决 Windows SSH 断开后 `start /B` 进程被杀问题，改用 `schtasks /run` 直接运行 Java，确保服务持续运行
+
 ### 已知限制
 - 自动部署因雨云（宿迁）网络限制无法正常工作：
   - 出站：`github.com` / `api.github.com` DNS 被劫持至 `218.93.206.123`
   - 入站：GitHub Actions 所在 IP（美国）无法 SSH 连接服务器
   - 替代方案：使用本地 `ship.py` 进行部署
-- 前端 SSR 流式翻译功能已实现但尚未在前端界面中集成触发按钮
