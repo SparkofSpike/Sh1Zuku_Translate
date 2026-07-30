@@ -44,6 +44,8 @@ export function translateStream(
     headers['Authorization'] = 'Bearer ' + token
   }
 
+  let doneReceived = false
+
   fetch(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
@@ -72,13 +74,16 @@ export function translateStream(
           try {
             const parsed = JSON.parse(data)
             if (parsed.token) onToken(parsed.token)
-            if (parsed.done) onDone(parsed as unknown as TranslateResponse)
-            if (parsed.error) onError(parsed.error)
+            if (parsed.done) { doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
+            if (parsed.error) { doneReceived = true; onError(parsed.error) }
           } catch (e) {}
         }
       }
     }
-  }).catch(err => onError(err.message))
+    if (!doneReceived) onDone({ id: 0, translatedText: '', model: '', createdAt: '' } as TranslateResponse)
+  }).catch(err => {
+    if (!doneReceived) onError(err.message)
+  })
 
   return controller
 }
