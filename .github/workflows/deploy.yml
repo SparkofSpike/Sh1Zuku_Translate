@@ -47,21 +47,17 @@ jobs:
           rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
           cp .github/workflows/deploy.ps1 deploy_package/
 
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          cat > ~/.ssh/deploy_key << 'KEYEOF'
-${{ secrets.SERVER_SSH_KEY }}
-KEYEOF
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-
-      - name: Deploy via rsync
+      - name: Deploy
         env:
+          KEY: ${{ secrets.SERVER_SSH_KEY }}
           PORT: ${{ secrets.SERVER_PORT }}
           USER: ${{ secrets.SERVER_USER }}
           HOST: ${{ secrets.SERVER_HOST }}
         run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null
           rsync -avz --delete -e "ssh -p ${PORT} -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes" \
             deploy_package/ "${USER}@${HOST}:D:/Sh1ZukuTranslate/"
 
