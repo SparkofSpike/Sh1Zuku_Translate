@@ -1,0 +1,114 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ===================== Checkout =====================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ===================== Build Frontend =====================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: ShizukuTranslate-frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd ShizukuTranslate-frontend
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd ShizukuTranslate-frontend
+          npm run build
+
+      # ===================== Copy to Backend Static =====================
+      - name: Copy frontend dist to backend static
+        run: |
+          rm -rf ShizukuTranslate/src/main/resources/static
+          mkdir -p ShizukuTranslate/src/main/resources/static
+          cp -r ShizukuTranslate-frontend/dist/* ShizukuTranslate/src/main/resources/static/
+
+      # ===================== Build Backend =====================
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build backend with Maven
+        run: |
+          cd ShizukuTranslate
+          mvn clean package -DskipTests
+
+      # ===================== Package Deployment =====================
+      - name: Package deploy files
+        run: |
+          mkdir -p deploy_package/logs
+          # JAR
+          cp ShizukuTranslate/target/*.jar deploy_package/translator.jar
+          # OCR worker
+          cp -r ocr-worker deploy_package/
+          # Remove any venv from ocr-worker (not needed for deployment)
+          rm -rf deploy_package/ocr-worker/venv
+          rm -rf deploy_package/ocr-worker/.venv
+          rm -rf deploy_package/ocr-worker/__pycache__
+          # Start script (kept for reference, server uses deploy.ps1)
+          cp start.sh deploy_package/
+          # Windows deployment script
+          cp .github/workflows/deploy.ps1 deploy_package/
+
+      # ===================== Deploy to Windows Server =====================
+      - name: Deploy via SCP
+        uses: easingthemes/ssh-deploy@v4
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+          remote-host: ${{ secrets.SERVER_HOST }}
+          remote-port: ${{ secrets.SERVER_PORT }}
+          remote-user: ${{ secrets.SERVER_USER }}
+          source: deploy_package/
+          target: ${{ secrets.SERVER_PATH }}
+          # Remove old files before copying
+          remove: true
+
+      # ===================== Restart Services =====================
+      - name: Restart services on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ${{ secrets.SERVER_PATH }}
+
+            # Stop existing services
+            echo "Stopping services..."
+            taskkill /f /im java.exe 2>nul & echo Java stopped || echo Java not running
+            taskkill /f /im python.exe 2>nul & echo Python stopped || echo Python not running
+
+            # Wait a moment for ports to release
+            timeout /t 3 /nobreak
+
+            # Start OCR service
+            echo "Starting OCR service..."
+            start /B python ocr-worker\ocr_server.py > logs\ocr.log 2>&1
+
+            # Wait for OCR to initialize
+            timeout /t 5 /nobreak
+
+            # Start Java backend
+            echo "Starting Java backend..."
+            start /B java -jar translator.jar > logs\backend.log 2>&1
+
+            echo "Deployment complete!"
