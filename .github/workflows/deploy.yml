@@ -58,8 +58,8 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -P "$PORT" -i ~/.ssh/deploy_key \
-              -r deploy_package/* "${USER}@${HOST}:${TARGET}/"
+          scp -o StrictHostKeyChecking=no -o BatchMode=yes -P "$PORT" -i ~/.ssh/deploy_key \
+              -r deploy_package/. "${USER}@${HOST}:${TARGET}/"
 
       - name: Restart services
         uses: appleboy/ssh-action@v1
