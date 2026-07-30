@@ -2,10 +2,8 @@
   <div class="card">
     <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
 
-    <!-- ====== 图片拖拽/粘贴上传区 ====== -->
     <ImageUploader @file-selected="handleImageFile" />
 
-    <!-- ====== OCR 预览 ====== -->
     <OcrPreview
       v-if="ocrPreview"
       :preview="ocrPreview"
@@ -20,7 +18,6 @@
 
     <p v-if="ocrError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ ocrError }}</p>
 
-    <!-- ====== 小说翻译 ====== -->
     <h2 style="margin-top:24px; font-weight:600;">小说翻译</h2>
 
     <textarea
@@ -54,13 +51,18 @@
       style="margin-top:16px;"
     ></textarea>
 
-    <button @click="translate" :disabled="loading || !sourceText.trim()" style="margin-top:16px;">
-      {{ loading ? '翻译中...' : '开始翻译' }}
+    <button
+      @click="status === 'idle' ? translate() : cancel()"
+      :disabled="false"
+      :style="{ marginTop: '16px', background: status !== 'idle' ? '#e03131' : undefined, borderColor: status !== 'idle' ? '#e03131' : undefined }"
+    >
+      <template v-if="status === 'preparing'">⏳ 网页处理中... 点击取消</template>
+      <template v-else-if="status === 'ai-processing'">🤖 AI 处理中... 点击取消</template>
+      <template v-else>开始翻译</template>
     </button>
 
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
 
-    <!-- ====== 翻译结果 ====== -->
     <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" />
     <TranslateResult v-else-if="result" :result="result" />
   </div>
@@ -68,6 +70,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import axios from 'axios'
 import api, { ocrImage, translateStream } from '../api'
 import type { TranslateResponse } from '../types'
 import ImageUploader from '../components/ImageUploader.vue'
@@ -83,14 +86,18 @@ const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
 
 const result = ref<TranslateResponse | null>(null)
-const loading = ref(false)
 const error = ref('')
+
+const status = ref<'idle' | 'preparing' | 'ai-processing'>('idle')
 
 // SSE streaming
 const streamingEnabled = ref(true)
 const useStreaming = ref(false)
 const streamingText = ref('')
 const streamingResult = ref<TranslateResponse | null>(null)
+
+// Cancel
+let cancelFn: (() => void) | null = null
 
 // OCR related
 const ocrPreview = ref<string | null>(null)
@@ -146,9 +153,15 @@ async function doOcr() {
   }
 }
 
+function cancel() {
+  if (cancelFn) cancelFn()
+  status.value = 'idle'
+  error.value = ''
+}
+
 async function translate() {
   if (!sourceText.value.trim()) return
-  loading.value = true
+  status.value = 'preparing'
   error.value = ''
 
   if (streamingEnabled.value) {
@@ -157,37 +170,65 @@ async function translate() {
     streamingResult.value = null
     result.value = null
 
-    translateStream(
+    const ctrl = translateStream(
       sourceText.value,
       model.value,
       customPrompt.value || undefined,
       selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
-      (token: string) => { streamingText.value += token },
+      (token: string) => {
+        if (status.value === 'preparing') status.value = 'ai-processing'
+        streamingText.value += token
+      },
       (response: TranslateResponse) => {
         streamingResult.value = response
-        loading.value = false
+        status.value = 'idle'
+        cancelFn = null
       },
       (err: string) => {
         error.value = err
-        loading.value = false
+        status.value = 'idle'
+        cancelFn = null
       }
     )
+
+    cancelFn = () => {
+      ctrl.abort()
+      status.value = 'idle'
+      cancelFn = null
+    }
   } else {
+    // Sync mode
     useStreaming.value = false
     streamingText.value = ''
     streamingResult.value = null
+    result.value = null
+
+    const source = axios.CancelToken.source()
+    cancelFn = () => {
+      source.cancel('用户取消')
+      status.value = 'idle'
+      cancelFn = null
+    }
+
+    // Brief delay so user sees "网页处理中..."
+    await new Promise(r => setTimeout(r, 300))
+
     try {
+      if (status.value !== 'preparing') return // was cancelled during delay
+      status.value = 'ai-processing'
       const res = await api.post<TranslateResponse>('/translate', {
         sourceText: sourceText.value,
         model: model.value,
         customPrompt: customPrompt.value || undefined,
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
-      })
+      }, { cancelToken: source.token })
       result.value = res.data
     } catch (e: any) {
+      if (axios.isCancel(e)) return
       error.value = e.response?.data?.error || '翻译失败'
     } finally {
-      loading.value = false
+      if (status.value !== 'idle') status.value = 'idle'
+      cancelFn = null
     }
   }
 }

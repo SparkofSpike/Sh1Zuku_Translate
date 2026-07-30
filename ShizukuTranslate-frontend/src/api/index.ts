@@ -38,7 +38,6 @@ export function translateStream(
   onError: (error: string) => void
 ): AbortController {
   const controller = new AbortController()
-
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) {
@@ -67,12 +66,13 @@ export function translateStream(
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
+        if (line.startsWith('data:') || line.startsWith('data: ')) {
+          const data = line.slice(line.indexOf(':') + 1).trim()
+          if (!data) continue
           try {
             const parsed = JSON.parse(data)
             if (parsed.token) onToken(parsed.token)
-            if (parsed.done) onDone(parsed)
+            if (parsed.done) onDone(parsed as unknown as TranslateResponse)
             if (parsed.error) onError(parsed.error)
           } catch (e) {}
         }
