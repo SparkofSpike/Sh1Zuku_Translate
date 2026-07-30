@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""
+ShizukuTranslate — 本地一键部署脚本
+
+用法:
+    python ship.py              # 完整部署（pull + 编译 + 上传 + 重启）
+    python ship.py --skip-pull  # 跳过 git pull
+    python ship.py --upload-only # 只上传已编译好的包
+    python ship.py --help       # 查看帮助
+
+环境要求:
+    - Python 3.8+
+    - Node.js 20+  (前端构建)
+    - JDK 21      (后端构建)
+    - Maven       (后端构建)
+    - OpenSSH     (scp/ssh 上传)
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# ======================== 配置 ========================
+# 服务器连接
+SERVER_HOST = "ad.rainplay.cn"
+SERVER_PORT = 22591
+SERVER_USER = "Administrator"
+SSH_KEY = str(Path.home() / ".ssh" / "id_rsa")
+SERVER_PATH = "D:/Sh1ZukuTranslate"
+
+# 项目路径
+PROJECT_ROOT = Path(__file__).resolve().parent
+FRONTEND_DIR = PROJECT_ROOT / "ShizukuTranslate-frontend"
+BACKEND_DIR = PROJECT_ROOT / "ShizukuTranslate"
+STATIC_DIR = BACKEND_DIR / "src" / "main" / "resources" / "static"
+DEPLOY_DIR = PROJECT_ROOT / "deploy_package"
+
+
+# ======================== 工具函数 ========================
+def log(msg: str, ok: bool = True):
+    """带颜色的日志输出"""
+    icon = "✅" if ok else "❌"
+    print(f"  {icon} {msg}")
+
+
+def run(cmd: list, cwd: Path | None = None, capture: bool = False) -> subprocess.CompletedProcess:
+    """执行命令"""
+    print(f"  $ {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, cwd=cwd, capture_output=capture, text=True, check=False)
+        if result.returncode != 0:
+            if capture:
+                print(f"    stderr: {result.stderr.strip()}")
+            return result
+        return result
+    except FileNotFoundError as e:
+        print(f"    [ERROR] 命令未找到: {e}")
+        sys.exit(1)
+
+
+def check_tool(name: str, cmd: list[str]) -> str | None:
+    """检查工具是否可用"""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            return result.stdout.strip().split("\n")[0]
+    except FileNotFoundError:
+        pass
+    return None
+
+
+# ======================== 构建步骤 ========================
+def step_git_pull():
+    """拉取最新代码"""
+    print("\n[1/7] 拉取最新代码...")
+    run(["git", "pull"], cwd=PROJECT_ROOT)
+    log("代码已更新")
+
+
+def step_build_frontend():
+    """构建前端"""
+    print("\n[2/7] 构建前端...")
+    npm = check_tool("npm", ["npm", "--version"])
+    if not npm:
+        log("npm 未安装，跳过前端构建", ok=False)
+        return False
+    log(f"npm {npm}")
+
+    # 安装依赖
+    run(["npm", "ci"], cwd=FRONTEND_DIR, capture=True)
+    # 构建
+    run(["npm", "run", "build"], cwd=FRONTEND_DIR, capture=True)
+    log("前端构建完成")
+    return True
+
+
+def step_copy_static():
+    """复制前端产物到后端"""
+    print("\n[3/7] 复制前端到后端静态目录...")
+    if STATIC_DIR.exists():
+        shutil.rmtree(STATIC_DIR)
+    STATIC_DIR.mkdir(parents=True)
+
+    dist_dir = FRONTEND_DIR / "dist"
+    if not dist_dir.exists():
+        log("dist 目录不存在，跳过", ok=False)
+        return False
+
+    for item in dist_dir.iterdir():
+        dest = STATIC_DIR / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+    log("静态文件已复制")
+    return True
+
+
+def step_build_backend():
+    """构建后端"""
+    print("\n[4/7] 构建后端...")
+    java = check_tool("java", ["java", "--version"])
+    mvn = check_tool("mvn", ["mvn", "--version"])
+    if not java:
+        log("JDK 未安装", ok=False)
+        return False
+    if not mvn:
+        log("Maven 未安装", ok=False)
+        return False
+
+    # Maven 构建
+    run(["mvn", "clean", "package", "-DskipTests"], cwd=BACKEND_DIR, capture=True)
+
+    # 复制为固定文件名
+    target_jar = list((BACKEND_DIR / "target").glob("*.jar"))
+    if target_jar:
+        shutil.copy2(target_jar[0], BACKEND_DIR / "target" / "translator.jar")
+        log(f"后端构建完成: {target_jar[0].name}")
+    else:
+        log("未找到构建产物", ok=False)
+        return False
+    return True
+
+
+def step_package():
+    """打包部署文件"""
+    print("\n[5/7] 打包部署文件...")
+    if DEPLOY_DIR.exists():
+        shutil.rmtree(DEPLOY_DIR)
+    DEPLOY_DIR.mkdir(parents=True)
+    (DEPLOY_DIR / "logs").mkdir()
+
+    # jar
+    jar_src = BACKEND_DIR / "target" / "translator.jar"
+    if jar_src.exists():
+        shutil.copy2(jar_src, DEPLOY_DIR / "translator.jar")
+
+    # ocr-worker
+    ocr_src = PROJECT_ROOT / "ocr-worker"
+    ocr_dst = DEPLOY_DIR / "ocr-worker"
+    shutil.copytree(ocr_src, ocr_dst, ignore=shutil.ignore_patterns("venv", ".venv", "__pycache__"))
+
+    # deploy 脚本
+    ps1_src = PROJECT_ROOT / ".github" / "workflows" / "deploy.ps1"
+    if ps1_src.exists():
+        shutil.copy2(ps1_src, DEPLOY_DIR / "deploy.ps1")
+
+    log("部署包已打包")
+    return True
+
+
+def step_upload():
+    """SCP 上传到服务器"""
+    print("\n[6/7] 上传到服务器...")
+    if not Path(SSH_KEY).exists():
+        log(f"SSH 密钥不存在: {SSH_KEY}", ok=False)
+        return False
+
+    # 先停止服务
+    stop_script = (
+        f'taskkill /f /im java.exe 2>nul & '
+        f'taskkill /f /im python.exe 2>nul'
+    )
+    subprocess.run([
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-p", str(SERVER_PORT),
+        "-i", SSH_KEY,
+        f"{SERVER_USER}@{SERVER_HOST}",
+        stop_script
+    ], capture_output=True, text=True, check=False)
+    log("旧服务已停止")
+
+    # SCP 上传
+    result = subprocess.run([
+        "scp", "-o", "StrictHostKeyChecking=no",
+        "-P", str(SERVER_PORT),
+        "-i", SSH_KEY,
+        "-r", str(DEPLOY_DIR / "*"),
+        f"{SERVER_USER}@{SERVER_HOST}:{SERVER_PATH}/"
+    ], capture_output=True, text=True, check=False)
+
+    if result.returncode != 0:
+        log(f"SCP 上传失败: {result.stderr.strip()}", ok=False)
+        return False
+
+    log("文件已上传")
+    return True
+
+
+def step_restart():
+    """SSH 重启服务"""
+    print("\n[7/7] 重启服务...")
+    python_path = r"C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+
+    restart_script = (
+        f'cd /d {SERVER_PATH} && '
+        f'start /B "" {python_path} ocr-worker\\ocr_server.py > logs\\ocr.log 2>&1 && '
+        f'timeout /t 5 /nobreak >nul && '
+        f'start /B "" java -jar translator.jar > logs\\backend.log 2>&1'
+    )
+
+    result = subprocess.run([
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-p", str(SERVER_PORT),
+        "-i", SSH_KEY,
+        f"{SERVER_USER}@{SERVER_HOST}",
+        restart_script
+    ], capture_output=True, text=True, check=False)
+
+    if result.returncode != 0 and result.returncode != 1:
+        # SSH 返回 1 在某些 Windows 版本是正常的
+        log(f"SSH 重启可能有警告: {result.stderr.strip()}", ok=False)
+
+    # 等几秒验证
+    time.sleep(10)
+
+    # 验证
+    verify = subprocess.run([
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-p", str(SERVER_PORT),
+        "-i", SSH_KEY,
+        f"{SERVER_USER}@{SERVER_HOST}",
+        f"netstat -ano | findstr 5566"
+    ], capture_output=True, text=True, check=False)
+
+    if "LISTENING" in verify.stdout:
+        log("服务已启动 (端口 5566)")
+        log("网站: http://ad.rainplay.cn:15066")
+        return True
+    else:
+        log("服务可能未正常启动，请手动检查服务器", ok=False)
+        return False
+
+
+# ======================== 主流程 ========================
+def main():
+    parser = argparse.ArgumentParser(description="ShizukuTranslate 一键部署")
+    parser.add_argument("--skip-pull", action="store_true", help="跳过 git pull")
+    parser.add_argument("--upload-only", action="store_true", help="只上传已编译好的包")
+    args = parser.parse_args()
+
+    print("=" * 52)
+    print("  ShizukuTranslate — 一键部署")
+    print("=" * 52)
+
+    if args.upload_only:
+        if not DEPLOY_DIR.exists():
+            log("deploy_package 不存在，请先完整部署一次", ok=False)
+            sys.exit(1)
+        step_upload()
+        step_restart()
+        print("\n" + "=" * 52)
+        print("  上传完成！")
+        print("=" * 52)
+        return
+
+    if not args.skip_pull:
+        step_git_pull()
+
+    built = step_build_frontend()
+    if built:
+        step_copy_static()
+
+    built_backend = step_build_backend()
+
+    if built_backend:
+        step_package()
+        step_upload()
+        step_restart()
+
+    print("\n" + "=" * 52)
+    print("  部署流程结束")
+    print("=" * 52)
+
+
+if __name__ == "__main__":
+    main()
