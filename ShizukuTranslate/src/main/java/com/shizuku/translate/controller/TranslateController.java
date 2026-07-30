@@ -1,9 +1,15 @@
 package com.shizuku.translate.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shizuku.translate.dto.SseDoneEvent;
+import com.shizuku.translate.dto.SseErrorEvent;
+import com.shizuku.translate.dto.SseTokenEvent;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.service.TranslationService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,10 +22,14 @@ import java.security.Principal;
 @RequestMapping("/api/v1")
 public class TranslateController {
 
-    private final TranslationService translationService;
+    private static final Logger log = LoggerFactory.getLogger(TranslateController.class);
 
-    public TranslateController(TranslationService translationService) {
+    private final TranslationService translationService;
+    private final ObjectMapper objectMapper;
+
+    public TranslateController(TranslationService translationService, ObjectMapper objectMapper) {
         this.translationService = translationService;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/translate")
@@ -39,21 +49,16 @@ public class TranslateController {
                 translationService.translateStream(username, request,
                         token -> {
                             try {
-                                emitter.send(SseEmitter.event().data("{\"token\":\"" + escapeJson(token) + "\"}"));
+                                String json = objectMapper.writeValueAsString(new SseTokenEvent(token));
+                                emitter.send(SseEmitter.event().data(json));
                             } catch (IOException e) {
                                 throw new RuntimeException("Client disconnected", e);
                             }
                         },
                         response -> {
                             try {
-                                String json = "{\"done\":true,\"id\":" + response.getId()
-                                        + ",\"translatedText\":\"" + escapeJson(response.getTranslatedText()) + "\"";
-                                if (response.getTokenUsage() != null) {
-                                    json += ",\"tokenUsage\":{\"promptTokens\":" + response.getTokenUsage().getPromptTokens()
-                                            + ",\"completionTokens\":" + response.getTokenUsage().getCompletionTokens()
-                                            + ",\"totalTokens\":" + response.getTokenUsage().getTotalTokens() + "}";
-                                }
-                                json += "}";
+                                String json = objectMapper.writeValueAsString(
+                                        new SseDoneEvent(response.getId(), response.getTranslatedText(), response.getTokenUsage()));
                                 emitter.send(SseEmitter.event().data(json));
                                 emitter.complete();
                             } catch (IOException e) {
@@ -62,7 +67,8 @@ public class TranslateController {
                         },
                         error -> {
                             try {
-                                emitter.send(SseEmitter.event().data("{\"error\":\"" + escapeJson(error) + "\"}"));
+                                String json = objectMapper.writeValueAsString(new SseErrorEvent(error));
+                                emitter.send(SseEmitter.event().data(json));
                                 emitter.complete();
                             } catch (IOException e) {
                                 emitter.completeWithError(e);
@@ -70,19 +76,11 @@ public class TranslateController {
                         }
                 );
             } catch (Exception e) {
+                log.error("Streaming translation failed", e);
                 emitter.completeWithError(e);
             }
         }).start();
 
         return emitter;
-    }
-
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
     }
 }

@@ -3,16 +3,13 @@ package com.shizuku.translate.integration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shizuku.translate.config.DeepSeekConfig;
 import com.shizuku.translate.dto.TokenUsage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.io.BufferedReader;
-import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +17,8 @@ import java.util.function.Consumer;
 
 @Component
 public class DeepSeekClient {
+
+    private static final Logger log = LoggerFactory.getLogger(DeepSeekClient.class);
 
     private final RestClient restClient;
     private final DeepSeekConfig.DeepSeekProperties properties;
@@ -83,56 +82,53 @@ public class DeepSeekClient {
                     "stream", true
             );
 
-            String requestBody = objectMapper.writeValueAsString(request);
+            restClient.post()
+                    .uri("/chat/completions")
+                    .body(request)
+                    .exchange((clientRequest, clientResponse) -> {
+                        TokenUsage finalUsage = null;
 
-            HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(properties.getBaseUrl() + "/chat/completions"))
-                    .header("Authorization", "Bearer " + properties.getKey())
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpClient httpClient = HttpClient.newHttpClient();
-            HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-
-            TokenUsage finalUsage = null;
-
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("data: ")) {
-                        String data = line.substring(6).trim();
-                        if ("[DONE]".equals(data)) {
-                            break;
-                        }
-                        try {
-                            Map<String, Object> chunk = objectMapper.readValue(data, Map.class);
-                            List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
-                            if (choices != null && !choices.isEmpty()) {
-                                Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
-                                if (delta != null && delta.containsKey("content")) {
-                                    String token = (String) delta.get("content");
-                                    if (token != null) {
-                                        onToken.accept(token);
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(clientResponse.getBody(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (line.startsWith("data: ")) {
+                                    String data = line.substring(6).trim();
+                                    if ("[DONE]".equals(data)) {
+                                        break;
+                                    }
+                                    try {
+                                        Map<String, Object> chunk = objectMapper.readValue(data, Map.class);
+                                        List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+                                        if (choices != null && !choices.isEmpty()) {
+                                            Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+                                            if (delta != null && delta.containsKey("content")) {
+                                                String token = (String) delta.get("content");
+                                                if (token != null) {
+                                                    onToken.accept(token);
+                                                }
+                                            }
+                                        }
+                                        if (chunk.containsKey("usage")) {
+                                            Map<String, Object> usageMap = (Map<String, Object>) chunk.get("usage");
+                                            finalUsage = new TokenUsage();
+                                            finalUsage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
+                                            finalUsage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
+                                            finalUsage.setTotalTokens(((Number) usageMap.get("total_tokens")).intValue());
+                                        }
+                                    } catch (Exception e) {
+                                        log.warn("Failed to parse SSE chunk: {}", data, e);
                                     }
                                 }
                             }
-                            if (chunk.containsKey("usage")) {
-                                Map<String, Object> usageMap = (Map<String, Object>) chunk.get("usage");
-                                finalUsage = new TokenUsage();
-                                finalUsage.setPromptTokens(((Number) usageMap.get("prompt_tokens")).intValue());
-                                finalUsage.setCompletionTokens(((Number) usageMap.get("completion_tokens")).intValue());
-                                finalUsage.setTotalTokens(((Number) usageMap.get("total_tokens")).intValue());
-                            }
-                        } catch (Exception ignored) {
                         }
-                    }
-                }
-            }
 
-            onComplete.accept(finalUsage);
+                        onComplete.accept(finalUsage);
+                        return null;
+                    });
+
         } catch (Exception e) {
+            log.error("DeepSeek streaming request failed", e);
             onError.accept(e.getMessage());
         }
     }
