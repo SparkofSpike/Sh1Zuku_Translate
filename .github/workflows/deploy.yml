@@ -50,22 +50,18 @@ jobs:
         run: |
           cd ShizukuTranslate
           mvn clean package -DskipTests
+          # Rename jar to translator.jar for consistent deployment
+          cp target/*.jar target/translator.jar
 
       # ===================== Package Deployment =====================
       - name: Package deploy files
         run: |
           mkdir -p deploy_package/logs
-          # JAR
-          cp ShizukuTranslate/target/*.jar deploy_package/translator.jar
-          # OCR worker
+          cp ShizukuTranslate/target/translator.jar deploy_package/
           cp -r ocr-worker deploy_package/
-          # Remove any venv from ocr-worker (not needed for deployment)
           rm -rf deploy_package/ocr-worker/venv
           rm -rf deploy_package/ocr-worker/.venv
           rm -rf deploy_package/ocr-worker/__pycache__
-          # Start script (kept for reference, server uses deploy.ps1)
-          cp start.sh deploy_package/
-          # Windows deployment script
           cp .github/workflows/deploy.ps1 deploy_package/
 
       # ===================== Deploy to Windows Server =====================
@@ -78,7 +74,6 @@ jobs:
           remote-user: ${{ secrets.SERVER_USER }}
           source: deploy_package/
           target: ${{ secrets.SERVER_PATH }}
-          # Remove old files before copying
           remove: true
 
       # ===================== Restart Services =====================
@@ -90,25 +85,10 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd ${{ secrets.SERVER_PATH }}
-
-            # Stop existing services
-            echo "Stopping services..."
-            taskkill /f /im java.exe 2>nul & echo Java stopped || echo Java not running
-            taskkill /f /im python.exe 2>nul & echo Python stopped || echo Python not running
-
-            # Wait a moment for ports to release
-            timeout /t 3 /nobreak
-
-            # Start OCR service
-            echo "Starting OCR service..."
+            cd /d D:\Sh1ZukuTranslate
+            taskkill /f /im java.exe 2>nul
+            taskkill /f /im python.exe 2>nul
+            timeout /t 3 /nobreak >nul
             start /B python ocr-worker\ocr_server.py > logs\ocr.log 2>&1
-
-            # Wait for OCR to initialize
-            timeout /t 5 /nobreak
-
-            # Start Java backend
-            echo "Starting Java backend..."
+            timeout /t 5 /nobreak >nul
             start /B java -jar translator.jar > logs\backend.log 2>&1
-
-            echo "Deployment complete!"
