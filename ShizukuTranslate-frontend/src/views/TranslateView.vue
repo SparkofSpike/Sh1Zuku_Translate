@@ -31,10 +31,14 @@
     ></textarea>
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:16px;">
-      <select v-model="model" style="width: auto; min-width: 200px;">
+      <select v-model="model" style="width:auto; min-width:200px;">
         <option value="deepseek-v4-flash">deepseek-v4-flash</option>
         <option value="deepseek-v4-pro">deepseek-v4-pro</option>
       </select>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
+        <input type="checkbox" v-model="streamingEnabled" />
+        流式输出
+      </label>
     </div>
 
     <PresetSelector
@@ -57,18 +61,20 @@
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
 
     <!-- ====== 翻译结果 ====== -->
-    <TranslateResult v-if="result" :result="result" />
+    <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" />
+    <TranslateResult v-else-if="result" :result="result" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import api, { ocrImage } from '../api'
+import api, { ocrImage, translateStream } from '../api'
 import type { TranslateResponse } from '../types'
 import ImageUploader from '../components/ImageUploader.vue'
 import OcrPreview from '../components/OcrPreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
+import SseTranslateResult from '../components/SseTranslateResult.vue'
 
 const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
@@ -79,6 +85,12 @@ const presetOptions = ref<string[]>([])
 const result = ref<TranslateResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
+
+// SSE streaming
+const streamingEnabled = ref(true)
+const useStreaming = ref(false)
+const streamingText = ref('')
+const streamingResult = ref<TranslateResponse | null>(null)
 
 // OCR related
 const ocrPreview = ref<string | null>(null)
@@ -138,18 +150,45 @@ async function translate() {
   if (!sourceText.value.trim()) return
   loading.value = true
   error.value = ''
-  try {
-    const res = await api.post<TranslateResponse>('/translate', {
-      sourceText: sourceText.value,
-      model: model.value,
-      customPrompt: customPrompt.value || undefined,
-      presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
-    })
-    result.value = res.data
-  } catch (e: any) {
-    error.value = e.response?.data?.error || '翻译失败'
-  } finally {
-    loading.value = false
+
+  if (streamingEnabled.value) {
+    useStreaming.value = true
+    streamingText.value = ''
+    streamingResult.value = null
+    result.value = null
+
+    translateStream(
+      sourceText.value,
+      model.value,
+      customPrompt.value || undefined,
+      selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
+      (token: string) => { streamingText.value += token },
+      (response: TranslateResponse) => {
+        streamingResult.value = response
+        loading.value = false
+      },
+      (err: string) => {
+        error.value = err
+        loading.value = false
+      }
+    )
+  } else {
+    useStreaming.value = false
+    streamingText.value = ''
+    streamingResult.value = null
+    try {
+      const res = await api.post<TranslateResponse>('/translate', {
+        sourceText: sourceText.value,
+        model: model.value,
+        customPrompt: customPrompt.value || undefined,
+        presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
+      })
+      result.value = res.data
+    } catch (e: any) {
+      error.value = e.response?.data?.error || '翻译失败'
+    } finally {
+      loading.value = false
+    }
   }
 }
 </script>
