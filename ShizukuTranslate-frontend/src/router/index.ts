@@ -1,7 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   { path: '/login', component: () => import('../views/LoginView.vue') },
   { path: '/register', component: () => import('../views/RegisterView.vue') },
   {
@@ -24,17 +24,15 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-  path: '/survey',
-  component: () => import('../views/SurveyView.vue'),
-  meta: { requiresAuth: true }
-},
-{
-  path: '/admin',
-  component: () => import('../views/AdminView.vue'),
-  meta: { requiresAuth: true }
-}
-
-  
+    path: '/survey',
+    component: () => import('../views/SurveyView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/admin',
+    component: () => import('../views/AdminView.vue'),
+    meta: { requiresAuth: true }
+  }
 ]
 
 const router = createRouter({

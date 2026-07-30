@@ -1,3 +1,15 @@
+:root {
+  --color-primary: #1a1a1a;
+  --color-accent: #4a9eff;
+  --color-text: #222;
+  --color-muted: #777;
+  --color-border: #eee;
+  --color-error: #e03131;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --transition: 0.2s;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -116,4 +128,29 @@ hr {
 .presets-group input[type="checkbox"] {
   width: auto;
   margin-right: 4px;
+}
+
+/* ====== Utility button classes ====== */
+.btn-sm {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn-remove {
+  background: #f5f5f5;
+  color: #555;
+}
+.btn-remove:hover {
+  background: #e8e8e8;
+}
+.btn-primary {
+  background: #4a9eff;
+  color: white;
+  border-color: #4a9eff;
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
