@@ -1,4 +1,4 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 import type { AxiosResponse } from 'axios'
 import type { TranslateRequest, TranslateResponse, OcrResponse } from '../types'
 
@@ -9,7 +9,7 @@ const api = axios.create({
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('token')
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+    config.headers.Authorization = 'Bearer ' + token
   }
   return config
 })
@@ -39,14 +39,25 @@ export function translateStream(
 ): AbortController {
   const controller = new AbortController()
 
+  const token = localStorage.getItem('token')
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token
+  }
+
   fetch(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ sourceText, model, customPrompt, presets } as TranslateRequest),
     signal: controller.signal
   }).then(async response => {
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      onError('SSE error ' + response.status + ': ' + text)
+      return
+    }
     const reader = response.body?.getReader()
-    if (!reader) return
+    if (!reader) { onError('Stream not supported'); return }
     const decoder = new TextDecoder()
     let buffer = ''
     while (true) {
@@ -63,7 +74,7 @@ export function translateStream(
             if (parsed.token) onToken(parsed.token)
             if (parsed.done) onDone(parsed)
             if (parsed.error) onError(parsed.error)
-          } catch {}
+          } catch (e) {}
         }
       }
     }
