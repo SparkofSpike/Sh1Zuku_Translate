@@ -48,18 +48,15 @@ jobs:
           cp .github/workflows/deploy.ps1 deploy_package/
 
       - name: Deploy via SCP
-        env:
-          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          HOST: ${{ secrets.SERVER_HOST }}
-          PORT: ${{ secrets.SERVER_PORT }}
-          USER: ${{ secrets.SERVER_USER }}
-          TARGET: ${{ secrets.SERVER_PATH }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o BatchMode=yes -P "$PORT" -i ~/.ssh/deploy_key \
-              -r deploy_package/. "${USER}@${HOST}:${TARGET}/"
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: deploy_package/
+          target: ${{ secrets.SERVER_PATH }}
+          strip_components: 1
 
       - name: Restart services
         uses: appleboy/ssh-action@v1
