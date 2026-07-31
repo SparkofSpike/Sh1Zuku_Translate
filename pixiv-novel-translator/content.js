@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // Pixiv Novel Translator — Content Script
 // ============================================================
 
@@ -355,7 +355,6 @@ async function handleTranslate() {
   state.paraTranslations = [];
 
   // Prepare UI
-  showStatus('正在获取原文...');
   updateTranslateButton('preparing');
   const btn = document.getElementById('pnt-translate-btn');
   if (btn) btn.disabled = false;
@@ -367,15 +366,19 @@ async function handleTranslate() {
   }
 
   // Send stream request to background; tokens arrive via onMessage
-  const result = await sendToBackground('TRANSLATE_NOVEL_STREAM', {
-    novelId,
-    targetLang: state.targetLang,
-    selectedPresets: settings.selectedPresets,
-    customPrompt: settings.customPrompt
-  });
-
-  if (!result) {
-    finishTranslate(false, '无法启动翻译');
+  try {
+    await sendToBackground('TRANSLATE_NOVEL_STREAM', {
+      novelId,
+      targetLang: state.targetLang,
+      selectedPresets: settings.selectedPresets,
+      customPrompt: settings.customPrompt
+    });
+  } catch (e) {
+    // Cancellation makes background reject with abort error — expected.
+    // Only surface errors if still translating.
+    if (state.translating) {
+      finishTranslate(false, e.message);
+    }
   }
 }
 
@@ -409,19 +412,21 @@ function onNovelLoaded(data) {
     }
   }
 
-  showStatus('正在翻译...');
   updateTranslateButton('ai-processing');
 }
 
 function onStreamToken(token) {
+  if (!state.translating) return; // cancelled — ignore late tokens
   appendToken(token);
 }
 
 function onStreamDone(data) {
+  if (!state.translating) return; // cancelled — ignore
   finishTranslate(true, null, data);
 }
 
 function onStreamError(error) {
+  if (!state.translating) return; // cancelled — ignore
   finishTranslate(false, error);
 }
 
@@ -461,15 +466,16 @@ async function cancelTranslation() {
   if (!state.translating) return;
   try {
     await sendToBackground('CANCEL_TRANSLATE');
-    state.translating = false;
-    hideStatus();
-    if (state.cancelBtn) state.cancelBtn.style.display = 'none';
-    const btn = document.getElementById('pnt-translate-btn');
-    if (btn) btn.disabled = false;
-    showToast('已取消翻译');
   } catch (e) {
-    showToast('取消失败: ' + e.message);
+    // background may already be done; still reset UI below
+    console.warn('[PNT] cancel ack failed:', e.message);
   }
+  state.translating = false;
+  updateTranslateButton('idle');
+  if (state.cancelBtn) state.cancelBtn.style.display = 'none';
+  const btn = document.getElementById('pnt-translate-btn');
+  if (btn) btn.disabled = false;
+  showToast('已取消翻译');
 }
 
 // ─── Toast ──────────────────────────────────────────────────
