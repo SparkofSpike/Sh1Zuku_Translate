@@ -520,6 +520,7 @@ async function handleTranslate() {
   try {
     await sendToBackground('TRANSLATE_NOVEL_STREAM', {
       novelId,
+      currentPage: getCurrentNovelPage(),
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
       customPrompt: settings.customPrompt

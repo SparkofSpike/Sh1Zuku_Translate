@@ -21,7 +21,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.targetLang || 'zh',
             sender.tab?.id,
             message.selectedPresets || [],
-            message.customPrompt || ''
+            message.customPrompt || '',
+            message.currentPage || 0
           );
           sendResponse({ success: true });
           break;
@@ -53,7 +54,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '') {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0) {
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -82,10 +83,14 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
 
   // Step 3: stream translate via backend
   try {
+    // Paged novels: translate only the current page (the DOM only shows
+    // that page). The neighbouring pages are passed as context so the
+    // model keeps continuity — they are marked as reference, not output.
+    const sourceText = buildPageSource(novel.content, currentPage);
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
-      novel.content,
+      sourceText,
       targetLang,
       selectedPresets,
       customPrompt,
@@ -105,6 +110,41 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       activeController = null;
     }
   }
+}
+
+// Build the request text for a possibly paged novel.
+// Pixiv marks page breaks with [newpage]; each page is translated
+// independently in inline mode because the DOM only renders the page
+// the user is currently reading. The full text stays as context: the
+// page before and after the target page are included as "reference
+// only" sections, and the prompt tells the model not to translate them.
+function buildPageSource(fullText, currentPage) {
+  if (!currentPage || currentPage <= 0) return fullText;
+
+  const pages = fullText
+    .split(/\[newpage\]/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  if (pages.length <= 1) return fullText; // not actually paged
+
+  const idx = Math.min(Math.max(currentPage - 1, 0), pages.length - 1);
+  const current = pages[idx] || '';
+
+  // Keep the model grounded: a slice of the previous and next page as
+  // context, clearly marked so it is not translated.
+  const ctxBefore = idx > 0 ? pages[idx - 1].slice(-800) : '';
+  const ctxAfter = idx < pages.length - 1 ? pages[idx + 1].slice(0, 800) : '';
+
+  let text = '';
+  if (ctxBefore) {
+    text += `【参考上下文·上一页（仅理解用，不要翻译）】\n${ctxBefore}\n\n`;
+  }
+  if (ctxAfter) {
+    text += `【参考上下文·下一页（仅理解用，不要翻译）】\n${ctxAfter}\n\n`;
+  }
+  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n${current}`;
+  return text;
 }
 
 // ─── Send message to a specific tab (content script) ────────
@@ -192,6 +232,13 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
   let prompt = `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`;
   if (customPrompt && customPrompt.trim()) {
     prompt += `\n\n用户额外指示：` + customPrompt.trim();
+  }
+
+  // Paged-novel request built by buildPageSource(): the text contains
+  // reference-only context sections plus the target page. Tell the model
+  // explicitly to translate only the marked page and never echo context.
+  if (text.includes('【当前页')) {
+    prompt += `\n\n源文本由【参考上下文】（上一页/下一页，仅用于理解情节）和【当前页】两部分组成。请只翻译【当前页】部分，参考上下文一律不要翻译、不要输出、不要复述。直接输出当前页的中文译文，保留段落结构和换行。`;
   }
 
 
