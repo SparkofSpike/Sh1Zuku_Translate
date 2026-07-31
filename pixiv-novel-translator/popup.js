@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Pixiv Novel Translator — Popup Script
 // ============================================================
 
@@ -16,13 +16,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (tab && tab.url && tab.url.includes('pixiv.net/novel/')) {
-      pageStatus.textContent = '✅ 当前在小说页面';
+      pageStatus.textContent = '当前在小说页面';
       pageStatus.className = 'status-ok';
       translateBtn.disabled = false;
     } else {
       pageStatus.textContent = tab && tab.url && tab.url.includes('pixiv.net')
-        ? '📖 请在小说页面使用'
-        : '🌐 请打开 Pixiv 小说页面';
+        ? '请在小说页面使用'
+        : '请打开 Pixiv 小说页面';
       pageStatus.className = 'status-err';
       translateBtn.disabled = true;
     }
@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
       autoTranslate: autoTranslateCheckbox.checked
     };
     chrome.storage.sync.set(data, () => {
-      showStatus('✅ 设置已保存', 'ok');
+      showStatus('设置已保存', 'ok');
     });
   }
 
@@ -91,21 +91,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) {
-      showStatus('❌ 未找到当前标签页', 'err');
+      showStatus('未找到当前标签页', 'err');
       return;
     }
 
     // Check URL
     if (!tab.url || !tab.url.includes('pixiv.net/novel/')) {
-      showStatus('❌ 请在 Pixiv 小说页面使用', 'err');
+      showStatus('请在 Pixiv 小说页面使用', 'err');
       return;
     }
 
-    showStatus('⏳ 正在连接...', 'ok');
+    showStatus('正在连接...', 'ok');
 
     const injected = await ensureContentScript(tab.id);
     if (!injected) {
-      showStatus('⚠️ 注入失败，请刷新页面重试', 'err');
+      showStatus('注入失败，请刷新页面重试', 'err');
       return;
     }
 
@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await chrome.tabs.sendMessage(tab.id, { type: 'MANUAL_TRANSLATE' });
       window.close();
     } catch (e) {
-      showStatus('⚠️ 请刷新 Pixiv 小说页面后重试', 'err');
+      showStatus('请刷新 Pixiv 小说页面后重试', 'err');
     }
   });
 

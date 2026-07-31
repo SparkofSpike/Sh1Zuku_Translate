@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Pixiv Novel Translator — Content Script
 // ============================================================
 
@@ -71,7 +71,7 @@ function textToParagraphs(text) {
 function createButton() {
   const btn = document.createElement('button');
   btn.id = 'pnt-translate-btn';
-  btn.textContent = '🌐 翻译';
+  btn.textContent = '翻译';
   btn.style.cssText = `
     position: fixed;
     bottom: 24px;
@@ -96,7 +96,7 @@ function createButton() {
 function createLoadingIndicator() {
   const el = document.createElement('div');
   el.id = 'pnt-loading';
-  el.textContent = '⏳ 翻译中...';
+  el.textContent = '翻译中...';
   el.style.cssText = `
     position: fixed;
     bottom: 24px;
@@ -128,7 +128,7 @@ function renderTranslationPanel(data) {
   header.className = 'pnt-header';
   header.innerHTML = `
     <div class="pnt-header-left">
-      <strong>📖 翻译结果</strong>
+      <strong>翻译结果</strong>
       <span class="pnt-title">${escapeHtml(data.title)}</span>
       <span class="pnt-meta">作者: ${escapeHtml(data.author)} · 字符数: ${data.characterCount || '?'}</span>
     </div>

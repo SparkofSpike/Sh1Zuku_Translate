@@ -10,7 +10,8 @@
     "scripting"
   ],
   "host_permissions": [
-    "https://www.pixiv.net/*"
+    "https://www.pixiv.net/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

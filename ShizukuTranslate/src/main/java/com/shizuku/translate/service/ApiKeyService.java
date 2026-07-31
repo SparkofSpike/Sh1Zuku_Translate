@@ -26,7 +26,7 @@ public class ApiKeyService {
         User user = userService.findByUsername(username);
 
         ApiKey apiKey = ApiKey.builder()
-                .keyValue("sk-st-" + UUID.randomUUID().toString().replace("-", ""))
+                .keyValue("sk-st" + UUID.randomUUID().toString().replace("-", ""))
                 .name(name != null && !name.isBlank() ? name : "unnamed")
                 .user(user)
                 .createdAt(LocalDateTime.now())
