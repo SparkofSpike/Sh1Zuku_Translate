@@ -23,7 +23,9 @@ let state = {
   fullMode: false,        // true: translate whole novel once (inline-full)
   fullTranslations: {},   // global paragraph id -> translated text
   pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
-  pageFlipObserver: null  // MutationObserver for page flips (fullMode)
+  pageFlipObserver: null,  // MutationObserver for page flips (fullMode)
+  autoStarted: false,      // translation was started by autoTranslate
+  firstTokenReceived: false // true once the first SSE token arrived
 };
 
 // ─── Current Page (paged novels) ─────────────────────────────
@@ -166,7 +168,15 @@ function createMiniButton() {
   btn.onmouseleave = () => { if (!state.translating) btn.style.background = '#1a1a1a'; };
   btn.onclick = () => {
     if (state.translating) {
-      cancelTranslation();
+      if (state.autoStarted) {
+        // autoTranslate fired on page load without the user asking; a
+        // click now means "I want to translate" — take over by cancelling
+        // the automatic run and starting a fresh manual one.
+        cancelTranslation();
+        handleTranslate();
+      } else {
+        cancelTranslation();
+      }
     } else {
       // handleTranslate decides whether to open the window
       // (panel mode only; inline mode renders under the original text)
@@ -668,6 +678,9 @@ async function handleTranslate() {
   state.fullMode = settings.displayMode === 'inline-full';
   state.mode = state.fullMode ? 'inline' : settings.displayMode;
   state.translating = true;
+  // Manual invocations (button / popup) take over from autoTranslate.
+  state.autoStarted = false;
+  state.firstTokenReceived = false;
   state.streamingText = '';
   state.paraTranslations = [];
   // Drop any previous full-novel watcher/state before starting fresh.
@@ -683,7 +696,7 @@ async function handleTranslate() {
   if (state.firstTokenTimer) clearTimeout(state.firstTokenTimer);
   state.firstTokenTimer = setTimeout(() => {
     if (state.translating) {
-      showToast('AI 正在处理长文，可能需要几分钟，请稍候…');
+      showToast('正在等待 AI 响应，长文可能需要几分钟，请稍候…');
     }
   }, 8000);
 
@@ -740,9 +753,10 @@ function onNovelLoaded(data) {
   // floating window after a generous timeout.
   if (state.mode === 'inline') {
     waitForInlineContainer(data);
-  } else {
-    updateTranslateButton('ai-processing');
   }
+  // The button stays 'preparing' (red) until the first SSE token
+  // arrives — only then do we really know the AI is producing output.
+  updateTranslateButton('preparing');
 }
 
 function fillWindowFromNovel(data) {
@@ -808,7 +822,7 @@ function waitForInlineContainer(data) {
     state.mode = 'panel'; // render into the window from now on
     fillWindowFromNovel(data);
     showToast('未找到原文容器，已改用侧边面板显示');
-    updateTranslateButton('ai-processing');
+    updateTranslateButton('preparing');
   };
 
   const tryBuild = () => {
@@ -820,7 +834,7 @@ function waitForInlineContainer(data) {
         watchPageFlips(data.originalContent);
         refillInlineFromMap();
       }
-      updateTranslateButton('ai-processing');
+      updateTranslateButton('preparing');
       return true;
     }
     if (Date.now() > deadline) {
@@ -844,6 +858,11 @@ function waitForInlineContainer(data) {
 
 function onStreamToken(token) {
   if (!state.translating) return; // cancelled — ignore late tokens
+  // First token means the AI is really streaming — flip the button.
+  if (!state.firstTokenReceived) {
+    state.firstTokenReceived = true;
+    updateTranslateButton('ai-processing');
+  }
   if (state.firstTokenTimer) {
     clearTimeout(state.firstTokenTimer);
     state.firstTokenTimer = null;
@@ -965,6 +984,7 @@ function init() {
 
   chrome.storage.sync.get(['autoTranslate'], (items) => {
     if (items.autoTranslate !== false) {
+      state.autoStarted = true;
       setTimeout(handleTranslate, 500);
     }
   });
