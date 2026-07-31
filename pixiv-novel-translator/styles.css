@@ -233,7 +233,26 @@
   white-space: pre-wrap;
 }
 
+/* The content script inserts bare .pnt-inline-trans divs directly after
+   Pixiv's <p> elements (no .pnt-inline-block ancestor), so the styling
+   must not depend on that wrapper. */
+.pnt-inline-trans {
+  margin: 0 0 8px 0;
+  color: #555;
+  font-size: 13px;
+  line-height: 1.7;
+  border-left: 3px solid #c8c8c8;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+}
+
 .pnt-inline-block .pnt-inline-trans:empty {
+  display: none;
+}
+
+.pnt-inline-trans:empty {
   display: none;
 }
 
