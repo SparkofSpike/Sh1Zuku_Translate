@@ -235,6 +235,25 @@
   display: none;
 }
 
+
+/* ─── Paged mode ([newpage] preserved) ───────────────────── */
+
+.pnt-page {
+  margin: 0 0 4px 0;
+  white-space: pre-wrap;
+}
+
+.pnt-page-break {
+  margin: 12px 0;
+  padding: 4px 0;
+  text-align: center;
+  color: #bbb;
+  font-size: 11px;
+  border-top: 1px dashed #ddd;
+  border-bottom: 1px dashed #ddd;
+  user-select: none;
+}
+
 /* ─── Toast ───────────────────────────────────────────────── */
 
 .pnt-toast {

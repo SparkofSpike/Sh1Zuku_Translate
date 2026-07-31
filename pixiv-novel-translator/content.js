@@ -308,47 +308,64 @@ function buildInlineParagraphs(originalContent) {
   const container = findNovelContainer(originalContent);
   if (!container) return null;
 
-  state.originalHtml = container.innerHTML;
+  // Never rebuild the Pixiv DOM (clearing innerHTML could destroy the page).
+  // Instead, find the paragraph elements Pixiv rendered and insert a
+  // translation div right after each one — CàiYún-style inline pairs.
 
-  const paragraphs = textToParagraphs(htmlToText(originalContent));
-  if (paragraphs.length === 0) return null;
+  // 1) Prefer <p> elements (Pixiv renders novel paragraphs as <p>)
+  let paraEls = Array.from(container.querySelectorAll('p'))
+    .filter(p => p.textContent.trim().length > 0);
 
-  container.innerHTML = '';
-  container.style.whiteSpace = 'normal';
+  // 2) Fallback: direct children with meaningful text
+  if (paraEls.length === 0) {
+    paraEls = Array.from(container.children)
+      .filter(el => el.textContent.trim().length > 0);
+  }
 
-  const wrapper = document.createElement('div');
-  wrapper.id = 'pnt-inline-wrapper';
+  // 3) Last resort: split by <br> runs
+  if (paraEls.length === 0) {
+    // Wrap each text run before a <br> in a span, then insert trans after it
+    const nodes = Array.from(container.childNodes);
+    nodes.forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+        const span = document.createElement('span');
+        span.className = 'pnt-inline-orig';
+        span.textContent = node.textContent;
+        node.replaceWith(span);
+        paraEls.push(span);
+      }
+    });
+  }
 
-  paragraphs.forEach((para, idx) => {
-    const block = document.createElement('div');
-    block.className = 'pnt-inline-block';
-    block.dataset.index = idx;
+  if (paraEls.length === 0) return null;
 
-    const origP = document.createElement('p');
-    origP.className = 'pnt-inline-orig';
-    origP.textContent = para;
+  state.originalHtml = container.innerHTML; // backup for restore
 
-    const transP = document.createElement('p');
-    transP.className = 'pnt-inline-trans';
-    transP.textContent = '';
-
-    block.appendChild(origP);
-    block.appendChild(transP);
-    wrapper.appendChild(block);
+  // Insert one translation div after each paragraph element
+  const transEls = [];
+  paraEls.forEach((p) => {
+    const trans = document.createElement('div');
+    trans.className = 'pnt-inline-trans';
+    p.insertAdjacentElement('afterend', trans);
+    transEls.push(trans);
   });
 
-  container.appendChild(wrapper);
-  state.inlineContainer = wrapper;
-  return wrapper;
+  state.inlineContainer = container;
+  state.inlineTransEls = transEls;
+  return container;
 }
 
 function restoreOriginalHtml() {
-  const container = findNovelContainer(state.originalHtml);
-  if (container && state.originalHtml) {
-    container.innerHTML = state.originalHtml;
-    container.style.whiteSpace = '';
-  }
+  // Remove only the translation divs we inserted; leave Pixiv DOM intact
+  document.querySelectorAll('.pnt-inline-trans').forEach(el => el.remove());
+  document.querySelectorAll('.pnt-inline-orig').forEach(el => {
+    const parent = el.parentNode;
+    if (parent) {
+      parent.replaceChild(document.createTextNode(el.textContent), el);
+    }
+  });
   state.inlineContainer = null;
+  state.inlineTransEls = [];
 }
 
 // ─── Streaming Rendering ────────────────────────────────────
@@ -357,27 +374,54 @@ function appendToken(token) {
   state.streamingText += token;
 
   if (state.transBody) {
-    state.transBody.textContent = state.streamingText;
+    if (state.mode === 'paged') {
+      renderPagedStreaming();
+    } else {
+      state.transBody.textContent = state.streamingText;
+    }
   }
-  if (state.mode === 'inline' && state.inlineContainer) {
+  if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
     renderInlineStreaming();
   }
 }
 
-// Inline mode: split the accumulated translation into paragraphs and
-// render each paragraph into its matching original-text block.
-function renderInlineStreaming() {
-  const blocks = state.inlineContainer.querySelectorAll('.pnt-inline-block');
-  if (!blocks.length) return;
+// Paged mode: keep Pixiv's [newpage] page breaks, render each page
+// as its own block with a visible separator.
+function renderPagedStreaming() {
+  if (!state.transBody) return;
+  const pages = state.streamingText.split(/\[newpage\]/i);
+  state.transBody.innerHTML = pages
+    .map(p => {
+      const text = p.trim();
+      if (!text) return '';
+      return `<div class="pnt-page">${escapeHtml(text)}</div>`;
+    })
+    .join('<div class="pnt-page-break">—— [newpage] ——</div>');
+}
 
-  const paragraphs = textToParagraphs(state.streamingText);
-  const last = blocks.length - 1;
+// Inline mode: split accumulated translation into paragraphs and fill
+// each translation div. Extra paragraphs merge into the last div instead
+// of overwriting earlier ones (fixes misaligned paragraph mapping).
+function renderInlineStreaming() {
+  const transEls = state.inlineTransEls || [];
+  if (!transEls.length) return;
+
+  // Strip Pixiv page-break markers the model may have kept verbatim
+  const clean = state.streamingText
+    .replace(/\[newpage\]/gi, '')
+    .replace(/^\s+|\s+$/g, '');
+
+  const paragraphs = clean.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+  const last = transEls.length - 1;
 
   paragraphs.forEach((para, idx) => {
-    const block = blocks[Math.min(idx, last)];
-    if (!block) return;
-    const transP = block.querySelector('.pnt-inline-trans');
-    if (transP) transP.textContent = para;
+    const el = transEls[Math.min(idx, last)];
+    if (!el) return;
+    if (idx > last) {
+      el.textContent += '\n' + para; // merge overflow instead of overwrite
+    } else {
+      el.textContent = para;
+    }
   });
 }
 
@@ -411,9 +455,9 @@ async function handleTranslate() {
   state.streamingText = '';
   state.paraTranslations = [];
 
-  // Prepare UI: only show floating window in panel mode;
+  // Prepare UI: show floating window in panel & paged modes;
   // inline mode renders directly under the original paragraphs.
-  if (state.mode === 'panel') {
+  if (state.mode === 'panel' || state.mode === 'paged') {
     openWindow();
   }
   updateTranslateButton('preparing');
@@ -449,6 +493,13 @@ function onNovelLoaded(data) {
         .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
         .join('');
     }
+  }
+
+  // Paged mode: open the floating window (like panel) so the
+  // [newpage]-preserved translation has a place to render.
+  if (state.mode === 'paged') {
+    openWindow();
+    state.mode = 'paged';
   }
 
   // Inline mode: also build paragraph pairs in the page.
