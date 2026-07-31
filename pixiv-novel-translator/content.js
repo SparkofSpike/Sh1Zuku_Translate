@@ -782,23 +782,43 @@ const INLINE_WAIT_TIMEOUT_MS = 20000; // generous: body renders client-side
 function watchPageFlips(originalContent) {
   if (state.pageFlipObserver) return; // already watching
   let timer = null;
+  let lastPage = getCurrentNovelPage() || 1;
   state.pageFlipObserver = new MutationObserver(() => {
     // Debounce: Pixiv re-renders in a burst on page flip.
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
+      const page = getCurrentNovelPage() || 1;
       const active = state.inlineContainer && state.inlineContainer.isConnected;
-      const stale = state.inlineTransEls && state.inlineTransEls.length && !active;
-      if (stale) {
-        // Paragraphs were replaced (page flip or lazy re-render): rebuild
-        // the current page's pairs and refill any already-translated text.
+      const pageChanged = page !== lastPage;
+      lastPage = page;
+      const stale = state.inlineTransEls && state.inlineTransEls.length && (!active || pageChanged);
+      if (!stale) return;
+
+      if (state.fullMode) {
+        // Full-novel mode: rebuild the new page's pairs and refill from
+        // the accumulated map — translations follow the user across pages.
         const wrapper = buildInlineParagraphs(originalContent);
         if (wrapper) {
           refillInlineFromMap();
         }
+      } else {
+        // Per-page mode: Pixiv swapped the paragraphs but kept our stale
+        // translation divs (the container itself stays connected). Clear
+        // them so the new page starts clean; the user translates it on
+        // demand. Never let previous-page translations pile up on top.
+        restoreOriginalHtml();
+        state.streamingText = '';
       }
     }, 300);
   });
-  state.pageFlipObserver.observe(document.body, { childList: true, subtree: true });
+  // Watch both node replacement (page flip) and the data-current-page
+  // attribute (in-place re-render keeps the container connected).
+  state.pageFlipObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-current-page']
+  });
 }
 
 // Wait for the novel body paragraphs to appear, then build the inline
@@ -830,8 +850,11 @@ function waitForInlineContainer(data) {
       cleanup();
       // In full-novel mode keep watching for page flips so translations
       // appear on every page without re-translating.
+      // All inline modes watch for page flips: Pixiv reuses the body
+      // container and only swaps the <p>s, so our stale translation
+      // divs would otherwise pile up at the top of the new page.
+      watchPageFlips(data.originalContent);
       if (state.fullMode) {
-        watchPageFlips(data.originalContent);
         refillInlineFromMap();
       }
       updateTranslateButton('preparing');
