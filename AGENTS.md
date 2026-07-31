@@ -209,6 +209,13 @@ curl https://ad.rainplay.cn:22591/
 > - 用户浏览器是 **Edge**（不是 Chrome），v2rayN 开了 TUN 模式（`xray_tun` 网卡），系统代理 `127.0.0.1:10808`。
 > - 用户后端地址：`http://ad.rainplay.cn:15066`（不是 22591，那是 SSH 端口）。
 
+> **新版 Pixiv 小说页 DOM 结构（2026-07-31 实证，Edge headless 渲染后抓取）**：
+> - 页面是 Next.js + styled-components，正文容器/段落 class 全部随机（`sc-xxx`），**不能依赖任何 class 定位**
+> - **稳定锚点**：`<div id="gtm-novel-work-scroll-begin-reading" data-novel-id="...">`（GTM 埋点，自闭合标记 div，正文 `<p>` 紧跟其后）+ 正文每行包装 `<span class="text-count" data-textcount="N">`
+> - 正文**客户端渲染**：SSR HTML 里正文只存在于 `<meta name="description">`，`document_end` 时 DOM 可能还没有正文 → 必须 MutationObserver 等待
+> - 正文段落：多段小说 = 连续 `<p>` 兄弟；诗歌 = 单 `<p>` 内多 `<br>` 行
+> - 定位逻辑已实现于 `content.js` 的 `findNovelParagraphs()` + `collectParagraphRun()` + `waitForInlineContainer()`（20s 超时）
+
 ### 8.4 显示模式（popup 设置）
 
 | 模式 | 行为 |

@@ -274,19 +274,78 @@ const PIXIV_CONTAINER_SELECTORS = [
   'article[data-novel]'
 ];
 
-function findNovelContainer(originalContent) {
-  // 1. Known Pixiv selectors (old + new page layouts)
-  for (const sel of PIXIV_CONTAINER_SELECTORS) {
-    const el = document.querySelector(sel);
-    if (el && el.textContent.trim().length > 0) return el;
+// Normalize whitespace so text matching tolerates DOM reflow, <br> and
+// the <span class="text-count"> splitting Pixiv applies to each line.
+function normalizeText(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+// Collect the paragraph run that starts at `startEl`: consecutive <p>
+// siblings (Pixiv's new page renders the whole novel body as one run of
+// <p> elements). Stops at the first non-paragraph block element.
+function collectParagraphRun(startEl) {
+  const paras = [];
+  let el = startEl;
+  while (el) {
+    if (el.tagName === 'P') {
+      if (el.textContent.trim().length > 0) paras.push(el);
+    } else if (el.tagName !== 'DIV' && el.tagName !== 'BR' && el.tagName !== 'SPAN') {
+      // A non-paragraph block element breaks the run (ads, footer, …)
+      break;
+    }
+    el = el.nextElementSibling;
+  }
+  return paras;
+}
+
+// Locate the novel body paragraphs in the current DOM.
+// Returns an array of <p> elements, or null if they are not rendered yet
+// (the new Pixiv page renders the body client-side after page load).
+function findNovelParagraphs(originalContent) {
+  // 1. New Pixiv page: stable GTM marker div, immediately followed by the
+  //    body <p> run. `id="gtm-novel-work-scroll-begin-reading"` is a GTM
+  //    instrumentation id, not a styled-components hash — stable across
+  //    builds. The div itself is self-closing; the <p> are its siblings.
+  const gtm = document.querySelector('#gtm-novel-work-scroll-begin-reading');
+  if (gtm) {
+    const paras = collectParagraphRun(gtm.nextElementSibling);
+    if (paras.length) return paras;
   }
 
-  // 2. Safe anchor-based fallback: locate the element that contains the
-  //    start of the novel text we got from the Pixiv API. This only
-  //    matches text nodes deep inside the page — it can never select
-  //    the whole page, so clearing its innerHTML is safe.
+  // 2. New Pixiv page: stable business class used for text counting.
+  //    Every line of the body is wrapped in <span class="text-count">.
+  const textCount = document.querySelector('span.text-count');
+  if (textCount) {
+    const firstPara = textCount.closest('p');
+    if (firstPara) {
+      const paras = collectParagraphRun(firstPara);
+      if (paras.length) return paras;
+    }
+  }
+
+  // 3. Known Pixiv selectors (older page layouts)
+  for (const sel of PIXIV_CONTAINER_SELECTORS) {
+    const el = document.querySelector(sel);
+    if (el && el.textContent.trim().length > 0) {
+      // Prefer <p> children; fall back to non-empty direct children so
+      // older layouts that render paragraphs as divs still work.
+      const paras = Array.from(el.querySelectorAll('p'))
+        .filter(p => p.textContent.trim().length > 0);
+      if (paras.length) return paras;
+      const children = Array.from(el.children)
+        .filter(c => c.textContent.trim().length > 0);
+      if (children.length) return children;
+    }
+  }
+
+  // 4. Text-anchor fallback: locate the first paragraph of the novel body
+  //    by content. Unlike the old code (which took 40 chars across
+  //    paragraph boundaries and compared with startsWith), we use the
+  //    first paragraph only, normalize whitespace, and match any text node
+  //    that contains the anchor.
   if (originalContent) {
-    const anchor = htmlToText(originalContent).slice(0, 40).trim();
+    const firstPara = textToParagraphs(htmlToText(originalContent))[0];
+    const anchor = firstPara ? normalizeText(firstPara).slice(0, 20) : '';
     if (anchor.length >= 10) {
       const walker = document.createTreeWalker(
         document.body,
@@ -294,14 +353,17 @@ function findNovelContainer(originalContent) {
       );
       while (walker.nextNode()) {
         const node = walker.currentNode;
-        const t = (node.textContent || '').trim();
-        if (t && (t.startsWith(anchor) || t.includes(anchor.slice(0, 20)))) {
+        const t = normalizeText(node.textContent);
+        if (t && (t.includes(anchor) || anchor.includes(t.slice(0, 8)))) {
           let el = node.parentElement;
-          // Climb up until the element is large enough to be the whole body text
-          while (el && el !== document.body && el.textContent.trim().length < 40) {
+          // Climb up to the paragraph that holds this line
+          while (el && el !== document.body && el.tagName !== 'P') {
             el = el.parentElement;
           }
-          return el && el !== document.body ? el : node.parentElement;
+          if (el && el !== document.body && el.textContent.trim().length > 10) {
+            const paras = collectParagraphRun(el);
+            if (paras.length) return paras;
+          }
         }
       }
     }
@@ -310,41 +372,18 @@ function findNovelContainer(originalContent) {
 }
 
 function buildInlineParagraphs(originalContent) {
-  const container = findNovelContainer(originalContent);
-  if (!container) return null;
+  // Idempotent: if we already built the inline pairs, do nothing.
+  // (The MutationObserver retries; without this guard each retry would
+  // insert a second batch of translation divs.)
+  if (state.inlineTransEls && state.inlineTransEls.length) return state.inlineContainer;
 
   // Never rebuild the Pixiv DOM (clearing innerHTML could destroy the page).
   // Instead, find the paragraph elements Pixiv rendered and insert a
   // translation div right after each one — CàiYún-style inline pairs.
+  let paraEls = findNovelParagraphs(originalContent);
+  if (!paraEls || paraEls.length === 0) return null;
 
-  // 1) Prefer <p> elements (Pixiv renders novel paragraphs as <p>)
-  let paraEls = Array.from(container.querySelectorAll('p'))
-    .filter(p => p.textContent.trim().length > 0);
-
-  // 2) Fallback: direct children with meaningful text
-  if (paraEls.length === 0) {
-    paraEls = Array.from(container.children)
-      .filter(el => el.textContent.trim().length > 0);
-  }
-
-  // 3) Last resort: split by <br> runs
-  if (paraEls.length === 0) {
-    // Wrap each text run before a <br> in a span, then insert trans after it
-    const nodes = Array.from(container.childNodes);
-    nodes.forEach((node) => {
-      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-        const span = document.createElement('span');
-        span.className = 'pnt-inline-orig';
-        span.textContent = node.textContent;
-        node.replaceWith(span);
-        paraEls.push(span);
-      }
-    });
-  }
-
-  if (paraEls.length === 0) return null;
-
-  state.originalHtml = container.innerHTML; // backup for restore
+  state.originalHtml = paraEls[0].parentElement?.innerHTML || ''; // backup for restore
 
   // Insert one translation div after each paragraph element
   const transEls = [];
@@ -355,9 +394,9 @@ function buildInlineParagraphs(originalContent) {
     transEls.push(trans);
   });
 
-  state.inlineContainer = container;
+  state.inlineContainer = paraEls[0].parentElement;
   state.inlineTransEls = transEls;
-  return container;
+  return state.inlineContainer;
 }
 
 function restoreOriginalHtml() {
@@ -488,17 +527,7 @@ function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
 
-  if (state.windowEl) {
-    state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
-    state.windowEl.querySelector('.pnt-meta').textContent =
-      `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
-    const origBody = state.windowEl.querySelector('.pnt-orig-body');
-    if (origBody) {
-      origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
-        .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
-        .join('');
-    }
-  }
+  fillWindowFromNovel(data);
 
   // Paged mode: open the floating window (like panel) so the
   // [newpage]-preserved translation has a place to render.
@@ -508,42 +537,79 @@ function onNovelLoaded(data) {
   }
 
   // Inline mode: also build paragraph pairs in the page.
-  // Pixiv renders the novel body via AJAX after page load, so the
-  // container may not exist yet — poll briefly for it.
+  // Pixiv's new page renders the novel body client-side after page load,
+  // so the paragraphs may not exist yet — wait for them with a
+  // MutationObserver instead of a short poll, and only fall back to the
+  // floating window after a generous timeout.
   if (state.mode === 'inline') {
-    const tryInline = (attempt) => {
-      const wrapper = buildInlineParagraphs(data.originalContent);
-      if (wrapper) {
-        updateTranslateButton('ai-processing');
-        return;
-      }
-      if (attempt < 10) {
-        setTimeout(() => tryInline(attempt + 1), 400);
-      } else {
-        // Container never appeared — fall back to the floating window
-        // so the translation is still visible (never dead-end silently).
-        console.warn('[PNT] inline container not found; showing in window instead');
-        openWindow();
-        state.mode = 'panel'; // render into the window from now on
-        if (state.windowEl) {
-          state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
-          state.windowEl.querySelector('.pnt-meta').textContent =
-            `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
-          const origBody = state.windowEl.querySelector('.pnt-orig-body');
-          if (origBody) {
-            origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
-              .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
-              .join('');
-          }
-        }
-        showToast('未找到原文容器，已改用侧边面板显示');
-        updateTranslateButton('ai-processing');
-      }
-    };
-    tryInline(0);
+    waitForInlineContainer(data);
   } else {
     updateTranslateButton('ai-processing');
   }
+}
+
+function fillWindowFromNovel(data) {
+  if (!state.windowEl) return;
+  state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
+  state.windowEl.querySelector('.pnt-meta').textContent =
+    `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
+  const origBody = state.windowEl.querySelector('.pnt-orig-body');
+  if (origBody) {
+    origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
+      .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
+      .join('');
+  }
+}
+
+const INLINE_WAIT_TIMEOUT_MS = 20000; // generous: body renders client-side
+
+// Wait for the novel body paragraphs to appear, then build the inline
+// pairs. Falls back to the floating window only after the timeout, so a
+// slow page never makes inline mode silently degrade to the panel.
+function waitForInlineContainer(data) {
+  let observer = null;
+  let timer = null;
+  const deadline = Date.now() + INLINE_WAIT_TIMEOUT_MS;
+
+  const cleanup = () => {
+    if (observer) observer.disconnect();
+    if (timer) clearTimeout(timer);
+    observer = null;
+    timer = null;
+  };
+
+  const fallbackToPanel = () => {
+    console.warn('[PNT] inline container not found; showing in window instead');
+    openWindow();
+    state.mode = 'panel'; // render into the window from now on
+    fillWindowFromNovel(data);
+    showToast('未找到原文容器，已改用侧边面板显示');
+    updateTranslateButton('ai-processing');
+  };
+
+  const tryBuild = () => {
+    if (buildInlineParagraphs(data.originalContent)) {
+      cleanup();
+      updateTranslateButton('ai-processing');
+      return true;
+    }
+    if (Date.now() > deadline) {
+      cleanup();
+      fallbackToPanel();
+      return true;
+    }
+    return false;
+  };
+
+  // Try once immediately, then keep watching for the body to render.
+  if (tryBuild()) return;
+  observer = new MutationObserver(() => {
+    // Debounce: body rendering fires many mutations in a burst.
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(tryBuild, 250);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  timer = setTimeout(tryBuild, 250);
 }
 
 function onStreamToken(token) {

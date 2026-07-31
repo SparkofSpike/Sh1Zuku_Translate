@@ -1,5 +1,34 @@
 # Changelog
 
+## [2026-07-31] 修复 inline 模式容器定位（核心 bug）
+
+### 问题根因（已实证，非猜测）
+用 Edge headless 实际渲染 Pixiv 新版小说页（`show.php?id=28665545`）抓取 DOM 分析：
+1. **旧版选择器全失效**：新版页面是 Next.js + styled-components，class 随机 `sc-xxx`（如 `sc-eldPxv`），`PIXIV_CONTAINER_SELECTORS` 里的 `.novel_view`/`#novel-body` 等全部匹配不到
+2. **文本锚点 fallback 失效**：正文 AJAX 返回的是纯文本，但页面渲染时把每行拆成 `<span class="text-count" data-textcount="N">` + `<br>`，旧代码取跨段落连续 40 字符做 `startsWith` 永远失败
+3. **4 秒轮询太短**：正文容器是客户端渲染的（SSR HTML 里正文只存在于 `<meta name="description">`），`document_end` 时 DOM 还没有正文，10×400ms 轮询经常超时 → fallback 弹侧边栏（用户反馈"点原文嵌入又弹侧边栏"）
+
+### 修复方案（content.js）
+- **新增稳定锚点定位**（不依赖随机 class）：
+  - `#gtm-novel-work-scroll-begin-reading` — Pixiv GTM 埋点 id，稳定，是自闭合标记 div，正文 `<p>` 紧跟其后
+  - `span.text-count` — Pixiv 业务 class（每行文本包装），稳定
+  - `collectParagraphRun()` 收集连续 `<p>` 兄弟（遇到广告/footer 等块级元素停止）
+- **文本锚点改进**：取原文第一段（而非跨段 40 字符），`normalizeText()` 归一化空白，`includes` 匹配
+- **MutationObserver 替代轮询**：`waitForInlineContainer()` 监听 body 子树变化，防抖 250ms 重试，20 秒超时才 fallback（不再 4 秒就弹侧边栏）
+- `buildInlineParagraphs()` 幂等化（防止 observer 重试时重复插入译文 div）
+- 提取 `fillWindowFromNovel()` 公共函数
+
+### 验证（非模拟，真实 DOM 实测）
+- 两本不同结构的小说实测定位成功：
+  - 28665545（多段小说）：找到 20 个正文段落，首段「やばっ、寝ちゃってた」
+  - 28413730（诗歌，单段 33 行）：找到 1 个整段，全部正文
+- E2E 测试：20 段落 → 插入 20 个译文 div，段落-译文映射正确
+- `node --check` 语法通过
+
+### 遗留（不在本次范围）
+- 诗歌/单段多行：译文是整段一个 div（非逐行对照），可后续优化
+- PHPSESSID 依赖：登录限定内容（R18/私人）仍可能拿不到全文
+
 ## [2026-07-31] Pixiv 小说翻译插件开发（v1.1.0+9170f8e）
 
 ### 插件功能（pixiv-novel-translator/）
