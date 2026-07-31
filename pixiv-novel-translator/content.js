@@ -93,6 +93,11 @@ function escapeHtml(str) {
 // ─── Mini Button (bottom-right, minimized state) ────────────
 
 function createMiniButton() {
+  // Remove any stale button left by a previous (invalidated) content
+  // script instance — otherwise clicks hit dead handlers.
+  const stale = document.getElementById('pnt-mini-btn');
+  if (stale) stale.remove();
+
   const btn = document.createElement('button');
   btn.id = 'pnt-mini-btn';
   btn.textContent = '翻译';
@@ -620,7 +625,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     case 'MANUAL_TRANSLATE':
-      handleTranslate();
+      // Popup explicit trigger: if an auto-translate is already running,
+      // cancel it first, then start fresh with current settings.
+      (async () => {
+        if (state.translating) {
+          await cancelTranslation();
+        }
+        await handleTranslate();
+      })();
       sendResponse({ ok: true });
       break;
     case 'PING':
@@ -635,6 +647,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ─── Initialize ─────────────────────────────────────────────
 
 function init() {
+  // Bail out if this content script belongs to a dead extension
+  // instance (extension was reloaded) — avoid duplicate UI.
+  try {
+    if (!chrome.runtime?.id) return;
+  } catch (e) {
+    return;
+  }
+
   const novelId = getNovelIdFromUrl();
   if (!novelId) return;
 
