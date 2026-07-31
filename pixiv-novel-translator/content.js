@@ -36,15 +36,29 @@ function getNovelIdFromUrl() {
 
 function sendToBackground(type, payload) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else if (response && response.success) {
-        resolve(response.data);
+    try {
+      chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+        if (chrome.runtime.lastError) {
+          const msg = chrome.runtime.lastError.message || '';
+          if (msg.includes('context invalidated') || msg.includes('Extension context')) {
+            reject(new Error('扩展已更新，请刷新页面后重试'));
+          } else {
+            reject(new Error(msg));
+          }
+        } else if (response && response.success) {
+          resolve(response.data);
+        } else {
+          reject(new Error(response?.error || '未知错误'));
+        }
+      });
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (msg.includes('context invalidated') || msg.includes('Extension context')) {
+        reject(new Error('扩展已更新，请刷新页面后重试'));
       } else {
-        reject(new Error(response?.error || '未知错误'));
+        reject(e);
       }
-    });
+    }
   });
 }
 
@@ -104,7 +118,8 @@ function createMiniButton() {
     if (state.translating) {
       cancelTranslation();
     } else {
-      openWindow();
+      // handleTranslate decides whether to open the window
+      // (panel mode only; inline mode renders under the original text)
       handleTranslate();
     }
   };
@@ -372,10 +387,13 @@ async function handleTranslate() {
   state.streamingText = '';
   state.paraTranslations = [];
 
-  // Prepare UI: always open window + set button to preparing
-  openWindow();
+  // Prepare UI: only show floating window in panel mode;
+  // inline mode renders directly under the original paragraphs.
+  if (state.mode === 'panel') {
+    openWindow();
+  }
   updateTranslateButton('preparing');
-  state.cancelBtn.style.display = 'inline-block';
+  if (state.cancelBtn) state.cancelBtn.style.display = 'inline-block';
 
   // Send stream request to background; tokens arrive via onMessage
   try {
