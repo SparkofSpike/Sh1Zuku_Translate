@@ -54,9 +54,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
 async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '') {
+  // Create abort controller up-front so cancellation works even during
+  // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
+  const controller = new AbortController();
+  activeController = controller;
+
   // Step 1: fetch novel from Pixiv API
   console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + novelId);
-  const novel = await fetchNovelFromPixiv(novelId);
+  const novel = await fetchNovelFromPixiv(novelId, controller.signal);
   console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
   // Notify content script: novel loaded, begin streaming
@@ -76,9 +81,6 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
   const settings = await loadSettings();
 
   // Step 3: stream translate via backend
-  const controller = new AbortController();
-  activeController = controller;
-
   try {
     await streamTranslateApi(
       settings.backendUrl,
@@ -119,7 +121,7 @@ async function notifyTab(tabId, message) {
 
 // ─── Step 1: Fetch Pixiv Novel ───────────────────────────────
 
-async function fetchNovelFromPixiv(novelId) {
+async function fetchNovelFromPixiv(novelId, signal) {
   const cookie = await chrome.cookies.get({
     url: 'https://www.pixiv.net',
     name: 'PHPSESSID'
@@ -136,8 +138,13 @@ async function fetchNovelFromPixiv(novelId) {
       'Cookie': `PHPSESSID=${cookie.value}`,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Referer': 'https://www.pixiv.net/'
-    }
+    },
+    signal
   }).catch((e) => {
+    if (e && e.name === 'AbortError') {
+      console.log('[PNT] STEP1 aborted by user');
+      throw new Error('翻译已取消');
+    }
     console.error('[PNT] STEP1 FAIL pixiv fetch:', e && e.message, e && e.cause ? String(e.cause) : '');
     throw new Error('Pixiv 请求失败: ' + (e && e.message ? e.message : 'network error'));
   });
