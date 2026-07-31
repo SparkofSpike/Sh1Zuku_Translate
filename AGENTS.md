@@ -14,7 +14,7 @@ AI 小说翻译工具：DeepSeek + PaddleOCR + Spring Boot + Vue 3 + CI/CD
 | 前端 | Vue 3 + TypeScript + Vite + Pinia + Vue Router |
 | 后端 | Java 21 + Spring Boot 3.2 + Maven + H2 + JWT |
 | OCR | Python 3.12 + Flask + PaddleOCR（日语模型） |
-| 服务器 | Windows （ad.rainplay.cn:22591 → :15066 端口转发） |
+| 服务器 | Windows （ad.rainplay.cn:15066 网页, :22591→52291 SSH） |
 | 代码 | GitHub SparkofSpike/Sh1Zuku_Translate（私有仓库） |
 | 部署 | ship.py 本地一键部署（因雨云网络限制无法走 CI/CD） |
 

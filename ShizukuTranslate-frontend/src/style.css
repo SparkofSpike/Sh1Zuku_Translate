@@ -146,9 +146,9 @@ hr {
   background: #e8e8e8;
 }
 .btn-primary {
-  background: #4a9eff;
+  background: #1a1a1a;
   color: white;
-  border-color: #4a9eff;
+  border-color: #1a1a1a;
 }
 .btn-primary:disabled {
   opacity: 0.6;
