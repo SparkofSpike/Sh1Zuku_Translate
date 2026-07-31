@@ -894,8 +894,9 @@ function finishTranslate(success, errorMsg, data) {
     if (errorMsg && (errorMsg.includes('abort') || errorMsg.includes('取消'))) {
       showToast('已取消翻译');
     } else {
-      showToast('翻译失败: ' + (errorMsg || '未知错误'));
-      if (state.mode === 'inline') restoreOriginalHtml();
+      // Keep whatever was already rendered: a transient network error
+      // must not wipe the translations the user already received.
+      showToast('翻译中断: ' + (errorMsg || '未知错误') + '（已显示的译文保留）');
     }
   }
 }
