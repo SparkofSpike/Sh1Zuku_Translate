@@ -131,11 +131,12 @@ ship.py 在本地 PowerShell 环境中运行 subprocess.run 时可能找不到 n
 - 主分支：main
 - 重构/bugfix 分支：codex/agent-*（子 agent 自动创建，完成后删掉）
 - 提交规范：
-  - fix: xxx — bug 修复
-  - feat: xxx — 新功能
-  - refactor: xxx — 重构
-  - docs: xxx — 文档
-  - chore: xxx — 杂项
+  - fix: xxx — bug fix
+  - feat: xxx — new feature
+  - refactor: xxx — refactoring
+  - docs: xxx — documentation
+  - chore: xxx — misc
+  - **commit message 一律用英文**（用户要求）
 
 推送需要走代理：
 ```powershell
