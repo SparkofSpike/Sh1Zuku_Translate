@@ -1,0 +1,152 @@
+/* ============================================================
+   Pixiv Novel Translator — Content Styles
+   ============================================================ */
+
+/* Translation Panel */
+#pnt-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 480px;
+  max-width: 90vw;
+  height: 100vh;
+  background: #fff;
+  z-index: 999999;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  font-size: 14px;
+  line-height: 1.8;
+  animation: pnt-slideIn 0.25s ease-out;
+}
+
+@keyframes pnt-slideIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* Header */
+#pnt-panel .pnt-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eee;
+  background: #f8f9fa;
+  flex-shrink: 0;
+}
+
+#pnt-panel .pnt-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+#pnt-panel .pnt-header-left strong {
+  font-size: 15px;
+  color: #1a73e8;
+}
+
+#pnt-panel .pnt-title {
+  font-size: 13px;
+  color: #444;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#pnt-panel .pnt-meta {
+  font-size: 11px;
+  color: #888;
+}
+
+#pnt-panel .pnt-close-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #999;
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+#pnt-panel .pnt-close-btn:hover {
+  background: #eee;
+  color: #333;
+}
+
+/* Content */
+#pnt-panel .pnt-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Sections */
+#pnt-panel .pnt-section {
+  border-bottom: 1px solid #eee;
+}
+
+#pnt-panel .pnt-section-title {
+  padding: 12px 20px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #555;
+  background: #fafafa;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#pnt-panel .pnt-section-title:hover {
+  background: #f0f0f0;
+}
+
+#pnt-panel .pnt-toggle {
+  font-size: 10px;
+  color: #999;
+}
+
+#pnt-panel .pnt-section-body {
+  padding: 12px 20px;
+}
+
+/* Paragraphs */
+#pnt-panel .pnt-original-p {
+  margin: 0 0 8px 0;
+  color: #555;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#pnt-panel .pnt-translation-p {
+  margin: 0 0 12px 0;
+  color: #222;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+/* Toast */
+.pnt-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 999999;
+  padding: 12px 20px;
+  background: #323232;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  animation: pnt-fadeIn 0.2s;
+  max-width: 360px;
+}
+
+@keyframes pnt-fadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

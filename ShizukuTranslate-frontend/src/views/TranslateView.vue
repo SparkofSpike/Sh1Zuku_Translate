@@ -60,8 +60,8 @@
         borderColor: status === 'preparing' ? '#e03131' : (status === 'ai-processing' ? '#1971c2' : undefined),
       }"
     >
-      <template v-if="status === 'preparing'">网页处理中... 点击取消</template>
-      <template v-else-if="status === 'ai-processing'">AI 处理中... 点击取消</template>
+      <template v-if="status === 'preparing'">网页处理中</template>
+      <template v-else-if="status === 'ai-processing'">AI 处理中</template>
       <template v-else>开始翻译</template>
     </button>
 
