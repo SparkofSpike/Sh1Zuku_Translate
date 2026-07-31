@@ -452,30 +452,42 @@ function onNovelLoaded(data) {
   }
 
   // Inline mode: also build paragraph pairs in the page.
-  // If we can't find the container, fall back to the floating window
-  // so the translation is still visible (never dead-end silently).
+  // Pixiv renders the novel body via AJAX after page load, so the
+  // container may not exist yet — poll briefly for it.
   if (state.mode === 'inline') {
-    const wrapper = buildInlineParagraphs(data.originalContent);
-    if (!wrapper) {
-      console.warn('[PNT] inline container not found; showing in window instead');
-      openWindow();
-      state.mode = 'panel'; // render into the window from now on
-      if (state.windowEl) {
-        state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
-        state.windowEl.querySelector('.pnt-meta').textContent =
-          `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
-        const origBody = state.windowEl.querySelector('.pnt-orig-body');
-        if (origBody) {
-          origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
-            .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
-            .join('');
-        }
+    const tryInline = (attempt) => {
+      const wrapper = buildInlineParagraphs(data.originalContent);
+      if (wrapper) {
+        updateTranslateButton('ai-processing');
+        return;
       }
-      showToast('未找到原文容器，已改用侧边面板显示');
-    }
+      if (attempt < 10) {
+        setTimeout(() => tryInline(attempt + 1), 400);
+      } else {
+        // Container never appeared — fall back to the floating window
+        // so the translation is still visible (never dead-end silently).
+        console.warn('[PNT] inline container not found; showing in window instead');
+        openWindow();
+        state.mode = 'panel'; // render into the window from now on
+        if (state.windowEl) {
+          state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
+          state.windowEl.querySelector('.pnt-meta').textContent =
+            `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
+          const origBody = state.windowEl.querySelector('.pnt-orig-body');
+          if (origBody) {
+            origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
+              .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
+              .join('');
+          }
+        }
+        showToast('未找到原文容器，已改用侧边面板显示');
+        updateTranslateButton('ai-processing');
+      }
+    };
+    tryInline(0);
+  } else {
+    updateTranslateButton('ai-processing');
   }
-
-  updateTranslateButton('ai-processing');
 }
 
 function onStreamToken(token) {
