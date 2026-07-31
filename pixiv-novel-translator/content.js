@@ -761,7 +761,9 @@ function finishTranslate(success, errorMsg, data) {
   if (success) {
     showToast('翻译完成');
   } else {
-    if (errorMsg && errorMsg.includes('abort')) {
+    // Treat both the raw AbortError and the background's friendly
+    // "翻译已取消" as a user cancellation, not a failure.
+    if (errorMsg && (errorMsg.includes('abort') || errorMsg.includes('取消'))) {
       showToast('已取消翻译');
     } else {
       showToast('翻译失败: ' + (errorMsg || '未知错误'));

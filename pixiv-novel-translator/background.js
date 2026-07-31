@@ -45,8 +45,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: false, error: '未知消息类型' });
       }
     } catch (error) {
-      console.error('[PixivTranslator] Error:', error.message);
-      sendResponse({ success: false, error: error.message });
+      const msg = error && error.message ? error.message : String(error);
+      // An aborted body stream is almost always the user pressing cancel
+      // (Edge reports it as "BodyStreamBuffer was aborted"). Treat it as
+      // an expected cancellation, not an error — no scary console.error.
+      if (/abort/i.test(msg)) {
+        console.warn('[PixivTranslator] Translation cancelled:', msg);
+        sendResponse({ success: false, cancelled: true, error: '翻译已取消' });
+      } else {
+        console.error('[PixivTranslator] Error:', msg);
+        sendResponse({ success: false, error: msg });
+      }
     }
   })();
   return true; // async response
