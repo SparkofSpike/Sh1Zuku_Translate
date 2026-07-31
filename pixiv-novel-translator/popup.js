@@ -8,10 +8,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const targetLangSelect = document.getElementById('targetLang');
   const displayModeSelect = document.getElementById('displayMode');
   const autoTranslateCheckbox = document.getElementById('autoTranslate');
+  const customPromptInput = document.getElementById('customPrompt');
+  const presetsGroup = document.getElementById('presetsGroup');
   const statusDiv = document.getElementById('status');
   const translateBtn = document.getElementById('translateBtn');
   const saveBtn = document.getElementById('saveBtn');
   const pageStatus = document.getElementById('pageStatus');
+
+  let selectedPresets = [];
 
   // ─── Check current tab on open ──────────────────────────
 
@@ -31,43 +35,109 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── Load saved settings ─────────────────────────────────
 
-  chrome.storage.sync.get(['backendUrl', 'apiKey', 'targetLang', 'displayMode', 'autoTranslate'], (items) => {
-    if (items.backendUrl) backendUrlInput.value = items.backendUrl;
-    if (items.apiKey) apiKeyInput.value = items.apiKey;
-    if (items.targetLang) targetLangSelect.value = items.targetLang;
-    if (items.displayMode) displayModeSelect.value = items.displayMode;
-    autoTranslateCheckbox.checked = items.autoTranslate !== false;
-  });
+  chrome.storage.sync.get(
+    ['backendUrl', 'apiKey', 'targetLang', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
+    (items) => {
+      if (items.backendUrl) backendUrlInput.value = items.backendUrl;
+      if (items.apiKey) apiKeyInput.value = items.apiKey;
+      if (items.targetLang) targetLangSelect.value = items.targetLang;
+      if (items.displayMode) displayModeSelect.value = items.displayMode;
+      if (items.customPrompt) customPromptInput.value = items.customPrompt;
+      if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
+      autoTranslateCheckbox.checked = items.autoTranslate !== false;
+
+      loadPresets();
+    }
+  );
+
+  // ─── Fetch presets from backend ─────────────────────────
+
+  async function loadPresets() {
+    const backendUrl = backendUrlInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    if (!backendUrl) {
+      presetsGroup.innerHTML = '<span style="color:#999;">请先填写后端地址</span>';
+      return;
+    }
+    try {
+      const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/presets', {
+        headers: { 'X-API-Key': apiKey }
+      });
+      if (!response.ok) {
+        presetsGroup.innerHTML = '<span style="color:#c5221f;">预设加载失败</span>';
+        return;
+      }
+      const presets = await response.json();
+      renderPresets(presets);
+    } catch (e) {
+      presetsGroup.innerHTML = '<span style="color:#c5221f;">无法连接后端</span>';
+    }
+  }
+
+  function renderPresets(presets) {
+    if (!presets || presets.length === 0) {
+      presetsGroup.innerHTML = '<span style="color:#999;">暂无预设</span>';
+      return;
+    }
+    presetsGroup.innerHTML = '';
+    presets.forEach((preset) => {
+      const label = document.createElement('label');
+      label.className = 'preset-item';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = preset;
+      checkbox.checked = selectedPresets.includes(preset);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          if (!selectedPresets.includes(preset)) selectedPresets.push(preset);
+        } else {
+          selectedPresets = selectedPresets.filter(p => p !== preset);
+        }
+        saveSettings(false);
+      });
+
+      const span = document.createElement('span');
+      span.textContent = preset;
+
+      label.appendChild(checkbox);
+      label.appendChild(span);
+      presetsGroup.appendChild(label);
+    });
+  }
 
   // ─── Save settings ───────────────────────────────────────
 
-  function saveSettings() {
+  function saveSettings(showToast = true) {
     const data = {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
       targetLang: targetLangSelect.value,
       displayMode: displayModeSelect.value,
-      autoTranslate: autoTranslateCheckbox.checked
+      autoTranslate: autoTranslateCheckbox.checked,
+      customPrompt: customPromptInput.value.trim(),
+      selectedPresets
     };
     chrome.storage.sync.set(data, () => {
-      showStatus('设置已保存', 'ok');
+      if (showToast) showStatus('设置已保存', 'ok');
     });
   }
 
-  saveBtn.addEventListener('click', saveSettings);
-  [backendUrlInput, apiKeyInput, targetLangSelect, displayModeSelect, autoTranslateCheckbox].forEach(el => {
-    el.addEventListener('change', saveSettings);
+  saveBtn.addEventListener('click', () => saveSettings(true));
+
+  [backendUrlInput, apiKeyInput, targetLangSelect, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
+    el.addEventListener('change', () => saveSettings(false));
   });
+
+  backendUrlInput.addEventListener('change', loadPresets);
 
   // ─── Inject content script if needed ────────────────────
 
   async function ensureContentScript(tabId) {
-    // Try to ping the content script
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-      return true; // already injected
+      return true;
     } catch {
-      // Not injected — inject now
       try {
         await chrome.scripting.executeScript({
           target: { tabId },
@@ -77,7 +147,6 @@ document.addEventListener('DOMContentLoaded', () => {
           target: { tabId },
           files: ['styles.css']
         });
-        // Wait for initialization
         await new Promise(r => setTimeout(r, 200));
         return true;
       } catch (e) {
@@ -90,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Translate current page ──────────────────────────────
 
   translateBtn.addEventListener('click', async () => {
-    saveSettings();
+    saveSettings(false);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) {
@@ -98,7 +167,6 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Check URL
     if (!tab.url || !tab.url.includes('pixiv.net/novel/')) {
       showStatus('请在 Pixiv 小说页面使用', 'err');
       return;

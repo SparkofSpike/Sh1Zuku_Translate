@@ -310,10 +310,12 @@ async function handleTranslate() {
 
   // Load settings
   const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get(['targetLang', 'displayMode'], (items) => {
+    chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt'], (items) => {
       resolve({
         targetLang: items.targetLang || 'zh',
-        displayMode: items.displayMode || 'panel'
+        displayMode: items.displayMode || 'panel',
+        selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
+        customPrompt: items.customPrompt || ''
       });
     });
   });
@@ -340,7 +342,9 @@ async function handleTranslate() {
   // Send stream request to background; tokens arrive via onMessage
   const result = await sendToBackground('TRANSLATE_NOVEL_STREAM', {
     novelId,
-    targetLang: state.targetLang
+    targetLang: state.targetLang,
+    selectedPresets: settings.selectedPresets,
+    customPrompt: settings.customPrompt
   });
 
   if (!result) {

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Pixiv Novel Translator — Background Service Worker
 // ============================================================
 
@@ -17,7 +17,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await startStreamingTranslation(
             message.novelId,
             message.targetLang || 'zh',
-            sender.tab?.id
+            sender.tab?.id,
+            message.selectedPresets || [],
+            message.customPrompt || ''
           );
           sendResponse({ success: true });
           break;
@@ -79,6 +81,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId) {
       settings.apiKey,
       novel.content,
       targetLang,
+      selectedPresets,
+      customPrompt,
       controller,
       async (token) => {
         await notifyTab(tabId, { type: 'SSE_TOKEN', token });
@@ -156,7 +160,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, text, targetLang, controller, onToken, onDone, onError) {
+async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selectedPresets, customPrompt, controller, onToken, onDone, onError) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -167,6 +171,13 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, controll
   const url = backendUrl.replace(/\/+$/, '') + '/api/v1/translate/stream';
   const targetLangName = targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文';
 
+  // Merge base prompt with user custom prompt
+  let prompt = `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`;
+  if (customPrompt && customPrompt.trim()) {
+    prompt += `\n\n用户额外指示：` + customPrompt.trim();
+  }
+
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -176,7 +187,8 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, controll
     body: JSON.stringify({
       sourceText: text,
       model: 'deepseek-v4-flash',
-      customPrompt: `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`
+      customPrompt: prompt,
+      presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined
     }),
     signal: controller.signal
   });
@@ -185,7 +197,6 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, controll
     const body = await response.text().catch(() => '');
     throw new Error(`翻译服务请求失败 (${response.status}): ${body}`);
   }
-
   const reader = response.body?.getReader();
   if (!reader) {
     throw new Error('浏览器不支持流式响应');

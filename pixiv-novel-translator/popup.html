@@ -51,6 +51,38 @@
     .checkbox-field input[type="checkbox"] {
       width: auto;
     }
+    .presets-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .presets-group .preset-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #444;
+      background: #f9f9f9;
+      padding: 4px 10px;
+      border-radius: 14px;
+      border: 1px solid #eee;
+      cursor: pointer;
+    }
+    .presets-group .preset-item:hover {
+      background: #f0f0f0;
+    }
+    .presets-group .preset-item input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+    .presets-loading {
+      font-size: 12px;
+      color: #999;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
     .btn {
       width: 100%;
       padding: 10px;
@@ -136,6 +168,18 @@
       <option value="panel">侧边面板</option>
       <option value="inline">原文内嵌对照</option>
     </select>
+  </div>
+
+  <div class="field">
+    <label>附加预设（可多选）</label>
+    <div id="presetsGroup" class="presets-group">
+      <span class="presets-loading">加载中...</span>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="customPrompt">自定义附加 Prompt（可选）</label>
+    <textarea id="customPrompt" rows="3" placeholder="例如：请使用古风文风翻译"></textarea>
   </div>
 
   <div class="field checkbox-field">
