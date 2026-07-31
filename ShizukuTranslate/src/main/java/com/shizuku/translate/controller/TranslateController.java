@@ -44,6 +44,19 @@ public class TranslateController {
         String username = principal.getName();
         SseEmitter emitter = new SseEmitter(300000L);
 
+        // Flush the response headers immediately so the client sees a
+        // connected stream even before the first token arrives. Without
+        // this, the browser's fetch() stays pending while DeepSeek is
+        // still pre-filling long texts (which can take minutes), making
+        // the translation look "stuck".
+        try {
+            emitter.send(SseEmitter.event().comment("connected"));
+        } catch (IOException e) {
+            log.warn("Client disconnected before stream started", e);
+            emitter.completeWithError(e);
+            return emitter;
+        }
+
         new Thread(() -> {
             try {
                 translationService.translateStream(username, request,

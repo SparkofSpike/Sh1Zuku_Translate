@@ -498,6 +498,15 @@ async function handleTranslate() {
   state.translating = true;
   state.streamingText = '';
   state.paraTranslations = [];
+  // Long texts (paged Pixiv novels) can take DeepSeek a while to pre-fill;
+  // if no token arrives within a few seconds, tell the user we are working
+  // instead of leaving the UI looking stuck.
+  if (state.firstTokenTimer) clearTimeout(state.firstTokenTimer);
+  state.firstTokenTimer = setTimeout(() => {
+    if (state.translating) {
+      showToast('AI 正在处理长文，可能需要几分钟，请稍候…');
+    }
+  }, 8000);
 
   // Prepare UI: show floating window in panel & paged modes;
   // inline mode renders directly under the original paragraphs.
@@ -614,6 +623,10 @@ function waitForInlineContainer(data) {
 
 function onStreamToken(token) {
   if (!state.translating) return; // cancelled — ignore late tokens
+  if (state.firstTokenTimer) {
+    clearTimeout(state.firstTokenTimer);
+    state.firstTokenTimer = null;
+  }
   appendToken(token);
 }
 

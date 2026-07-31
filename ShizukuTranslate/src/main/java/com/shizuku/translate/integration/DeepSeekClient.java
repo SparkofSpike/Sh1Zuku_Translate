@@ -88,10 +88,11 @@ public class DeepSeekClient {
                     .exchange((clientRequest, clientResponse) -> {
                         TokenUsage finalUsage = null;
 
+                        boolean clientDisconnected = false;
                         try (BufferedReader reader = new BufferedReader(
                                 new InputStreamReader(clientResponse.getBody(), StandardCharsets.UTF_8))) {
                             String line;
-                            while ((line = reader.readLine()) != null) {
+                            while ((line = reader.readLine()) != null && !clientDisconnected) {
                                 if (line.startsWith("data: ")) {
                                     String data = line.substring(6).trim();
                                     if ("[DONE]".equals(data)) {
@@ -117,13 +118,28 @@ public class DeepSeekClient {
                                             finalUsage.setTotalTokens(((Number) usageMap.get("total_tokens")).intValue());
                                         }
                                     } catch (Exception e) {
-                                        log.warn("Failed to parse SSE chunk: {}", data, e);
+                                        String msg = e.getMessage();
+                                        // The client (browser) aborted the SSE connection — stop
+                                        // consuming the DeepSeek stream instead of logging the
+                                        // send failure as a parse error and burning API tokens.
+                                        if (msg != null && (msg.contains("Client disconnected")
+                                                || msg.contains("has already completed")
+                                                || msg.contains("ClientAbortException"))) {
+                                            log.info("Client disconnected, stopping DeepSeek stream");
+                                            clientDisconnected = true;
+                                        } else {
+                                            log.warn("Failed to parse SSE chunk: {}", data, e);
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        onComplete.accept(finalUsage);
+                        // Only report completion if the client is still connected; otherwise
+                        // the completion send would throw on an already-closed emitter.
+                        if (!clientDisconnected) {
+                            onComplete.accept(finalUsage);
+                        }
                         return null;
                     });
 
