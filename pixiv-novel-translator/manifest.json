@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.pixiv.net/novel/*"],
-      "js": ["content.js"],
+      "js": ["version.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_end"
     }

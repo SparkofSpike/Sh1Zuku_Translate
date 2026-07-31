@@ -10,13 +10,13 @@ let state = {
   mode: 'panel',          // 'panel' | 'inline'
   targetLang: 'zh',
   streamingText: '',
-  currentParaIndex: 0,    // current paragraph being translated
-  paraTranslations: [],   // per-paragraph translations
+  paraTranslations: [],
   inlineContainer: null,  // inline mode: paragraph wrapper
-  panel: null,
-  panelBody: null,
+  windowEl: null,         // floating window (expanded)
+  miniBtn: null,          // bottom-right pill (minimized)
+  transBody: null,        // translation output element
   cancelBtn: null,
-  originalHtml: null,     // saved original container HTML
+  originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
   novelAuthor: ''
 };
@@ -48,7 +48,7 @@ function sendToBackground(type, payload) {
   });
 }
 
-// ─── HTML → Plain Text ──────────────────────────────────────
+// ─── Text helpers ───────────────────────────────────────────
 
 function htmlToText(html) {
   return html
@@ -70,34 +70,33 @@ function textToParagraphs(text) {
     .filter(p => p.length > 0);
 }
 
-// ─── Escape HTML ────────────────────────────────────────────
-
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
 }
 
-// ─── Create Floating Button ─────────────────────────────────
+// ─── Mini Button (bottom-right, minimized state) ────────────
 
-function createButton() {
+function createMiniButton() {
   const btn = document.createElement('button');
-  btn.id = 'pnt-translate-btn';
+  btn.id = 'pnt-mini-btn';
   btn.textContent = '翻译';
   btn.style.cssText = `
     position: fixed;
     bottom: 24px;
     right: 24px;
-    z-index: 99999;
+    z-index: 999999;
     padding: 10px 20px;
     background: #1a1a1a;
     color: #fff;
     border: none;
     border-radius: 24px;
     font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
-    transition: background 0.2s;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+    transition: background 0.2s, transform 0.2s;
   `;
   btn.onmouseenter = () => { if (!state.translating) btn.style.background = '#444'; };
   btn.onmouseleave = () => { if (!state.translating) btn.style.background = '#1a1a1a'; };
@@ -105,77 +104,33 @@ function createButton() {
     if (state.translating) {
       cancelTranslation();
     } else {
+      openWindow();
       handleTranslate();
     }
   };
+  document.body.appendChild(btn);
+  state.miniBtn = btn;
   return btn;
 }
 
-// Update floating button to website-style 3-state (black → red → blue)
-function updateTranslateButton(status) {
-  const btn = document.getElementById('pnt-translate-btn');
-  if (!btn) return;
+// ─── Floating Window (expanded state) ───────────────────────
 
-  if (status === 'preparing') {
-    btn.textContent = '网页处理中... 点击取消';
-    btn.style.background = '#e03131';
-    btn.style.borderColor = '#e03131';
-  } else if (status === 'ai-processing') {
-    btn.textContent = 'AI 处理中... 点击取消';
-    btn.style.background = '#1971c2';
-    btn.style.borderColor = '#1971c2';
-  } else {
-    btn.textContent = '翻译';
-    btn.style.background = '#1a1a1a';
-    btn.style.borderColor = '#1a1a1a';
-  }
-}
-
-// ─── Loading / Status Indicator ─────────────────────────────
-
-function showStatus(text, { error = false } = {}) {
-  let el = document.getElementById('pnt-status');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'pnt-status';
-    el.style.cssText = `
-      position: fixed;
-      bottom: 24px;
-      right: 130px;
-      z-index: 99999;
-      padding: 10px 20px;
-      background: #fff;
-      color: #333;
-      border: 1px solid #ddd;
-      border-radius: 24px;
-      font-size: 14px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-    `;
-    document.body.appendChild(el);
-  }
-  el.textContent = text;
-  el.style.color = error ? '#e03131' : '#333';
-}
-
-function hideStatus() {
-  const el = document.getElementById('pnt-status');
-  if (el) el.remove();
-}
-
-// ─── Panel Mode: Render Slide-in Panel ──────────────────────
-
-function createPanel() {
-  removePanel();
-  const panel = document.createElement('div');
-  panel.id = 'pnt-panel';
-  panel.innerHTML = `
+function createWindow() {
+  removeWindow();
+  const w = document.createElement('div');
+  w.id = 'pnt-window';
+  w.innerHTML = `
     <div class="pnt-header">
       <div class="pnt-header-left">
-        <strong>翻译结果</strong>
+        <strong>翻译</strong>
         <span class="pnt-title"></span>
         <span class="pnt-meta"></span>
       </div>
-      <button class="pnt-close-btn" title="关闭">×</button>
+      <div class="pnt-header-actions">
+        <span class="pnt-version"></span>
+        <button class="pnt-min-btn" title="缩小">–</button>
+        <button class="pnt-close-btn" title="关闭">×</button>
+      </div>
     </div>
     <div class="pnt-toolbar">
       <button class="pnt-cancel-btn" style="display:none;">取消翻译</button>
@@ -183,7 +138,7 @@ function createPanel() {
     <div class="pnt-content">
       <div class="pnt-section">
         <div class="pnt-section-title">
-          <span class="pnt-toggle">▼</span> 中文翻译
+          <span class="pnt-toggle">▼</span> 译文
         </div>
         <div class="pnt-section-body pnt-trans-body"></div>
       </div>
@@ -197,34 +152,92 @@ function createPanel() {
   `;
 
   // Toggle original section
-  const origTitle = panel.querySelectorAll('.pnt-section-title')[1];
+  const origTitle = w.querySelectorAll('.pnt-section-title')[1];
   origTitle.addEventListener('click', () => {
-    const body = panel.querySelector('.pnt-orig-body');
+    const body = w.querySelector('.pnt-orig-body');
     const toggle = origTitle.querySelector('.pnt-toggle');
     const hidden = body.style.display === 'none';
     body.style.display = hidden ? 'block' : 'none';
     toggle.textContent = hidden ? '▼' : '▶';
   });
 
-  panel.querySelector('.pnt-close-btn').onclick = () => removePanel();
+  w.querySelector('.pnt-close-btn').onclick = () => removeWindow();
+  w.querySelector('.pnt-min-btn').onclick = () => minimizeWindow();
 
   // Cancel button
-  const cancelBtn = panel.querySelector('.pnt-cancel-btn');
+  const cancelBtn = w.querySelector('.pnt-cancel-btn');
   cancelBtn.addEventListener('click', cancelTranslation);
   state.cancelBtn = cancelBtn;
 
-  document.body.appendChild(panel);
-  state.panel = panel;
-  state.panelBody = panel.querySelector('.pnt-trans-body');
-  return panel;
+  // Version badge
+  const verEl = w.querySelector('.pnt-version');
+  verEl.textContent = typeof EXTENSION_VERSION !== 'undefined' ? EXTENSION_VERSION : '';
+
+  // Make draggable via header
+  makeDraggable(w);
+
+  document.body.appendChild(w);
+  state.windowEl = w;
+  state.transBody = w.querySelector('.pnt-trans-body');
+  return w;
 }
 
-function removePanel() {
-  const existing = document.getElementById('pnt-panel');
+function removeWindow() {
+  const existing = document.getElementById('pnt-window');
   if (existing) existing.remove();
-  state.panel = null;
-  state.panelBody = null;
+  state.windowEl = null;
+  state.transBody = null;
   state.cancelBtn = null;
+}
+
+function openWindow() {
+  if (!state.windowEl) createWindow();
+  state.windowEl.style.display = 'flex';
+  if (state.miniBtn) state.miniBtn.style.display = 'none';
+}
+
+function minimizeWindow() {
+  if (state.windowEl) state.windowEl.style.display = 'none';
+  if (state.miniBtn) state.miniBtn.style.display = '';
+}
+
+function makeDraggable(w) {
+  const header = w.querySelector('.pnt-header');
+  let startX = 0, startY = 0, drag = false;
+
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return; // don't drag from buttons
+    drag = true;
+    startX = e.clientX - w.offsetLeft;
+    startY = e.clientY - w.offsetTop;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    w.style.left = Math.max(0, e.clientX - startX) + 'px';
+    w.style.top = Math.max(0, e.clientY - startY) + 'px';
+    w.style.right = 'auto';
+  });
+  document.addEventListener('mouseup', () => { drag = false; });
+}
+
+// ─── 3-State Button (black → red → blue, mirrors website) ───
+
+function updateTranslateButton(status) {
+  const set = (el, text, bg) => {
+    if (!el) return;
+    el.textContent = text;
+    el.style.background = bg;
+    el.style.borderColor = bg;
+  };
+
+  if (status === 'preparing') {
+    set(state.miniBtn, '网页处理中... 点击取消', '#e03131');
+  } else if (status === 'ai-processing') {
+    set(state.miniBtn, 'AI 处理中... 点击取消', '#1971c2');
+  } else {
+    set(state.miniBtn, '翻译', '#1a1a1a');
+  }
 }
 
 // ─── Inline Mode: Rewrite Novel Container with Paragraphs ───
@@ -235,7 +248,10 @@ const PIXIV_CONTAINER_SELECTORS = [
   '.novel-p5',
   'section[data-novel]',
   '.novel-body',
-  '.js-novel-container'
+  '.js-novel-container',
+  '.novel-body__content',
+  '.novel-view',
+  'article[data-novel]'
 ];
 
 function findNovelContainer() {
@@ -250,13 +266,11 @@ function findNovelContainer() {
 }
 
 function buildInlineParagraphs(originalContent) {
-  // Save original HTML for restore
   const container = findNovelContainer();
   if (!container) return null;
 
   state.originalHtml = container.innerHTML;
 
-  // Clear and rebuild with paragraph pairs
   const paragraphs = textToParagraphs(htmlToText(originalContent));
   if (paragraphs.length === 0) return null;
 
@@ -303,9 +317,10 @@ function restoreOriginalHtml() {
 function appendToken(token) {
   state.streamingText += token;
 
-  if (state.mode === 'panel' && state.panelBody) {
-    state.panelBody.textContent = state.streamingText;
-  } else if (state.mode === 'inline' && state.inlineContainer) {
+  if (state.transBody) {
+    state.transBody.textContent = state.streamingText;
+  }
+  if (state.mode === 'inline' && state.inlineContainer) {
     renderInlineStreaming();
   }
 }
@@ -355,19 +370,12 @@ async function handleTranslate() {
   state.mode = settings.displayMode;
   state.translating = true;
   state.streamingText = '';
-  state.currentParaIndex = 0;
   state.paraTranslations = [];
 
-  // Prepare UI
+  // Prepare UI: always open window + set button to preparing
+  openWindow();
   updateTranslateButton('preparing');
-  const btn = document.getElementById('pnt-translate-btn');
-  if (btn) btn.disabled = false;
-
-  // Show cancel button (panel mode)
-  if (state.mode === 'panel') {
-    createPanel();
-    state.cancelBtn.style.display = 'inline-block';
-  }
+  state.cancelBtn.style.display = 'inline-block';
 
   // Send stream request to background; tokens arrive via onMessage
   try {
@@ -379,7 +387,6 @@ async function handleTranslate() {
     });
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
-    // Only surface errors if still translating.
     if (state.translating) {
       finishTranslate(false, e.message);
     }
@@ -390,29 +397,25 @@ function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
 
-  if (state.mode === 'panel') {
-    if (state.panel) {
-      state.panel.querySelector('.pnt-title').textContent = data.title || '';
-      state.panel.querySelector('.pnt-meta').textContent =
-        `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
-    }
-    // Show original content in panel
-    const origBody = state.panel?.querySelector('.pnt-orig-body');
+  if (state.windowEl) {
+    state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
+    state.windowEl.querySelector('.pnt-meta').textContent =
+      `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
+    const origBody = state.windowEl.querySelector('.pnt-orig-body');
     if (origBody) {
       origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
         .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
         .join('');
     }
-  } else {
-    // inline mode: build paragraph pairs
+  }
+
+  // Inline mode: also build paragraph pairs in the page.
+  // If we can't find the container we do NOT silently switch to panel —
+  // the floating window still shows the translation, and we notify the user.
+  if (state.mode === 'inline') {
     const wrapper = buildInlineParagraphs(data.originalContent);
     if (!wrapper) {
-      // Fallback to panel mode
-      state.mode = 'panel';
-      createPanel();
-      state.cancelBtn.style.display = 'inline-block';
-      onNovelLoaded(data);
-      return;
+      console.warn('[PNT] inline container not found; translation still shown in window');
     }
   }
 
@@ -438,22 +441,10 @@ function finishTranslate(success, errorMsg, data) {
   state.translating = false;
   updateTranslateButton('idle');
 
-  // Keep current translation text
-  const finalText = state.streamingText;
-
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
-  hideStatus();
-  const btn = document.getElementById('pnt-translate-btn');
-  if (btn) btn.disabled = false;
 
   if (success) {
-    if (state.mode === 'panel') {
-      // done; translation already streamed into panel
-      showToast('翻译完成');
-    } else {
-      // inline done
-      showToast('翻译完成');
-    }
+    showToast('翻译完成');
   } else {
     if (errorMsg && errorMsg.includes('abort')) {
       showToast('已取消翻译');
@@ -471,14 +462,11 @@ async function cancelTranslation() {
   try {
     await sendToBackground('CANCEL_TRANSLATE');
   } catch (e) {
-    // background may already be done; still reset UI below
     console.warn('[PNT] cancel ack failed:', e.message);
   }
   state.translating = false;
   updateTranslateButton('idle');
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
-  const btn = document.getElementById('pnt-translate-btn');
-  if (btn) btn.disabled = false;
   showToast('已取消翻译');
 }
 
@@ -532,7 +520,7 @@ function init() {
   if (!novelId) return;
 
   state.novelId = novelId;
-  document.body.appendChild(createButton());
+  createMiniButton();
 
   chrome.storage.sync.get(['autoTranslate'], (items) => {
     if (items.autoTranslate !== false) {

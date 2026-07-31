@@ -15,6 +15,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('saveBtn');
   const pageStatus = document.getElementById('pageStatus');
 
+  // ─── Show version badge ──────────────────────────────────
+
+  const verEl = document.getElementById('extVersion');
+  if (verEl) {
+    verEl.textContent = typeof EXTENSION_VERSION !== 'undefined'
+      ? '版本 ' + EXTENSION_VERSION
+      : '';
+  }
+
   let selectedPresets = [];
 
   // ─── Check current tab on open ──────────────────────────
