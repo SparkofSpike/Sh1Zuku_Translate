@@ -484,6 +484,16 @@ function renderInlineStreaming() {
 // ─── Translation Flow ───────────────────────────────────────
 
 async function handleTranslate() {
+  // Bail out if this content script belongs to a dead extension instance
+  // (extension was reloaded) — chrome.* calls would throw
+  // "Extension context invalidated" otherwise.
+  try {
+    if (!chrome.runtime?.id) return;
+  } catch (e) {
+    showToast('扩展已更新，请刷新页面后重试');
+    return;
+  }
+
   if (state.translating) return;
 
   const novelId = getNovelIdFromUrl();
@@ -494,14 +504,25 @@ async function handleTranslate() {
 
   // Load settings
   const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt'], (items) => {
-      resolve({
-        targetLang: items.targetLang || 'zh',
-        displayMode: items.displayMode || 'panel',
-        selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
-        customPrompt: items.customPrompt || ''
+    try {
+      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt'], (items) => {
+        resolve({
+          targetLang: items.targetLang || 'zh',
+          displayMode: items.displayMode || 'panel',
+          selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
+          customPrompt: items.customPrompt || ''
+        });
       });
-    });
+    } catch (e) {
+      // Extension context invalidated — surface a friendly message.
+      showToast('扩展已更新，请刷新页面后重试');
+      resolve({
+        targetLang: 'zh',
+        displayMode: 'panel',
+        selectedPresets: [],
+        customPrompt: ''
+      });
+    }
   });
 
   state.novelId = novelId;
