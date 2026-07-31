@@ -809,8 +809,15 @@ function watchPageFlips(originalContent) {
       if (!stale) return;
 
       if (state.fullMode) {
-        // Full-novel mode: rebuild the new page's pairs and refill from
-        // the accumulated map — translations follow the user across pages.
+        // Full-novel mode: translations follow the user across pages.
+        // Pixiv flips pages by REUSING the body container and swapping
+        // the <p>s in place, so buildInlineParagraphs()'s isConnected
+        // guard would wrongly think our pairs are still valid and return
+        // early — leaving the old page's translation divs piled on top
+        // and giving the new page none. Force a clean rebuild every time:
+        // remove all translation divs, rebuild the new page's pairs, then
+        // refill from the accumulated map.
+        restoreOriginalHtml();
         const wrapper = buildInlineParagraphs(originalContent);
         if (wrapper) {
           refillInlineFromMap();
