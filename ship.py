@@ -286,8 +286,8 @@ def step_restart():
         # SSH 返回 1 在某些 Windows 版本是正常的
         log(f"SSH 重启可能有警告: {result.stderr.strip()}", ok=False)
 
-    # 等几秒验证
-    time.sleep(10)
+    # 等几秒验证（schtasks 启动比 start /B 慢）
+    time.sleep(20)
 
     # 验证
     verify = _subprocess_run([
