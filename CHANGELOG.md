@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-07-31] 修复翻页小说翻译"卡住"（长文本 prefill 无反馈）
+
+### 根因（端到端实测确认）
+1. **翻页小说 = 超长文本**：Pixiv AJAX 返回全文（例：9 页小说 27623 字符），DeepSeek prefill 需数分钟才输出首 token（服务器日志：请求 created 10:52:46，首 chunk 10:56:14 才处理）
+2. **SseEmitter 响应头不立即 flush**：浏览器 fetch 一直 pending，用户看不到任何反馈 → 以为卡住 → 取消 → 后端 `Client disconnected`
+3. **DeepSeekClient 误报日志**：`onToken.accept()` 在 parse 的 try-catch 内，`emitter.send` 抛的断开异常被误记为 "Failed to parse SSE chunk"，且客户端断开后仍继续消费 DeepSeek 流浪费 API
+4. **翻页小说 DOM 只渲染当前页**：inline 模式 `findNovelParagraphs` 只找到当前页段落（例：第 1 页仅 1 个 `<p>`），译文 9 页内容 merge 到 1 个 div
+
+### 修复（提交 1add5d4）
+- **TranslateController**：创建 SseEmitter 后立即 `send(comment("connected"))`，强制 flush 响应头 → 浏览器立刻收到连接确认，长 prefill 期间不再像卡死
+- **DeepSeekClient**：识别 `Client disconnected / has already completed / ClientAbortException` 异常 → 停止消费 DeepSeek 流 + 跳过 completion send（省 API、日志不再误报）
+- **content.js**：首 token 8 秒未到 → toast「AI 正在处理长文，可能需要几分钟，请稍候…」
+
+### 验证
+- 服务器本机 `test_api.bat`：SSE 流式 + HTTP 200 + done 正常
+- 本地 15066 长文本（27623 字符）：响应头 5.7s、首 token 8.2s、流式输出正常
+- `mvn compile` BUILD SUCCESS、`node --check` 通过
+- 确认：**后端和网络链路本身健康**，"卡住"纯属长 prefill 期间前端无反馈
+
+### 遗留
+- 翻页小说 inline 模式：DOM 只渲染当前页，译文全文 merge 到当前页段落下方；可后续做"按页翻译"或提示用户用 paged 模式
+
 ## [2026-07-31] 修复 inline 模式容器定位（核心 bug）
 
 ### 问题根因（已实证，非猜测）
