@@ -14,7 +14,6 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.Collections;
 
 @Component
@@ -39,13 +38,11 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         String apiKeyValue = extractApiKey(request);
         if (StringUtils.hasText(apiKeyValue)) {
             apiKeyRepository.findByKeyValueAndActiveTrue(apiKeyValue).ifPresent(key -> {
-                if (key.getExpiresAt() == null || key.getExpiresAt().isAfter(LocalDateTime.now())) {
-                    UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                    key.getUser().getUsername(), null, Collections.emptyList());
-                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                }
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(
+                                key.getUser().getUsername(), null, Collections.emptyList());
+                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authentication);
             });
         }
         filterChain.doFilter(request, response);

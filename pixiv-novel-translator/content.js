@@ -238,9 +238,12 @@ function showToast(message) {
 
 // ─── Listen for Popup Messages ──────────────────────────────
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'MANUAL_TRANSLATE') {
     handleTranslate();
+  }
+  if (message.type === 'PING') {
+    sendResponse({ pong: true });
   }
 });
 
