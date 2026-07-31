@@ -136,7 +136,7 @@ ship.py 在本地 PowerShell 环境中运行 subprocess.run 时可能找不到 n
   - refactor: xxx — refactoring
   - docs: xxx — documentation
   - chore: xxx — misc
-  - **commit message 一律用英文**（用户要求）
+  - **⚠️ commit message 一律用英文（用户硬性要求，无论消息正文写什么都必须英文）**
 
 推送需要走代理：
 ```powershell

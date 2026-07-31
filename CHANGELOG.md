@@ -1,5 +1,52 @@
 # Changelog
 
+## [2026-07-31] 修复翻译"卡住几分钟"与 503 过载、全文模式翻页残留
+
+### 核心根因：SSE 被 Spring Security 在 async dispatch 时掐断（提交 50dbce9）
+- 症状：点翻译后"网页处理中"卡几分钟无输出，或"速度极不稳定"时好时坏
+- 根因（后端日志铁证）：SseEmitter 是异步请求，Tomcat 每次 async dispatch 重入
+  Spring Security 过滤器链（Spring Boot 3 默认 dispatcher-types 含 ASYNC）；但
+  ApiKeyAuthenticationFilter 是 OncePerRequestFilter，async dispatch 时因已过滤标记
+  被跳过，异步线程 SecurityContext 为空 → AuthorizationFilter 拒绝 /api/v1/** →
+  AccessDeniedException → 响应头已提交无法渲染错误页 → SSE 流被掐断，浏览器永远等不到数据
+- 修复：SecurityConfig 增加 dispatcherTypeMatchers(ASYNC, ERROR, FORWARD).permitAll()，
+  认证仍在初始 REQUEST 执行
+- 为什么之前没发现：本地 Python urllib 测试（短连接行为）未触发该路径；且服务器实测
+  DeepSeek 首 token 仅 0.12-0.38s（80B/5.4KB/42KB 输入），排除了 prefill 慢的假设
+
+### 503 过载放大问题（提交 d0d6bfe）
+- 真相：DeepSeek 官方高峰期返回 HTTP 503 "Service is too busy"（用户测试时捕获到）
+- 放大问题 1：RestClient 无任何超时 → DeepSeek 过载时连接挂起几分钟（验证脚本 180s 超时）
+- 放大问题 2：无重试 → 一次 503 直接失败
+- 修复：DeepSeekConfig 加 SimpleClientHttpRequestFactory（15s 连接 / 120s 读取超时）；
+  chatStream 对 503 自动重试 3 次（退避 1.5s/3s/4.5s），失败返回友好提示「DeepSeek 服务繁忙，请稍后重试」
+
+### 全文模式（inline-full）翻页残留（提交 c379f61）
+- 症状：全文翻译完第一页，翻到第二页 → 第一页译文堆在最上面，第二页无译文
+- 根因：Pixiv 翻页复用正文容器、原地替换 <p>，buildInlineParagraphs 的 isConnected
+  检查误判"容器还在 = 译文仍有效"直接 return 不重建
+- 修复：watchPageFlips 的 fullMode 分支翻页时先 restoreOriginalHtml() 强制清理，
+  再重建新页段落对 + 从全文译文 map 回填
+
+### 其他插件修复
+- 翻页后译文残留单页模式（169cee6）：watchPageFlips 对所有 inline 模式启动，监听
+  data-current-page 属性变化；单页模式翻页清旧译文，fullMode 重建回填
+- 失败不删译文（824905e）：finishTranslate 失败不再 restoreOriginalHtml，保留已渲染
+  译文，提示"翻译中断: ...（已显示的译文保留）"
+- 取消误报修复（99f36a8）：abort 类错误识别为取消而非失败，背景层 console.warn + cancelled 标记
+- inline 样式真正生效（403d119）：裸 .pnt-inline-trans 选择器（之前 .pnt-inline-block
+  前缀从未匹配，背景/边框一直没显示）
+- 字体放大：译文 13px → 15px（含 background #f3f4f6 区分原文）
+- 等待秒数显示（d213ee2）：DeepSeek prefill 期间按钮显示"等待 AI 响应 Ns…"
+- autoTranslate 误取消：自动翻译启动标记 autoStarted，手动点击接管为重新翻译
+- 首 token 才切 AI 处理中：状态机修正，preparing（红）保持到首个 token 到达
+
+### 验证
+- 服务器实测 DeepSeek TTFB：80B/5.4KB/42KB 输入均 0.12-0.38s（证明非 prefill 瓶颈）
+- mvn compile 全部 BUILD SUCCESS
+- 遗留：DeepSeek 高峰期可能仍 503（3 次重试后失败），建议后续考虑备用供应商/降级
+
+
 ## [2026-07-31] 修复翻页小说翻译"卡住"（长文本 prefill 无反馈）
 
 ### 根因（端到端实测确认）
