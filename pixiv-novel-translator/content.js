@@ -269,19 +269,43 @@ const PIXIV_CONTAINER_SELECTORS = [
   'article[data-novel]'
 ];
 
-function findNovelContainer() {
-  // Only match known Pixiv novel containers — never fall back to a
-  // blind "largest text block" (that could select the whole page and
-  // destroy it when we clear innerHTML).
+function findNovelContainer(originalContent) {
+  // 1. Known Pixiv selectors (old + new page layouts)
   for (const sel of PIXIV_CONTAINER_SELECTORS) {
     const el = document.querySelector(sel);
     if (el && el.textContent.trim().length > 0) return el;
+  }
+
+  // 2. Safe anchor-based fallback: locate the element that contains the
+  //    start of the novel text we got from the Pixiv API. This only
+  //    matches text nodes deep inside the page — it can never select
+  //    the whole page, so clearing its innerHTML is safe.
+  if (originalContent) {
+    const anchor = htmlToText(originalContent).slice(0, 40).trim();
+    if (anchor.length >= 10) {
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT
+      );
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const t = (node.textContent || '').trim();
+        if (t && (t.startsWith(anchor) || t.includes(anchor.slice(0, 20)))) {
+          let el = node.parentElement;
+          // Climb up until the element is large enough to be the whole body text
+          while (el && el !== document.body && el.textContent.trim().length < 40) {
+            el = el.parentElement;
+          }
+          return el && el !== document.body ? el : node.parentElement;
+        }
+      }
+    }
   }
   return null;
 }
 
 function buildInlineParagraphs(originalContent) {
-  const container = findNovelContainer();
+  const container = findNovelContainer(originalContent);
   if (!container) return null;
 
   state.originalHtml = container.innerHTML;
@@ -319,7 +343,7 @@ function buildInlineParagraphs(originalContent) {
 }
 
 function restoreOriginalHtml() {
-  const container = findNovelContainer();
+  const container = findNovelContainer(state.originalHtml);
   if (container && state.originalHtml) {
     container.innerHTML = state.originalHtml;
     container.style.whiteSpace = '';
@@ -428,12 +452,26 @@ function onNovelLoaded(data) {
   }
 
   // Inline mode: also build paragraph pairs in the page.
-  // If we can't find the container we do NOT silently switch to panel —
-  // the floating window still shows the translation, and we notify the user.
+  // If we can't find the container, fall back to the floating window
+  // so the translation is still visible (never dead-end silently).
   if (state.mode === 'inline') {
     const wrapper = buildInlineParagraphs(data.originalContent);
     if (!wrapper) {
-      console.warn('[PNT] inline container not found; translation still shown in window');
+      console.warn('[PNT] inline container not found; showing in window instead');
+      openWindow();
+      state.mode = 'panel'; // render into the window from now on
+      if (state.windowEl) {
+        state.windowEl.querySelector('.pnt-title').textContent = data.title || '';
+        state.windowEl.querySelector('.pnt-meta').textContent =
+          `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
+        const origBody = state.windowEl.querySelector('.pnt-orig-body');
+        if (origBody) {
+          origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
+            .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
+            .join('');
+        }
+      }
+      showToast('未找到原文容器，已改用侧边面板显示');
     }
   }
 
