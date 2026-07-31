@@ -22,7 +22,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sender.tab?.id,
             message.selectedPresets || [],
             message.customPrompt || '',
-            message.currentPage || 0
+            message.currentPage || 0,
+            !!message.fullMode
           );
           sendResponse({ success: true });
           break;
@@ -63,7 +64,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false) {
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -87,7 +88,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       // The content script needs to know whether this request is the
       // paged-novel flow (numbered paragraphs + JSON Lines output) so it
       // can pick the right streaming renderer.
-      pagedRequest: currentPage > 0
+      pagedRequest: currentPage > 0 || fullMode,
+      fullMode
     }
   });
 
@@ -99,7 +101,10 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // Paged novels: translate only the current page (the DOM only shows
     // that page). The neighbouring pages are passed as context so the
     // model keeps continuity — they are marked as reference, not output.
-    const sourceText = buildPageSource(novel.content, currentPage);
+    // fullMode translates the WHOLE novel in one request with global
+    // paragraph ids; the content script maps ids back to whatever page
+    // the user is reading, so flipping pages never needs a re-translate.
+    const sourceText = fullMode ? buildFullSource(novel.content) : buildPageSource(novel.content, currentPage);
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
@@ -123,6 +128,33 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       activeController = null;
     }
   }
+}
+
+// Full-novel request: every paragraph of every page gets a GLOBAL id
+// ([1]..[N], continuous across [newpage] page breaks). The content
+// script computes the per-page id offset from originalContent so it can
+// render each page's translations as the user flips to it — the SSE
+// stream keeps running while the user reads/flips (never interrupted).
+function buildFullSource(fullText) {
+  const pages = fullText
+    .split(/\[newpage\]/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  const numbered = [];
+  let id = 1;
+  for (const page of pages) {
+    const paras = page
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    for (const para of paras) {
+      numbered.push(`[${id}] ${para}`);
+      id++;
+    }
+    numbered.push(''); // blank line between pages
+  }
+  return `【全文翻译（所有段落已编号）】\n` + numbered.join('\n');
 }
 
 // Build the request text for a possibly paged novel.
@@ -262,10 +294,11 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
   // Paged-novel request built by buildPageSource(): the text contains
   // reference-only context sections plus the target page. Tell the model
   // explicitly to translate only the marked page and never echo context.
-  if (text.includes('【当前页')) {
-    prompt += `\n\n源文本由【参考上下文】（上一页/下一页，仅用于理解情节）和【当前页】两部分组成。请只翻译【当前页】部分，参考上下文一律不要翻译、不要输出、不要复述。
+  // Full-novel requests (buildFullSource) carry the same [编号] structure.
+  if (text.includes('【当前页') || text.includes('【全文翻译')) {
+    prompt += `\n\n源文本中【参考上下文】部分（如有）仅用于理解情节，一律不要翻译、不要输出、不要复述。请只翻译需要翻译的部分。
 
-【当前页】的段落已用 [编号] 标记。请逐段翻译，输出为 JSON Lines 格式：每一行是一个独立的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。
+所有需要翻译的段落已用 [编号] 标记（[1]、[2]、...）。请逐段翻译，输出为 JSON Lines 格式：每一行是一个独立的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。
 
 {"id":1,"text":"第一段的译文"}
 {"id":2,"text":"第二段的译文"}
@@ -274,7 +307,7 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
 1. 每一行必须是一个完整、合法的 JSON 对象，用双引号，不要注释、不要 Markdown 代码块标记、不要任何额外文字；
 2. id 必须与输入 [编号] 一一对应，顺序不变，不得合并或遗漏；
 3. 译文内部的换行用 \\n 转义写在 text 里，段落之间严格分行；
-4. 参考上下文不要翻译、不要出现在输出中。`;
+4. 参考上下文不要翻译、不要出现在输出中；全文模式下必须输出所有编号段落的译文，不得遗漏任何编号。`;
   }
 
 

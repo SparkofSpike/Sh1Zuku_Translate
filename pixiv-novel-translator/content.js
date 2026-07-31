@@ -19,7 +19,11 @@ let state = {
   originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
   novelAuthor: '',
-  pagedRequest: false     // true when background uses the paged-novel flow
+  pagedRequest: false,    // true when background uses the paged-novel flow
+  fullMode: false,        // true: translate whole novel once (inline-full)
+  fullTranslations: {},   // global paragraph id -> translated text
+  pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
+  pageFlipObserver: null  // MutationObserver for page flips (fullMode)
 };
 
 // ─── Current Page (paged novels) ─────────────────────────────
@@ -32,6 +36,34 @@ function getCurrentNovelPage() {
   if (!el) return 0;
   const page = parseInt(el.getAttribute('data-current-page') || '0', 10);
   return page > 0 ? page : 0;
+}
+
+// Split novel text into pages ([newpage]) then into paragraphs (\n\n),
+// exactly like buildFullSource() in background.js. Returns the first
+// global paragraph id of each page (1-based).
+function computePageStartIds(originalContent) {
+  const pages = String(originalContent || '')
+    .split(/\[newpage\]/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  const starts = [];
+  let id = 1;
+  for (const page of pages) {
+    starts.push(id);
+    const count = page
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0).length;
+    id += count;
+  }
+  return starts;
+}
+
+// Global paragraph id of the k-th paragraph (0-based) on page `page`.
+// pageStartIds is 1-based per page; falls back to k+1 when unknown.
+function globalParagraphId(page, k) {
+  const start = state.pageStartIds[page - 1];
+  return start ? start + k : k + 1;
 }
 
 // ─── Detect Novel ID from URL ───────────────────────────────
@@ -385,10 +417,15 @@ function findNovelParagraphs(originalContent) {
 }
 
 function buildInlineParagraphs(originalContent) {
-  // Idempotent: if we already built the inline pairs, do nothing.
-  // (The MutationObserver retries; without this guard each retry would
-  // insert a second batch of translation divs.)
-  if (state.inlineTransEls && state.inlineTransEls.length) return state.inlineContainer;
+  // Idempotent: if we already built the inline pairs for the CURRENT
+  // (still-connected) DOM, do nothing. When the user flips to another
+  // page, Pixiv re-renders the body and our old elements get detached —
+  // isConnected detects that and we rebuild from scratch.
+  const active = state.inlineContainer && state.inlineContainer.isConnected;
+  if (active && state.inlineTransEls && state.inlineTransEls.length) return state.inlineContainer;
+  if (state.inlineTransEls && state.inlineTransEls.length) {
+    restoreOriginalHtml(); // clear stale pairs from the previous page
+  }
 
   // Never rebuild the Pixiv DOM (clearing innerHTML could destroy the page).
   // Instead, find the paragraph elements Pixiv rendered and insert a
@@ -400,9 +437,13 @@ function buildInlineParagraphs(originalContent) {
 
   // Insert one translation div after each paragraph element
   const transEls = [];
-  paraEls.forEach((p) => {
+  const currentPage = getCurrentNovelPage() || 1;
+  paraEls.forEach((p, k) => {
     const trans = document.createElement('div');
     trans.className = 'pnt-inline-trans';
+    // Remember which global paragraph id this div corresponds to, so a
+    // full-novel stream can refill it after a page flip.
+    trans.dataset.pid = String(globalParagraphId(currentPage, k));
     p.insertAdjacentElement('afterend', trans);
     transEls.push(trans);
   });
@@ -520,6 +561,17 @@ function renderInlineJsonLines(entries) {
   });
 }
 
+// Full-novel mode: refill every currently-visible translation div from
+// the accumulated global map. Called on every stream token and again
+// after a page flip (new page paragraphs get their matching texts).
+function refillInlineFromMap() {
+  const transEls = state.inlineTransEls || [];
+  transEls.forEach((el) => {
+    if (!el || !el.dataset || !el.dataset.pid) return;
+    el.textContent = state.fullTranslations[el.dataset.pid] || '';
+  });
+}
+
 // Inline mode: split accumulated translation into paragraphs and fill
 // each translation div. Extra paragraphs merge into the last div instead
 // of overwriting earlier ones (fixes misaligned paragraph mapping).
@@ -533,7 +585,14 @@ function renderInlineStreaming() {
   if (state.pagedRequest) {
     const jsonEntries = parseJsonLines(state.streamingText);
     if (jsonEntries.length) {
-      renderInlineJsonLines(jsonEntries);
+      if (state.fullMode) {
+        // Full-novel stream: accumulate into the global map, then refill
+        // whatever page is currently visible (typing effect preserved).
+        jsonEntries.forEach((e) => { state.fullTranslations[e.id] = e.text; });
+        refillInlineFromMap();
+      } else {
+        renderInlineJsonLines(jsonEntries);
+      }
       return;
     }
   }
@@ -604,10 +663,20 @@ async function handleTranslate() {
 
   state.novelId = novelId;
   state.targetLang = settings.targetLang;
-  state.mode = settings.displayMode;
+  // inline-full: translate the whole novel once, keep refilling each
+  // page as the user flips to it. Internally it renders like 'inline'.
+  state.fullMode = settings.displayMode === 'inline-full';
+  state.mode = state.fullMode ? 'inline' : settings.displayMode;
   state.translating = true;
   state.streamingText = '';
   state.paraTranslations = [];
+  // Drop any previous full-novel watcher/state before starting fresh.
+  if (state.pageFlipObserver) {
+    state.pageFlipObserver.disconnect();
+    state.pageFlipObserver = null;
+  }
+  state.fullTranslations = {};
+  state.pageStartIds = [];
   // Long texts (paged Pixiv novels) can take DeepSeek a while to pre-fill;
   // if no token arrives within a few seconds, tell the user we are working
   // instead of leaving the UI looking stuck.
@@ -630,7 +699,10 @@ async function handleTranslate() {
   try {
     await sendToBackground('TRANSLATE_NOVEL_STREAM', {
       novelId,
-      currentPage: getCurrentNovelPage(),
+      // fullMode: background translates the whole novel (global ids);
+      // otherwise translate only the page the user is reading.
+      currentPage: state.fullMode ? 0 : getCurrentNovelPage(),
+      fullMode: state.fullMode,
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
       customPrompt: settings.customPrompt
@@ -647,6 +719,10 @@ function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
   state.pagedRequest = !!data.pagedRequest;
+  state.fullMode = !!data.fullMode;
+  if (state.fullMode) {
+    state.pageStartIds = computePageStartIds(data.originalContent);
+  }
 
   fillWindowFromNovel(data);
 
@@ -684,6 +760,33 @@ function fillWindowFromNovel(data) {
 
 const INLINE_WAIT_TIMEOUT_MS = 20000; // generous: body renders client-side
 
+// Full-novel mode: Pixiv re-renders the body whenever the user flips a
+// page, detaching our translation divs. Watch the body and rebuild the
+// current page's inline pairs + refill from the accumulated map whenever
+// that happens — the SSE stream itself keeps running (never interrupted
+// by page flips).
+function watchPageFlips(originalContent) {
+  if (state.pageFlipObserver) return; // already watching
+  let timer = null;
+  state.pageFlipObserver = new MutationObserver(() => {
+    // Debounce: Pixiv re-renders in a burst on page flip.
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      const active = state.inlineContainer && state.inlineContainer.isConnected;
+      const stale = state.inlineTransEls && state.inlineTransEls.length && !active;
+      if (stale) {
+        // Paragraphs were replaced (page flip or lazy re-render): rebuild
+        // the current page's pairs and refill any already-translated text.
+        const wrapper = buildInlineParagraphs(originalContent);
+        if (wrapper) {
+          refillInlineFromMap();
+        }
+      }
+    }, 300);
+  });
+  state.pageFlipObserver.observe(document.body, { childList: true, subtree: true });
+}
+
 // Wait for the novel body paragraphs to appear, then build the inline
 // pairs. Falls back to the floating window only after the timeout, so a
 // slow page never makes inline mode silently degrade to the panel.
@@ -711,6 +814,12 @@ function waitForInlineContainer(data) {
   const tryBuild = () => {
     if (buildInlineParagraphs(data.originalContent)) {
       cleanup();
+      // In full-novel mode keep watching for page flips so translations
+      // appear on every page without re-translating.
+      if (state.fullMode) {
+        watchPageFlips(data.originalContent);
+        refillInlineFromMap();
+      }
       updateTranslateButton('ai-processing');
       return true;
     }

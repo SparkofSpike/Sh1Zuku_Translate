@@ -223,11 +223,13 @@
 
 .pnt-inline-block .pnt-inline-trans {
   margin: 0 0 8px 0;
-  color: #777;
+  color: #555;
   font-size: 13px;
   line-height: 1.7;
-  border-left: 3px solid #e0e0e0;
-  padding-left: 10px;
+  border-left: 3px solid #c8c8c8;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 6px 10px;
   white-space: pre-wrap;
 }
 
