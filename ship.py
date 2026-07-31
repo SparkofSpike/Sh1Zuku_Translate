@@ -17,6 +17,7 @@ ShizukuTranslate — 本地一键部署脚本
 """
 
 import argparse
+import glob
 import os
 import shutil
 import subprocess
@@ -47,29 +48,76 @@ def log(msg: str, ok: bool = True):
     print(f"  {icon} {msg}")
 
 
+def _resolve_tool(name: str) -> str | None:
+    """查找工具的可执行文件路径（多策略回退）"""
+    # Strategy 1: shutil.which 走当前 PATH + PATHEXT
+    path = shutil.which(name)
+    if path:
+        return path
+
+    # Strategy 2: where.exe (cmd.exe 的查找)
+    try:
+        result = subprocess.run(
+            ["where.exe", name],
+            capture_output=True, text=True, check=False,
+            shell=True  # 通过 cmd.exe 获取完整系统 PATH
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line and line.lower().endswith((".exe", ".cmd", ".bat", ".ps1")):
+                    return line
+    except Exception:
+        pass
+
+    return None
+
+
+def _subprocess_run(cmd: list, cwd=None, capture=False):
+    """执行子进程，自动处理 Windows GBK 编码"""
+    kwargs = dict(cwd=cwd, capture_output=capture, check=False)
+    try:
+        return subprocess.run(cmd, text=True, errors='replace', **kwargs)
+    except TypeError:
+        # Python < 3.12 不支持 errors 参数时兜底
+        return subprocess.run(cmd, text=True, **kwargs)
+
+
 def run(cmd: list, cwd: Path | None = None, capture: bool = False) -> subprocess.CompletedProcess:
     """执行命令"""
     print(f"  $ {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=capture, text=True, check=False)
-        if result.returncode != 0:
-            if capture:
-                print(f"    stderr: {result.stderr.strip()}")
-            return result
-        return result
+        return _subprocess_run(cmd, cwd=cwd, capture=capture)
     except FileNotFoundError as e:
-        print(f"    [ERROR] 命令未找到: {e}")
+        tool = cmd[0]
+        resolved = _resolve_tool(tool)
+        if resolved:
+            cmd[0] = resolved
+            return subprocess.run(cmd, cwd=cwd, capture_output=capture, text=True, check=False)
+        print(f"    [ERROR] 命令未找到: {tool}（尝试了 PATH 查找、where.exe）")
         sys.exit(1)
 
 
 def check_tool(name: str, cmd: list[str]) -> str | None:
     """检查工具是否可用"""
+    # 直接运行时查找
     try:
+        # 先用 os.environ 路径试
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode == 0:
             return result.stdout.strip().split("\n")[0]
     except FileNotFoundError:
         pass
+
+    # 回退：通过 _resolve_tool 找到绝对路径再跑
+    path = _resolve_tool(name)
+    if path:
+        try:
+            result = subprocess.run([path] + cmd[1:], capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                return result.stdout.strip().split("\n")[0]
+        except FileNotFoundError:
+            pass
     return None
 
 
@@ -185,23 +233,23 @@ def step_upload():
         f'taskkill /f /im java.exe 2>nul & '
         f'taskkill /f /im python.exe 2>nul'
     )
-    subprocess.run([
+    _subprocess_run([
         "ssh", "-o", "StrictHostKeyChecking=no",
         "-p", str(SERVER_PORT),
         "-i", SSH_KEY,
         f"{SERVER_USER}@{SERVER_HOST}",
         stop_script
-    ], capture_output=True, text=True, check=False)
+    ], capture=True)
     log("旧服务已停止")
 
     # SCP 上传
-    result = subprocess.run([
+    result = _subprocess_run([
         "scp", "-o", "StrictHostKeyChecking=no",
         "-P", str(SERVER_PORT),
         "-i", SSH_KEY,
         "-r", str(DEPLOY_DIR / "*"),
         f"{SERVER_USER}@{SERVER_HOST}:{SERVER_PATH}/"
-    ], capture_output=True, text=True, check=False)
+    ], capture=True)
 
     if result.returncode != 0:
         log(f"SCP 上传失败: {result.stderr.strip()}", ok=False)
@@ -215,21 +263,24 @@ def step_restart():
     """SSH 重启服务"""
     print("\n[7/7] 重启服务...")
     python_path = r"C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+    backend_bat = f"{SERVER_PATH}\\_task_backend.bat"
 
+    # schtasks 方式：SSH 断开后进程仍在
     restart_script = (
-        f'cd /d {SERVER_PATH} && '
-        f'start /B "" {python_path} ocr-worker\\ocr_server.py > logs\\ocr.log 2>&1 && '
-        f'timeout /t 5 /nobreak >nul && '
-        f'start /B "" java -jar translator.jar > logs\\backend.log 2>&1'
+        f'taskkill /f /im java.exe 2>nul & '
+        f'taskkill /f /im python.exe 2>nul & '
+        f'schtasks /delete /tn SvcShizuku /f 2>nul & '
+        f'schtasks /create /tn SvcShizuku /tr "{backend_bat}" /sc once /st 00:00 /f 2>nul & '
+        f'schtasks /run /tn SvcShizuku 2>nul'
     )
 
-    result = subprocess.run([
+    result = _subprocess_run([
         "ssh", "-o", "StrictHostKeyChecking=no",
         "-p", str(SERVER_PORT),
         "-i", SSH_KEY,
         f"{SERVER_USER}@{SERVER_HOST}",
         restart_script
-    ], capture_output=True, text=True, check=False)
+    ], capture=True)
 
     if result.returncode != 0 and result.returncode != 1:
         # SSH 返回 1 在某些 Windows 版本是正常的
@@ -239,13 +290,13 @@ def step_restart():
     time.sleep(10)
 
     # 验证
-    verify = subprocess.run([
+    verify = _subprocess_run([
         "ssh", "-o", "StrictHostKeyChecking=no",
         "-p", str(SERVER_PORT),
         "-i", SSH_KEY,
         f"{SERVER_USER}@{SERVER_HOST}",
         f"netstat -ano | findstr 5566"
-    ], capture_output=True, text=True, check=False)
+    ], capture=True)
 
     if "LISTENING" in verify.stdout:
         log("服务已启动 (端口 5566)")
