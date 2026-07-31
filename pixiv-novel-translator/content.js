@@ -461,19 +461,45 @@ function renderPagedStreaming() {
 // an array of {id, text} entries, or [] if the text is not (yet) JSON
 // Lines (e.g. the model ignored the instruction, or a line is still
 // streaming and incomplete).
+// Progressive: a line that is still streaming (unclosed JSON) is parsed
+// best-effort so the id and the text prefix received so far can render
+// immediately — this keeps the typewriter effect instead of waiting for
+// the whole line to arrive.
 function parseJsonLines(streamText) {
   const entries = [];
   const lines = streamText.split('\n');
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line.startsWith('{') || !line.endsWith('}')) continue;
-    try {
-      const obj = JSON.parse(line);
-      if (obj && typeof obj.id === 'number' && typeof obj.text === 'string') {
-        entries.push({ id: obj.id, text: obj.text });
+    if (!line.startsWith('{')) continue;
+
+    // 1) Complete JSON line — strict parse.
+    if (line.endsWith('}')) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj.id === 'number' && typeof obj.text === 'string') {
+          entries.push({ id: obj.id, text: obj.text });
+          continue;
+        }
+      } catch (e) {
+        // fall through to progressive parse
       }
-    } catch (e) {
-      // incomplete / malformed line — skip; it may complete next tick
+    }
+
+    // 2) Line still streaming (or malformed): extract the id and the
+    //    text prefix emitted so far. Unescape \n etc. so multi-line
+    //    paragraphs keep their structure as the rest of the line arrives.
+    const idMatch = line.match(/"id"\s*:\s*(\d+)/);
+    if (!idMatch) continue;
+    const id = parseInt(idMatch[1], 10);
+    const textMatch = line.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)/);
+    if (textMatch) {
+      let text = textMatch[1];
+      try {
+        text = JSON.parse('"' + text + '"');
+      } catch (e) {
+        // keep raw prefix
+      }
+      entries.push({ id, text });
     }
   }
   return entries;
