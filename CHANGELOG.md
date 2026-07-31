@@ -1,5 +1,49 @@
 # Changelog
 
+## [2026-07-31] Pixiv 小说翻译插件开发（v1.1.0+9170f8e）
+
+### 插件功能（pixiv-novel-translator/）
+- **流式翻译**：`background.js` 调用后端 `/api/v1/translate/stream` SSE，打字机效果输出，`AbortController` 支持取消
+- **三态按钮**（照搬网站）：黑 `#1a1a1a`(idle) → 红 `#e03131`(preparing) → 蓝 `#1971c2`(ai-processing)，任意阶段点击取消
+- **悬浮窗 UI**：可拖动窗口（展开态）+ 右下角胶囊按钮（缩小态）；标题/作者/版本号显示
+- **三种显示模式**（popup 选择）：
+  - `panel` 侧边面板（默认）
+  - `inline` 原文内嵌对照（彩云小译式：原文段落下方插译文 div）
+  - `paged` 分页模式（保留 Pixiv 的 `[newpage]` 分页符）
+- **预设多选 + 自定义 Prompt**：popup 从后端 `GET /api/v1/presets` 拉取，与网页一致
+- **API Key 鉴权**：后端新增 `X-API-Key` header 鉴权（`ApiKeyAuthenticationFilter`），Key 格式 `sk-st`+UUID（无连字符），永久有效
+- **版本号**：`build_extension.py` 从 git commit 生成 `version.js`，悬浮窗头部 + popup 显示
+
+### 后端
+- 新增 ApiKey 实体/Repository/Service/Filter，AuthController 增加 Key 管理端点
+- CORS 放行 `chrome-extension://*`
+- `ApiKey.user` 改 `EAGER` 加载（修 Filter 中 LazyInitializationException）
+- `expiresAt` null-safe（`Map.of` 不接受 null，改 `LinkedHashMap`）
+
+### 已修复的关键 bug（历史）
+- `startStreamingTranslation` 签名缺少 `selectedPresets/customPrompt` → ReferenceError
+- 取消翻译后按钮卡死 → `cancelTranslation` 恢复 idle + 忽略迟到 token
+- Extension context invalidated → 按钮幂等清理 + init 检测 + 友好提示
+- autoTranslate 与手动点击冲突 → MANUAL_TRANSLATE 先 cancel 再 start
+- 内联段落错位 → 改为在 Pixiv 自己的 `<p>` 后插译文 div，不重建 DOM
+- Pixiv fetch Failed to fetch → **剥离 forbidden headers**（Cookie/UA/Referer，Edge 拒绝）
+
+### ⚠️ 当前已知问题（未解决）
+1. **inline 模式容器定位不可靠**：Pixiv 新版页面（Next.js + styled-components，class 随机 `sc-xxx`）导致 `findNovelContainer` 选择器全部匹配失败 → 4 秒轮询超时后**自动 fallback 到侧边栏**（用户反馈"点原文嵌入又弹侧边栏"）。文本锚点 fallback 也常失效（页面正文 AJAX 渲染、文本被拆分）。**这是下一个接手者要攻克的核心问题。**
+2. **PHPSESSID Cookie 依赖**：为修 Failed to fetch 已剥离 Cookie header，登录限定内容（R18/私人小说）可能拿不到全文；若需要，改用 `credentials:'include'` 或 declarativeNetRequest 方案
+3. 无单元测试；插件无自动化测试
+
+### 部署
+- `git push`（socks5 代理 127.0.0.1:10808）→ `python ship.py`
+- 服务器：`ad.rainplay.cn:15066`（网页） / `:22591→52291`（SSH）
+- 插件：Edge 手动 `edge://extensions` 加载 `pixiv-novel-translator/`
+
+### 已知限制
+- 自动部署因雨云（宿迁）网络限制无法正常工作：
+  - 出站：`github.com` / `api.github.com` DNS 被劫持至 `218.93.206.123`
+  - 入站：GitHub Actions 所在 IP（美国）无法 SSH 连接服务器
+  - 替代方案：使用本地 `ship.py` 进行部署
+
 ## [2026-07-30] 大规模重构 + GitHub 接入 + CI/CD
 
 ### 基础设施

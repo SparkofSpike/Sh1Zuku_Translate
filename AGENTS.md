@@ -198,13 +198,26 @@ curl https://ad.rainplay.cn:22591/
 
 ```
 用户点击翻译 → content.js 提取 novel_id → background.js:
-  1. chrome.cookies.get → PHPSESSID
-  2. fetch(https://www.pixiv.net/ajax/novel/{id}) → 原文
-  3. fetch({后端}/api/v1/translate, X-API-Key) → 译文
-→ content.js 渲染右侧滑入翻译面板
+  1. fetch(https://www.pixiv.net/ajax/novel/{id}) → 原文 (bare fetch, 不设 forbidden headers)
+  2. fetch({后端}/api/v1/translate/stream, X-API-Key) → SSE 流式译文
+→ content.js 渲染（三种模式：panel 侧边栏 / inline 原文内嵌 / paged 分页）
 ```
 
-### 8.4 API Key 管理
+> **重要经验（踩坑记录）**：
+> - 扩展 fetch pixiv **不能手动设置 Cookie/User-Agent/Referer**（forbidden headers），Edge 会直接抛 `Failed to fetch`。bare fetch 即可（pixiv AJAX API 无需登录可访问公开小说）。
+> - 修改插件文件后，用户必须在 `edge://extensions` 点「重新加载」，且**刷新 Pixiv 页面**才能让新 content.js 生效（否则报 `Extension context invalidated`）。
+> - 用户浏览器是 **Edge**（不是 Chrome），v2rayN 开了 TUN 模式（`xray_tun` 网卡），系统代理 `127.0.0.1:10808`。
+> - 用户后端地址：`http://ad.rainplay.cn:15066`（不是 22591，那是 SSH 端口）。
+
+### 8.4 显示模式（popup 设置）
+
+| 模式 | 行为 |
+|------|------|
+| `panel`（默认） | 右侧悬浮窗输出，可拖动，缩小后变右下角胶囊按钮 |
+| `inline` | **原文内嵌对照**（彩云小译式），译文插到 Pixiv 原文段落下方 |
+| `paged` | 保留 Pixiv 的 `[newpage]` 分页符，分页块显示 |
+
+### 8.5 API Key 管理
 
 API Key 由 Web 后端的登录用户生成，通过以下端点管理：
 
