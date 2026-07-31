@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // Pixiv Novel Translator — Content Script
 // ============================================================
 
@@ -7,22 +7,28 @@
 let state = {
   novelId: null,
   translating: false,
-  translationPanel: null
+  mode: 'panel',          // 'panel' | 'inline'
+  targetLang: 'zh',
+  streamingText: '',
+  currentParaIndex: 0,    // current paragraph being translated
+  paraTranslations: [],   // per-paragraph translations
+  inlineContainer: null,  // inline mode: paragraph wrapper
+  panel: null,
+  panelBody: null,
+  cancelBtn: null,
+  originalHtml: null,     // saved original container HTML
+  novelTitle: '',
+  novelAuthor: ''
 };
 
 // ─── Detect Novel ID from URL ───────────────────────────────
 
 function getNovelIdFromUrl() {
   const url = window.location.href;
-
-  // Format: /novel/show.php?id=123456
   const match1 = url.match(/[?&]id=(\d+)/);
   if (match1) return match1[1];
-
-  // Format: /novel/123456
   const match2 = url.match(/\/novel\/(\d+)/);
   if (match2) return match2[1];
-
   return null;
 }
 
@@ -42,7 +48,7 @@ function sendToBackground(type, payload) {
   });
 }
 
-// ─── HTML → Plain Text (strip <br> to newlines) ─────────────
+// ─── HTML → Plain Text ──────────────────────────────────────
 
 function htmlToText(html) {
   return html
@@ -57,8 +63,6 @@ function htmlToText(html) {
     .trim();
 }
 
-// ─── Text to Paragraphs ─────────────────────────────────────
-
 function textToParagraphs(text) {
   return text
     .split(/\n{2,}/)
@@ -66,7 +70,15 @@ function textToParagraphs(text) {
     .filter(p => p.length > 0);
 }
 
-// ─── Create UI Elements ─────────────────────────────────────
+// ─── Escape HTML ────────────────────────────────────────────
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ─── Create Floating Button ─────────────────────────────────
 
 function createButton() {
   const btn = document.createElement('button');
@@ -78,119 +90,214 @@ function createButton() {
     right: 24px;
     z-index: 99999;
     padding: 10px 20px;
-    background: #1a73e8;
+    background: #1a1a1a;
     color: #fff;
     border: none;
     border-radius: 24px;
     font-size: 14px;
     cursor: pointer;
     box-shadow: 0 2px 12px rgba(0,0,0,0.2);
-    transition: all 0.2s;
+    transition: background 0.2s;
   `;
-  btn.onmouseenter = () => { btn.style.background = '#1557b0'; };
-  btn.onmouseleave = () => { btn.style.background = '#1a73e8'; };
+  btn.onmouseenter = () => { btn.style.background = '#444'; };
+  btn.onmouseleave = () => { btn.style.background = '#1a1a1a'; };
   btn.onclick = handleTranslate;
   return btn;
 }
 
-function createLoadingIndicator() {
-  const el = document.createElement('div');
-  el.id = 'pnt-loading';
-  el.textContent = '翻译中...';
-  el.style.cssText = `
-    position: fixed;
-    bottom: 24px;
-    right: 120px;
-    z-index: 99999;
-    padding: 10px 20px;
-    background: #fff;
-    color: #333;
-    border: 1px solid #ddd;
-    border-radius: 24px;
-    font-size: 14px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-  `;
-  return el;
+// ─── Loading / Status Indicator ─────────────────────────────
+
+function showStatus(text, { error = false } = {}) {
+  let el = document.getElementById('pnt-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pnt-status';
+    el.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 130px;
+      z-index: 99999;
+      padding: 10px 20px;
+      background: #fff;
+      color: #333;
+      border: 1px solid #ddd;
+      border-radius: 24px;
+      font-size: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    `;
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.style.color = error ? '#e03131' : '#333';
 }
 
-// ─── Render Translation Panel ───────────────────────────────
+function hideStatus() {
+  const el = document.getElementById('pnt-status');
+  if (el) el.remove();
+}
 
-function renderTranslationPanel(data) {
-  // Remove existing panel if any
-  const existing = document.getElementById('pnt-panel');
-  if (existing) existing.remove();
+// ─── Panel Mode: Render Slide-in Panel ──────────────────────
 
+function createPanel() {
+  removePanel();
   const panel = document.createElement('div');
   panel.id = 'pnt-panel';
-
-  // Header
-  const header = document.createElement('div');
-  header.className = 'pnt-header';
-  header.innerHTML = `
-    <div class="pnt-header-left">
-      <strong>翻译结果</strong>
-      <span class="pnt-title">${escapeHtml(data.title)}</span>
-      <span class="pnt-meta">作者: ${escapeHtml(data.author)} · 字符数: ${data.characterCount || '?'}</span>
+  panel.innerHTML = `
+    <div class="pnt-header">
+      <div class="pnt-header-left">
+        <strong>翻译结果</strong>
+        <span class="pnt-title"></span>
+        <span class="pnt-meta"></span>
+      </div>
+      <button class="pnt-close-btn" title="关闭">×</button>
     </div>
-    <button class="pnt-close-btn" title="关闭">✕</button>
-  `;
-  header.querySelector('.pnt-close-btn').onclick = () => panel.remove();
-
-  // Content area
-  const content = document.createElement('div');
-  content.className = 'pnt-content';
-
-  // Original text (collapsible)
-  const originalSection = document.createElement('div');
-  originalSection.className = 'pnt-section';
-  originalSection.innerHTML = `
-    <div class="pnt-section-title" style="cursor:pointer;">
-      <span class="pnt-toggle">▼</span> 原文 (${data.title})
+    <div class="pnt-toolbar">
+      <button class="pnt-cancel-btn" style="display:none;">取消翻译</button>
     </div>
-    <div class="pnt-section-body">
-      ${textToParagraphs(htmlToText(data.originalContent))
-        .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
-        .join('')}
-    </div>
-  `;
-  originalSection.querySelector('.pnt-section-title').onclick = () => {
-    const body = originalSection.querySelector('.pnt-section-body');
-    const toggle = originalSection.querySelector('.pnt-toggle');
-    body.style.display = body.style.display === 'none' ? 'block' : 'none';
-    toggle.textContent = body.style.display === 'none' ? '▶' : '▼';
-  };
-
-  // Translation
-  const translationSection = document.createElement('div');
-  translationSection.className = 'pnt-section';
-  translationSection.innerHTML = `
-    <div class="pnt-section-title">
-      <span class="pnt-toggle">▼</span> 中文翻译
-    </div>
-    <div class="pnt-section-body">
-      ${textToParagraphs(data.translatedContent)
-        .map(p => `<p class="pnt-translation-p">${escapeHtml(p)}</p>`)
-        .join('')}
+    <div class="pnt-content">
+      <div class="pnt-section">
+        <div class="pnt-section-title">
+          <span class="pnt-toggle">▼</span> 中文翻译
+        </div>
+        <div class="pnt-section-body pnt-trans-body"></div>
+      </div>
+      <div class="pnt-section">
+        <div class="pnt-section-title" style="cursor:pointer;">
+          <span class="pnt-toggle">▼</span> 原文
+        </div>
+        <div class="pnt-section-body pnt-orig-body"></div>
+      </div>
     </div>
   `;
 
-  content.appendChild(originalSection);
-  content.appendChild(translationSection);
+  // Toggle original section
+  const origTitle = panel.querySelectorAll('.pnt-section-title')[1];
+  origTitle.addEventListener('click', () => {
+    const body = panel.querySelector('.pnt-orig-body');
+    const toggle = origTitle.querySelector('.pnt-toggle');
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? 'block' : 'none';
+    toggle.textContent = hidden ? '▼' : '▶';
+  });
 
-  panel.appendChild(header);
-  panel.appendChild(content);
+  panel.querySelector('.pnt-close-btn').onclick = () => removePanel();
+
+  // Cancel button
+  const cancelBtn = panel.querySelector('.pnt-cancel-btn');
+  cancelBtn.addEventListener('click', cancelTranslation);
+  state.cancelBtn = cancelBtn;
+
   document.body.appendChild(panel);
+  state.panel = panel;
+  state.panelBody = panel.querySelector('.pnt-trans-body');
+  return panel;
 }
 
-// ─── Escape HTML ────────────────────────────────────────────
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+function removePanel() {
+  const existing = document.getElementById('pnt-panel');
+  if (existing) existing.remove();
+  state.panel = null;
+  state.panelBody = null;
+  state.cancelBtn = null;
 }
 
-// ─── Main Translation Handler ───────────────────────────────
+// ─── Inline Mode: Rewrite Novel Container with Paragraphs ───
+
+const PIXIV_CONTAINER_SELECTORS = [
+  '.novel_view',
+  '#novel-body',
+  '.novel-p5',
+  'section[data-novel]',
+  '.novel-body',
+  '.js-novel-container'
+];
+
+function findNovelContainer() {
+  for (const sel of PIXIV_CONTAINER_SELECTORS) {
+    const el = document.querySelector(sel);
+    if (el && el.textContent.trim().length > 0) return el;
+  }
+  // Fallback: largest text block
+  const candidates = document.querySelectorAll('section, article, main, div');
+  let best = null;
+  let bestLen = 0;
+  candidates.forEach((el) => {
+    const len = el.textContent?.trim().length || 0;
+    if (len > bestLen && len < 200000) {
+      bestLen = len;
+      best = el;
+    }
+  });
+  return best;
+}
+
+function buildInlineParagraphs(originalContent) {
+  // Save original HTML for restore
+  const container = findNovelContainer();
+  if (!container) return null;
+
+  state.originalHtml = container.innerHTML;
+
+  // Clear and rebuild with paragraph pairs
+  const paragraphs = textToParagraphs(htmlToText(originalContent));
+  if (paragraphs.length === 0) return null;
+
+  container.innerHTML = '';
+  container.style.whiteSpace = 'normal';
+
+  const wrapper = document.createElement('div');
+  wrapper.id = 'pnt-inline-wrapper';
+
+  paragraphs.forEach((para, idx) => {
+    const block = document.createElement('div');
+    block.className = 'pnt-inline-block';
+    block.dataset.index = idx;
+
+    const origP = document.createElement('p');
+    origP.className = 'pnt-inline-orig';
+    origP.textContent = para;
+
+    const transP = document.createElement('p');
+    transP.className = 'pnt-inline-trans';
+    transP.textContent = '';
+
+    block.appendChild(origP);
+    block.appendChild(transP);
+    wrapper.appendChild(block);
+  });
+
+  container.appendChild(wrapper);
+  state.inlineContainer = wrapper;
+  return wrapper;
+}
+
+function restoreOriginalHtml() {
+  const container = findNovelContainer();
+  if (container && state.originalHtml) {
+    container.innerHTML = state.originalHtml;
+    container.style.whiteSpace = '';
+  }
+  state.inlineContainer = null;
+}
+
+// ─── Streaming Rendering ────────────────────────────────────
+
+function appendToken(token) {
+  state.streamingText += token;
+
+  if (state.mode === 'panel' && state.panelBody) {
+    state.panelBody.textContent = state.streamingText;
+  } else if (state.mode === 'inline' && state.inlineContainer) {
+    const blocks = state.inlineContainer.querySelectorAll('.pnt-inline-block');
+    const block = blocks[state.currentParaIndex];
+    if (block) {
+      const transP = block.querySelector('.pnt-inline-trans');
+      if (transP) transP.textContent = state.streamingText;
+    }
+  }
+}
+
+// ─── Translation Flow ───────────────────────────────────────
 
 async function handleTranslate() {
   if (state.translating) return;
@@ -201,32 +308,138 @@ async function handleTranslate() {
     return;
   }
 
-  state.novelId = novelId;
-  state.translating = true;
+  // Load settings
+  const settings = await new Promise((resolve) => {
+    chrome.storage.sync.get(['targetLang', 'displayMode'], (items) => {
+      resolve({
+        targetLang: items.targetLang || 'zh',
+        displayMode: items.displayMode || 'panel'
+      });
+    });
+  });
 
-  // Show loading
-  const loading = createLoadingIndicator();
-  document.body.appendChild(loading);
+  state.novelId = novelId;
+  state.targetLang = settings.targetLang;
+  state.mode = settings.displayMode;
+  state.translating = true;
+  state.streamingText = '';
+  state.currentParaIndex = 0;
+  state.paraTranslations = [];
+
+  // Prepare UI
+  showStatus('正在获取原文...');
   const btn = document.getElementById('pnt-translate-btn');
   if (btn) btn.disabled = true;
 
-  try {
-    const result = await sendToBackground('TRANSLATE_NOVEL', {
-      novelId,
-      targetLang: 'zh'
-    });
-    renderTranslationPanel(result);
-  } catch (error) {
-    showToast('翻译失败: ' + error.message);
-    console.error('[PNT] Translate error:', error);
-  } finally {
-    state.translating = false;
-    loading.remove();
-    if (btn) btn.disabled = false;
+  // Show cancel button (panel mode)
+  if (state.mode === 'panel') {
+    createPanel();
+    state.cancelBtn.style.display = 'inline-block';
+  }
+
+  // Send stream request to background; tokens arrive via onMessage
+  const result = await sendToBackground('TRANSLATE_NOVEL_STREAM', {
+    novelId,
+    targetLang: state.targetLang
+  });
+
+  if (!result) {
+    finishTranslate(false, '无法启动翻译');
   }
 }
 
-// ─── Toast Notification ─────────────────────────────────────
+function onNovelLoaded(data) {
+  state.novelTitle = data.title || '';
+  state.novelAuthor = data.author || '';
+
+  if (state.mode === 'panel') {
+    if (state.panel) {
+      state.panel.querySelector('.pnt-title').textContent = data.title || '';
+      state.panel.querySelector('.pnt-meta').textContent =
+        `作者: ${data.author || ''} · 字符数: ${data.characterCount || '?'}`;
+    }
+    // Show original content in panel
+    const origBody = state.panel?.querySelector('.pnt-orig-body');
+    if (origBody) {
+      origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
+        .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
+        .join('');
+    }
+  } else {
+    // inline mode: build paragraph pairs
+    const wrapper = buildInlineParagraphs(data.originalContent);
+    if (!wrapper) {
+      // Fallback to panel mode
+      state.mode = 'panel';
+      createPanel();
+      state.cancelBtn.style.display = 'inline-block';
+      onNovelLoaded(data);
+      return;
+    }
+  }
+
+  showStatus('正在翻译...');
+}
+
+function onStreamToken(token) {
+  appendToken(token);
+}
+
+function onStreamDone(data) {
+  finishTranslate(true, null, data);
+}
+
+function onStreamError(error) {
+  finishTranslate(false, error);
+}
+
+function finishTranslate(success, errorMsg, data) {
+  state.translating = false;
+
+  // Keep current translation text
+  const finalText = state.streamingText;
+
+  if (state.cancelBtn) state.cancelBtn.style.display = 'none';
+  hideStatus();
+  const btn = document.getElementById('pnt-translate-btn');
+  if (btn) btn.disabled = false;
+
+  if (success) {
+    if (state.mode === 'panel') {
+      // done; translation already streamed into panel
+      showToast('翻译完成');
+    } else {
+      // inline done
+      showToast('翻译完成');
+    }
+  } else {
+    if (errorMsg && errorMsg.includes('abort')) {
+      showToast('已取消翻译');
+    } else {
+      showToast('翻译失败: ' + (errorMsg || '未知错误'));
+      if (state.mode === 'inline') restoreOriginalHtml();
+    }
+  }
+}
+
+// ─── Cancel ─────────────────────────────────────────────────
+
+async function cancelTranslation() {
+  if (!state.translating) return;
+  try {
+    await sendToBackground('CANCEL_TRANSLATE');
+    state.translating = false;
+    hideStatus();
+    if (state.cancelBtn) state.cancelBtn.style.display = 'none';
+    const btn = document.getElementById('pnt-translate-btn');
+    if (btn) btn.disabled = false;
+    showToast('已取消翻译');
+  } catch (e) {
+    showToast('取消失败: ' + e.message);
+  }
+}
+
+// ─── Toast ──────────────────────────────────────────────────
 
 function showToast(message) {
   const toast = document.createElement('div');
@@ -236,29 +449,48 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 4000);
 }
 
-// ─── Listen for Popup Messages ──────────────────────────────
+// ─── Background Messages ────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'MANUAL_TRANSLATE') {
-    handleTranslate();
+  switch (message.type) {
+    case 'SSE_NOVEL_LOADED':
+      onNovelLoaded(message.data);
+      sendResponse({ ok: true });
+      break;
+    case 'SSE_TOKEN':
+      onStreamToken(message.token);
+      sendResponse({ ok: true });
+      break;
+    case 'SSE_DONE':
+      onStreamDone(message.data);
+      sendResponse({ ok: true });
+      break;
+    case 'SSE_ERROR':
+      onStreamError(message.error);
+      sendResponse({ ok: true });
+      break;
+    case 'MANUAL_TRANSLATE':
+      handleTranslate();
+      sendResponse({ ok: true });
+      break;
+    case 'PING':
+      sendResponse({ pong: true });
+      break;
+    default:
+      sendResponse({ ok: false });
   }
-  if (message.type === 'PING') {
-    sendResponse({ pong: true });
-  }
+  return true;
 });
 
-// ─── Initialize on Page Load ────────────────────────────────
+// ─── Initialize ─────────────────────────────────────────────
 
 function init() {
   const novelId = getNovelIdFromUrl();
   if (!novelId) return;
 
   state.novelId = novelId;
-
-  // Add translate button
   document.body.appendChild(createButton());
 
-  // Auto-translate check
   chrome.storage.sync.get(['autoTranslate'], (items) => {
     if (items.autoTranslate !== false) {
       setTimeout(handleTranslate, 500);

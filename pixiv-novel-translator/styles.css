@@ -46,7 +46,7 @@
 
 #pnt-panel .pnt-header-left strong {
   font-size: 15px;
-  color: #1a73e8;
+  color: #1a1a1a;
 }
 
 #pnt-panel .pnt-title {
@@ -76,6 +76,28 @@
 #pnt-panel .pnt-close-btn:hover {
   background: #eee;
   color: #333;
+}
+
+/* Toolbar */
+#pnt-panel .pnt-toolbar {
+  padding: 8px 20px;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+}
+
+#pnt-panel .pnt-cancel-btn {
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#pnt-panel .pnt-cancel-btn:hover {
+  background: #444;
 }
 
 /* Content */
@@ -123,11 +145,44 @@
   line-height: 1.6;
 }
 
-#pnt-panel .pnt-translation-p {
-  margin: 0 0 12px 0;
+#pnt-panel .pnt-trans-body {
+  white-space: pre-wrap;
   color: #222;
   font-size: 15px;
   line-height: 1.8;
+}
+
+/* ============================================================
+   Inline Mode (原文内嵌对照)
+   ============================================================ */
+
+#pnt-inline-wrapper {
+  display: block;
+}
+
+.pnt-inline-block {
+  margin-bottom: 8px;
+}
+
+.pnt-inline-block .pnt-inline-orig {
+  margin: 0 0 2px 0;
+  color: #333;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.pnt-inline-block .pnt-inline-trans {
+  margin: 0 0 8px 0;
+  color: #777;
+  font-size: 13px;
+  line-height: 1.7;
+  border-left: 3px solid #e0e0e0;
+  padding-left: 10px;
+  white-space: pre-wrap;
+}
+
+.pnt-inline-block .pnt-inline-trans:empty {
+  display: none;
 }
 
 /* Toast */

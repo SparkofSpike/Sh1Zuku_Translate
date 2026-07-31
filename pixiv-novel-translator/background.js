@@ -2,15 +2,42 @@
 // Pixiv Novel Translator — Background Service Worker
 // ============================================================
 
+// ─── Active translation (for cancellation) ───────────────────
+
+let activeController = null;
+
 // ─── Message Handler ─────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
-      if (message.type === 'TRANSLATE_NOVEL') {
-        const { novelId, targetLang } = message;
-        const result = await translateNovel(novelId, targetLang || 'zh');
-        sendResponse({ success: true, data: result });
+      switch (message.type) {
+        case 'TRANSLATE_NOVEL_STREAM':
+          // Start streaming translation; tokens pushed via tabs.sendMessage
+          await startStreamingTranslation(
+            message.novelId,
+            message.targetLang || 'zh',
+            sender.tab?.id
+          );
+          sendResponse({ success: true });
+          break;
+
+        case 'CANCEL_TRANSLATE':
+          if (activeController) {
+            activeController.abort();
+            activeController = null;
+            sendResponse({ success: true });
+          } else {
+            sendResponse({ success: false, error: '没有进行中的翻译' });
+          }
+          break;
+
+        case 'PING':
+          sendResponse({ pong: true });
+          break;
+
+        default:
+          sendResponse({ success: false, error: '未知消息类型' });
       }
     } catch (error) {
       console.error('[PixivTranslator] Error:', error.message);
@@ -20,32 +47,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // async response
 });
 
-// ─── Main Flow: Fetch from Pixiv → Translate via Backend ────
+// ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function translateNovel(novelId, targetLang) {
+async function startStreamingTranslation(novelId, targetLang, tabId) {
   // Step 1: fetch novel from Pixiv API
   const novel = await fetchNovelFromPixiv(novelId);
 
-  // Step 2: load plugin settings
+  // Notify content script: novel loaded, begin streaming
+  await notifyTab(tabId, {
+    type: 'SSE_NOVEL_LOADED',
+    data: {
+      id: novel.id,
+      title: novel.title,
+      author: novel.userName,
+      originalContent: novel.content,
+      tags: novel.tags || [],
+      characterCount: novel.characterCount
+    }
+  });
+
+  // Step 2: load settings
   const settings = await loadSettings();
 
-  // Step 3: translate via backend
-  const translation = await callTranslateApi(
-    settings.backendUrl,
-    settings.apiKey,
-    novel.content,
-    targetLang
-  );
+  // Step 3: stream translate via backend
+  const controller = new AbortController();
+  activeController = controller;
 
-  return {
-    id: novel.id,
-    title: novel.title,
-    originalContent: novel.content,
-    translatedContent: translation,
-    author: novel.userName,
-    tags: novel.tags || [],
-    characterCount: novel.characterCount
-  };
+  try {
+    await streamTranslateApi(
+      settings.backendUrl,
+      settings.apiKey,
+      novel.content,
+      targetLang,
+      controller,
+      async (token) => {
+        await notifyTab(tabId, { type: 'SSE_TOKEN', token });
+      },
+      async (result) => {
+        await notifyTab(tabId, { type: 'SSE_DONE', data: result });
+      },
+      async (error) => {
+        await notifyTab(tabId, { type: 'SSE_ERROR', error });
+      }
+    );
+  } finally {
+    if (activeController === controller) {
+      activeController = null;
+    }
+  }
+}
+
+// ─── Send message to a specific tab (content script) ────────
+
+async function notifyTab(tabId, message) {
+  if (!tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch (e) {
+    // Content script may not be injected yet; ignore
+    console.warn('[PixivTranslator] notifyTab failed:', e.message);
+  }
 }
 
 // ─── Step 1: Fetch Pixiv Novel ───────────────────────────────
@@ -93,9 +154,9 @@ async function loadSettings() {
   });
 }
 
-// ─── Step 3: Call Backend Translate API ──────────────────────
+// ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function callTranslateApi(backendUrl, apiKey, text, targetLang) {
+async function streamTranslateApi(backendUrl, apiKey, text, targetLang, controller, onToken, onDone, onError) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -103,7 +164,8 @@ async function callTranslateApi(backendUrl, apiKey, text, targetLang) {
     throw new Error('请先在插件设置中配置 API Key');
   }
 
-  const url = backendUrl.replace(/\/+$/, '') + '/api/v1/translate';
+  const url = backendUrl.replace(/\/+$/, '') + '/api/v1/translate/stream';
+  const targetLangName = targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文';
 
   const response = await fetch(url, {
     method: 'POST',
@@ -114,8 +176,9 @@ async function callTranslateApi(backendUrl, apiKey, text, targetLang) {
     body: JSON.stringify({
       sourceText: text,
       model: 'deepseek-v4-flash',
-      customPrompt: `请将以下日语小说内容翻译为${targetLang === 'zh' ? '简体中文' : targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文'}。保留原文的段落结构和换行。`
-    })
+      customPrompt: `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`
+    }),
+    signal: controller.signal
   });
 
   if (!response.ok) {
@@ -123,6 +186,45 @@ async function callTranslateApi(backendUrl, apiKey, text, targetLang) {
     throw new Error(`翻译服务请求失败 (${response.status}): ${body}`);
   }
 
-  const result = await response.json();
-  return result.translatedText;
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('浏览器不支持流式响应');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+
+      const data = trimmed.substring(5).trim();
+      if (!data) continue;
+
+      try {
+        const event = JSON.parse(data);
+        if (event.token) {
+          await onToken(event.token);
+        } else if (event.done) {
+          await onDone({
+            translatedText: event.translatedText,
+            id: event.id,
+            tokenUsage: event.tokenUsage
+          });
+        } else if (event.error) {
+          await onError(event.error);
+        }
+      } catch (parseErr) {
+        console.warn('[PixivTranslator] Bad SSE chunk:', data);
+      }
+    }
+  }
 }

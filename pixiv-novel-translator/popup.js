@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // Pixiv Novel Translator — Popup Script
 // ============================================================
 
@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const backendUrlInput = document.getElementById('backendUrl');
   const apiKeyInput = document.getElementById('apiKey');
   const targetLangSelect = document.getElementById('targetLang');
+  const displayModeSelect = document.getElementById('displayMode');
   const autoTranslateCheckbox = document.getElementById('autoTranslate');
   const statusDiv = document.getElementById('status');
   const translateBtn = document.getElementById('translateBtn');
@@ -30,10 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── Load saved settings ─────────────────────────────────
 
-  chrome.storage.sync.get(['backendUrl', 'apiKey', 'targetLang', 'autoTranslate'], (items) => {
+  chrome.storage.sync.get(['backendUrl', 'apiKey', 'targetLang', 'displayMode', 'autoTranslate'], (items) => {
     if (items.backendUrl) backendUrlInput.value = items.backendUrl;
     if (items.apiKey) apiKeyInput.value = items.apiKey;
     if (items.targetLang) targetLangSelect.value = items.targetLang;
+    if (items.displayMode) displayModeSelect.value = items.displayMode;
     autoTranslateCheckbox.checked = items.autoTranslate !== false;
   });
 
@@ -44,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
       targetLang: targetLangSelect.value,
+      displayMode: displayModeSelect.value,
       autoTranslate: autoTranslateCheckbox.checked
     };
     chrome.storage.sync.set(data, () => {
@@ -52,7 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   saveBtn.addEventListener('click', saveSettings);
-  [backendUrlInput, apiKeyInput, targetLangSelect, autoTranslateCheckbox].forEach(el => {
+  [backendUrlInput, apiKeyInput, targetLangSelect, displayModeSelect, autoTranslateCheckbox].forEach(el => {
     el.addEventListener('change', saveSettings);
   });
 
