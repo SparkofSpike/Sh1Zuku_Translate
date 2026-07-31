@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.HttpServerErrorException;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -70,6 +71,11 @@ public class DeepSeekClient {
     public void chatStream(String systemPrompt, String userMessage, String model,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError) {
+        // DeepSeek overloads frequently (HTTP 503 'Service is too busy').
+        // Retry with backoff — the exchange throws before any token is
+        // emitted, so a retry never duplicates output.
+        final int MAX_RETRIES = 3;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             Map<String, Object> request = Map.of(
                     "model", model != null ? model : properties.getDefaultModel(),
@@ -143,9 +149,25 @@ public class DeepSeekClient {
                         return null;
                     });
 
-        } catch (Exception e) {
-            log.error("DeepSeek streaming request failed", e);
-            onError.accept(e.getMessage());
+        } catch (HttpServerErrorException e) {
+                if (e.getStatusCode().value() == 503 && attempt < MAX_RETRIES) {
+                    log.warn("DeepSeek busy (503), retrying {}/{}", attempt, MAX_RETRIES);
+                    try {
+                        Thread.sleep(1500L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    continue;
+                }
+                log.error("DeepSeek streaming request failed (attempt {}/{})", attempt, MAX_RETRIES, e);
+                onError.accept("DeepSeek 服务繁忙，请稍后重试 (" + e.getStatusCode().value() + ")");
+                break;
+            } catch (Exception e) {
+                log.error("DeepSeek streaming request failed (attempt {}/{})", attempt, MAX_RETRIES, e);
+                onError.accept(e.getMessage());
+                break;
+            }
         }
     }
 

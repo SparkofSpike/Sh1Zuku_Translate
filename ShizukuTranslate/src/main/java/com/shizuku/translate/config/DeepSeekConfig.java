@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 @Configuration
 public class DeepSeekConfig {
@@ -16,8 +17,15 @@ public class DeepSeekConfig {
 
     @Bean
     public RestClient deepSeekRestClient(DeepSeekProperties props) {
+        // DeepSeek can be overloaded (HTTP 503 "Service is too busy").
+        // Without explicit timeouts a request hangs for minutes and the
+        // SSE stream looks frozen; fail fast so we can retry instead.
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(15_000);
+        factory.setReadTimeout(120_000); // generous: streaming gaps can be long
         return RestClient.builder()
                 .baseUrl(props.getBaseUrl())
+                .requestFactory(factory)
                 .defaultHeader("Authorization", "Bearer " + props.getKey())
                 .defaultHeader("Content-Type", "application/json")
                 .build();
