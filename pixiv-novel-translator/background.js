@@ -133,12 +133,13 @@ async function fetchNovelFromPixiv(novelId, signal) {
   }
 
   console.log('[PNT] STEP1 fetch pixiv api...');
+  // NOTE: do NOT set Cookie / User-Agent / Referer headers manually —
+  // they are forbidden headers in browser fetch; Edge rejects such
+  // cross-origin requests with TypeError "Failed to fetch". The Pixiv
+  // AJAX API works without them (verified: bare fetch returns 200).
+  // PHPSESSID auth is handled by Chrome automatically via host
+  // permission + credentials when needed.
   const response = await fetch(`https://www.pixiv.net/ajax/novel/${novelId}`, {
-    headers: {
-      'Cookie': `PHPSESSID=${cookie.value}`,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://www.pixiv.net/'
-    },
     signal
   }).catch((e) => {
     if (e && e.name === 'AbortError') {
