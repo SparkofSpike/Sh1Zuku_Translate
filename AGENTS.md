@@ -141,3 +141,76 @@ ship.py 在本地 PowerShell 环境中运行 subprocess.run 时可能找不到 n
 ```powershell
 git -c http.proxy=socks5://127.0.0.1:10808 push
 ```
+
+---
+
+## 7. 提交后发布流程（标准操作）
+
+每次完成 feature/fix 并本地 commit 后，按此流程发布到生产：
+
+### Step 1：推送到 GitHub
+
+```powershell
+git -c http.proxy=socks5://127.0.0.1:10808 push
+```
+
+> 本地用 socks5 代理连 GitHub，服务器不直接拉代码（因雨云 DNS 劫持）。
+
+### Step 2：本地构建并部署到服务器
+
+```powershell
+python ship.py
+```
+
+`ship.py` 会自动执行：前端构建 → 后端打包 → SCP 传到服务器 → SSH 重启服务。
+
+### Step 3：验证
+
+```powershell
+# 检查后端是否存活
+curl https://ad.rainplay.cn:22591/api/v1/presets
+
+# 检查登录页可访问
+curl https://ad.rainplay.cn:22591/
+```
+
+> **以后每个 commit 的发布流程都是：`git push → python ship.py`**
+
+---
+
+## 8. 浏览器插件项目
+
+### 8.1 项目位置
+
+`pixiv-novel-translator/` — Chrome MV3 浏览器扩展，一键翻译 Pixiv 日文小说。
+
+### 8.2 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 框架 | Manifest V3 (Service Worker) |
+| 触发 | Content Script 注入 Pixiv 小说页 |
+| 授权 | `chrome.cookies.get` 读取 PHPSESSID |
+| 后端鉴权 | `X-API-Key` header（不同于 JWT 登录） |
+
+### 8.3 数据流
+
+```
+用户点击翻译 → content.js 提取 novel_id → background.js:
+  1. chrome.cookies.get → PHPSESSID
+  2. fetch(https://www.pixiv.net/ajax/novel/{id}) → 原文
+  3. fetch({后端}/api/v1/translate, X-API-Key) → 译文
+→ content.js 渲染右侧滑入翻译面板
+```
+
+### 8.4 API Key 管理
+
+API Key 由 Web 后端的登录用户生成，通过以下端点管理：
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| POST | `/api/v1/auth/api-key` | 生成新 Key（需 Bearer JWT） |
+| GET | `/api/v1/auth/api-keys` | 列出所有 Key |
+| DELETE | `/api/v1/auth/api-key/{id}` | 删除指定 Key |
+
+插件配置时将 Key 填入弹窗设置即可。
