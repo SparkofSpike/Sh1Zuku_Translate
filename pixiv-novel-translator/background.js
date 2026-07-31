@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // Pixiv Novel Translator — Background Service Worker
 // ============================================================
 
@@ -51,7 +51,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets, customPrompt) {
   // Step 1: fetch novel from Pixiv API
   const novel = await fetchNovelFromPixiv(novelId);
 

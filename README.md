@@ -7,15 +7,15 @@ Translate Japanese/Korean light novels and web novels into Chinese using DeepSee
 ## Architecture
 
 ```
-┌─────────────────┐     ┌────────────────────┐     ┌───────────────┐
+┌─────────────────┐      ┌────────────────────┐      ┌───────────────┐
 │  Vue 3 SPA      │────▶│  Java Spring Boot  │────▶│  DeepSeek API │
-│  (TypeScript)   │◀────│  (port 5566)       │     └───────────────┘
-│  + Pinia        │     │  + JWT Auth        │     ┌───────────────┐
-│  + Vue Router   │     │  + H2 Database     │────▶│  Python OCR   │
-└─────────────────┘     │  + SSE Streaming   │     │  Worker       │
-                        └────────────────────┘     │  (port 5557)  │
-                                                   │  PaddleOCR    │
-                                                   └───────────────┘
+│  (TypeScript)   │◀────│  (port 5566)       │      └───────────────┘
+│  + Pinia        │      │  + JWT Auth        │      ┌───────────────┐
+│  + Vue Router   │      │  + H2 Database     │────▶│  Python OCR   │
+└─────────────────┘      │  + SSE Streaming   │      │  Worker       │
+                         └────────────────────┘      │  (port 5557)  │
+                                                     │  PaddleOCR    │
+                                                     └───────────────┘
 ```
 
 ### Tech Stack
