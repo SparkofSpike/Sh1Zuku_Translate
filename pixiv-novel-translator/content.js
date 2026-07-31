@@ -699,6 +699,20 @@ async function handleTranslate() {
       showToast('正在等待 AI 响应，长文可能需要几分钟，请稍候…');
     }
   }, 8000);
+  // While DeepSeek pre-fills (can take minutes for full-novel mode),
+  // show the elapsed wait on the button so it never looks frozen.
+  state.waitStart = Date.now();
+  if (state.waitTick) clearInterval(state.waitTick);
+  state.waitTick = setInterval(() => {
+    if (!state.translating) { clearInterval(state.waitTick); state.waitTick = null; return; }
+    const secs = Math.round((Date.now() - state.waitStart) / 1000);
+    const btn = state.miniBtn;
+    if (btn) {
+      btn.textContent = '等待 AI 响应 ' + secs + 's…';
+      btn.style.background = '#e03131';
+      btn.style.borderColor = '#e03131';
+    }
+  }, 1000);
 
   // Prepare UI: show floating window in panel & paged modes;
   // inline mode renders directly under the original paragraphs.
@@ -884,6 +898,7 @@ function onStreamToken(token) {
   // First token means the AI is really streaming — flip the button.
   if (!state.firstTokenReceived) {
     state.firstTokenReceived = true;
+    if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
     updateTranslateButton('ai-processing');
   }
   if (state.firstTokenTimer) {
@@ -905,6 +920,7 @@ function onStreamError(error) {
 
 function finishTranslate(success, errorMsg, data) {
   state.translating = false;
+  if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
   updateTranslateButton('idle');
 
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
