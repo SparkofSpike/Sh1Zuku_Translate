@@ -59,14 +59,14 @@ public class AuthController {
     public ResponseEntity<?> createApiKey(Principal principal, @RequestBody Map<String, String> body) {
         String username = principal.getName();
         String name = body.getOrDefault("name", "unnamed");
-        var apiKey = apiKeyService.createApiKey(username, name);
-        return ResponseEntity.ok(Map.of(
-                "id", apiKey.getId(),
-                "keyValue", apiKey.getKeyValue(),
-                "name", apiKey.getName(),
-                "createdAt", apiKey.getCreatedAt().toString(),
-                "expiresAt", apiKey.getExpiresAt().toString()
-        ));
+        var key = apiKeyService.createApiKey(username, name);
+        var resp = new java.util.LinkedHashMap<String, Object>();
+        resp.put("id", key.getId());
+        resp.put("keyValue", key.getKeyValue());
+        resp.put("name", key.getName());
+        resp.put("createdAt", key.getCreatedAt() != null ? key.getCreatedAt().toString() : null);
+        resp.put("expiresAt", null);
+        return ResponseEntity.ok(resp);
     }
 
     /** List all API keys for the current user */
@@ -74,14 +74,16 @@ public class AuthController {
     public ResponseEntity<?> listApiKeys(Principal principal) {
         String username = principal.getName();
         var keys = apiKeyService.listApiKeys(username).stream()
-                .map(k -> Map.of(
-                        "id", k.getId(),
-                        "name", k.getName(),
-                        "createdAt", k.getCreatedAt().toString(),
-                        "expiresAt", k.getExpiresAt().toString(),
-                        "active", k.isActive(),
-                        "keyPrefix", k.getKeyValue().substring(0, Math.min(12, k.getKeyValue().length())) + "..."
-                ))
+                .map(k -> {
+                    var m = new java.util.LinkedHashMap<String, Object>();
+                    m.put("id", k.getId());
+                    m.put("name", k.getName());
+                    m.put("createdAt", k.getCreatedAt() != null ? k.getCreatedAt().toString() : null);
+                    m.put("expiresAt", k.getExpiresAt() != null ? k.getExpiresAt().toString() : null);
+                    m.put("active", k.isActive());
+                    m.put("keyPrefix", k.getKeyValue().substring(0, Math.min(12, k.getKeyValue().length())) + "...");
+                    return m;
+                })
                 .toList();
         return ResponseEntity.ok(Map.of("apiKeys", keys));
     }
