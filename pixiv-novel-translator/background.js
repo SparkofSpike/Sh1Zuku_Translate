@@ -55,7 +55,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '') {
   // Step 1: fetch novel from Pixiv API
+  console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + novelId);
   const novel = await fetchNovelFromPixiv(novelId);
+  console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
   // Notify content script: novel loaded, begin streaming
   await notifyTab(tabId, {
@@ -124,15 +126,20 @@ async function fetchNovelFromPixiv(novelId) {
   });
 
   if (!cookie) {
+    console.error('[PNT] STEP1 FAIL: PHPSESSID cookie not found');
     throw new Error('未登录 Pixiv，请先登录 pixiv.net');
   }
 
+  console.log('[PNT] STEP1 fetch pixiv api...');
   const response = await fetch(`https://www.pixiv.net/ajax/novel/${novelId}`, {
     headers: {
       'Cookie': `PHPSESSID=${cookie.value}`,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Referer': 'https://www.pixiv.net/'
     }
+  }).catch((e) => {
+    console.error('[PNT] STEP1 FAIL pixiv fetch:', e && e.message, e && e.cause ? String(e.cause) : '');
+    throw new Error('Pixiv 请求失败: ' + (e && e.message ? e.message : 'network error'));
   });
 
   if (!response.ok) {
@@ -180,6 +187,7 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
   }
 
 
+  console.log('[PNT] STEP3 fetch backend:', url);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -193,6 +201,9 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
       presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined
     }),
     signal: controller.signal
+  }).catch((e) => {
+    console.error('[PNT] STEP3 FAIL backend fetch:', url, '->', e && e.message, e && e.cause ? String(e.cause) : '');
+    throw new Error('翻译服务请求失败(网络): ' + (e && e.message ? e.message : 'network error'));
   });
 
   if (!response.ok) {
