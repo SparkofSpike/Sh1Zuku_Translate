@@ -56,8 +56,8 @@
       :disabled="false"
       :style="{
         marginTop: '16px',
-        background: status === 'preparing' ? '#e03131' : '#1a1a1a',
-        borderColor: status === 'preparing' ? '#e03131' : '#1a1a1a',
+        background: status === 'preparing' ? '#e03131' : (status === 'ai-processing' ? '#1971c2' : undefined),
+        borderColor: status === 'preparing' ? '#e03131' : (status === 'ai-processing' ? '#1971c2' : undefined),
       }"
     >
       <template v-if="status === 'preparing'">网页处理中</template>

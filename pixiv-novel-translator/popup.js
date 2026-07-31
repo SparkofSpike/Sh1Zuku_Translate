@@ -20,14 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Check current tab on open ──────────────────────────
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab && tab.url && tab.url.includes('pixiv.net/novel/')) {
-      pageStatus.textContent = '当前在小说页面';
+    if (tab && tab.url && tab.url.includes('pixiv.net')) {
+      pageStatus.textContent = '当前在 Pixiv 页面';
       pageStatus.className = 'status-ok';
       translateBtn.disabled = false;
     } else {
       pageStatus.textContent = tab && tab.url && tab.url.includes('pixiv.net')
         ? '请在小说页面使用'
-        : '请打开 Pixiv 小说页面';
+        : '请打开 Pixiv 页面';
       pageStatus.className = 'status-err';
       translateBtn.disabled = true;
     }

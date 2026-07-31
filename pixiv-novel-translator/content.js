@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Pixiv Novel Translator — Content Script
 // ============================================================
 
@@ -99,10 +99,36 @@ function createButton() {
     box-shadow: 0 2px 12px rgba(0,0,0,0.2);
     transition: background 0.2s;
   `;
-  btn.onmouseenter = () => { btn.style.background = '#444'; };
-  btn.onmouseleave = () => { btn.style.background = '#1a1a1a'; };
-  btn.onclick = handleTranslate;
+  btn.onmouseenter = () => { if (!state.translating) btn.style.background = '#444'; };
+  btn.onmouseleave = () => { if (!state.translating) btn.style.background = '#1a1a1a'; };
+  btn.onclick = () => {
+    if (state.translating) {
+      cancelTranslation();
+    } else {
+      handleTranslate();
+    }
+  };
   return btn;
+}
+
+// Update floating button to website-style 3-state (black → red → blue)
+function updateTranslateButton(status) {
+  const btn = document.getElementById('pnt-translate-btn');
+  if (!btn) return;
+
+  if (status === 'preparing') {
+    btn.textContent = '网页处理中... 点击取消';
+    btn.style.background = '#e03131';
+    btn.style.borderColor = '#e03131';
+  } else if (status === 'ai-processing') {
+    btn.textContent = 'AI 处理中... 点击取消';
+    btn.style.background = '#1971c2';
+    btn.style.borderColor = '#1971c2';
+  } else {
+    btn.textContent = '翻译';
+    btn.style.background = '#1a1a1a';
+    btn.style.borderColor = '#1a1a1a';
+  }
 }
 
 // ─── Loading / Status Indicator ─────────────────────────────
@@ -330,8 +356,9 @@ async function handleTranslate() {
 
   // Prepare UI
   showStatus('正在获取原文...');
+  updateTranslateButton('preparing');
   const btn = document.getElementById('pnt-translate-btn');
-  if (btn) btn.disabled = true;
+  if (btn) btn.disabled = false;
 
   // Show cancel button (panel mode)
   if (state.mode === 'panel') {
@@ -383,6 +410,7 @@ function onNovelLoaded(data) {
   }
 
   showStatus('正在翻译...');
+  updateTranslateButton('ai-processing');
 }
 
 function onStreamToken(token) {
@@ -399,6 +427,7 @@ function onStreamError(error) {
 
 function finishTranslate(success, errorMsg, data) {
   state.translating = false;
+  updateTranslateButton('idle');
 
   // Keep current translation text
   const finalText = state.streamingText;
