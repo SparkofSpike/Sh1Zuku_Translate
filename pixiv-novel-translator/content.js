@@ -239,22 +239,14 @@ const PIXIV_CONTAINER_SELECTORS = [
 ];
 
 function findNovelContainer() {
+  // Only match known Pixiv novel containers — never fall back to a
+  // blind "largest text block" (that could select the whole page and
+  // destroy it when we clear innerHTML).
   for (const sel of PIXIV_CONTAINER_SELECTORS) {
     const el = document.querySelector(sel);
     if (el && el.textContent.trim().length > 0) return el;
   }
-  // Fallback: largest text block
-  const candidates = document.querySelectorAll('section, article, main, div');
-  let best = null;
-  let bestLen = 0;
-  candidates.forEach((el) => {
-    const len = el.textContent?.trim().length || 0;
-    if (len > bestLen && len < 200000) {
-      bestLen = len;
-      best = el;
-    }
-  });
-  return best;
+  return null;
 }
 
 function buildInlineParagraphs(originalContent) {
@@ -314,13 +306,25 @@ function appendToken(token) {
   if (state.mode === 'panel' && state.panelBody) {
     state.panelBody.textContent = state.streamingText;
   } else if (state.mode === 'inline' && state.inlineContainer) {
-    const blocks = state.inlineContainer.querySelectorAll('.pnt-inline-block');
-    const block = blocks[state.currentParaIndex];
-    if (block) {
-      const transP = block.querySelector('.pnt-inline-trans');
-      if (transP) transP.textContent = state.streamingText;
-    }
+    renderInlineStreaming();
   }
+}
+
+// Inline mode: split the accumulated translation into paragraphs and
+// render each paragraph into its matching original-text block.
+function renderInlineStreaming() {
+  const blocks = state.inlineContainer.querySelectorAll('.pnt-inline-block');
+  if (!blocks.length) return;
+
+  const paragraphs = textToParagraphs(state.streamingText);
+  const last = blocks.length - 1;
+
+  paragraphs.forEach((para, idx) => {
+    const block = blocks[Math.min(idx, last)];
+    if (!block) return;
+    const transP = block.querySelector('.pnt-inline-trans');
+    if (transP) transP.textContent = para;
+  });
 }
 
 // ─── Translation Flow ───────────────────────────────────────
