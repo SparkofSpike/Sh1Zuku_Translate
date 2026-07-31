@@ -18,7 +18,8 @@ let state = {
   cancelBtn: null,
   originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
-  novelAuthor: ''
+  novelAuthor: '',
+  pagedRequest: false     // true when background uses the paged-novel flow
 };
 
 // ─── Current Page (paged novels) ─────────────────────────────
@@ -455,6 +456,44 @@ function renderPagedStreaming() {
     .join('<div class="pnt-page-break">—— [newpage] ——</div>');
 }
 
+// Try to parse the accumulated stream as JSON Lines produced by the
+// paged-novel flow: one {"id":N,"text":"..."} object per line. Returns
+// an array of {id, text} entries, or [] if the text is not (yet) JSON
+// Lines (e.g. the model ignored the instruction, or a line is still
+// streaming and incomplete).
+function parseJsonLines(streamText) {
+  const entries = [];
+  const lines = streamText.split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj && typeof obj.id === 'number' && typeof obj.text === 'string') {
+        entries.push({ id: obj.id, text: obj.text });
+      }
+    } catch (e) {
+      // incomplete / malformed line — skip; it may complete next tick
+    }
+  }
+  return entries;
+}
+
+// Fill the translation divs from JSON Lines entries, mapped by id.
+function renderInlineJsonLines(entries) {
+  const transEls = state.inlineTransEls || [];
+  if (!transEls.length || !entries.length) return;
+
+  // Reset every div first so a remapped stream (e.g. after the model
+  // re-emits an earlier line) does not leave stale text behind.
+  transEls.forEach((el) => { if (el) el.textContent = ''; });
+
+  entries.forEach((entry) => {
+    const el = transEls[entry.id - 1]; // ids are 1-based paragraph numbers
+    if (el) el.textContent = entry.text;
+  });
+}
+
 // Inline mode: split accumulated translation into paragraphs and fill
 // each translation div. Extra paragraphs merge into the last div instead
 // of overwriting earlier ones (fixes misaligned paragraph mapping).
@@ -462,6 +501,18 @@ function renderInlineStreaming() {
   const transEls = state.inlineTransEls || [];
   if (!transEls.length) return;
 
+  // Preferred path: paged novels stream JSON Lines. If we can parse any
+  // entries, render by id — this stays aligned even if the model merges
+  // or drops paragraphs (the numbered input forces explicit ids).
+  if (state.pagedRequest) {
+    const jsonEntries = parseJsonLines(state.streamingText);
+    if (jsonEntries.length) {
+      renderInlineJsonLines(jsonEntries);
+      return;
+    }
+  }
+
+  // Fallback (non-JSON stream): plain paragraph splitting, old behavior.
   // Strip Pixiv page-break markers the model may have kept verbatim
   const clean = state.streamingText
     .replace(/\[newpage\]/gi, '')
@@ -569,6 +620,7 @@ async function handleTranslate() {
 function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
+  state.pagedRequest = !!data.pagedRequest;
 
   fillWindowFromNovel(data);
 

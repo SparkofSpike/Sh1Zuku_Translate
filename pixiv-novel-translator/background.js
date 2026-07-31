@@ -74,7 +74,11 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       author: novel.userName,
       originalContent: novel.content,
       tags: novel.tags || [],
-      characterCount: novel.characterCount
+      characterCount: novel.characterCount,
+      // The content script needs to know whether this request is the
+      // paged-novel flow (numbered paragraphs + JSON Lines output) so it
+      // can pick the right streaming renderer.
+      pagedRequest: currentPage > 0
     }
   });
 
@@ -143,7 +147,19 @@ function buildPageSource(fullText, currentPage) {
   if (ctxAfter) {
     text += `【参考上下文·下一页（仅理解用，不要翻译）】\n${ctxAfter}\n\n`;
   }
-  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n${current}`;
+
+  // Number the paragraphs of the current page so the model can reference
+  // them in its output and the content script can map each translated
+  // paragraph back to the exact DOM paragraph, even when the model merges
+  // or splits paragraphs. Without numbering, a single merged paragraph
+  // shifts every later translation one slot and the inline pairs misalign.
+  const numbered = current
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p, i) => `[${i + 1}] ${p}`)
+    .join('\n\n');
+  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n${numbered}`;
   return text;
 }
 
@@ -238,7 +254,18 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
   // reference-only context sections plus the target page. Tell the model
   // explicitly to translate only the marked page and never echo context.
   if (text.includes('【当前页')) {
-    prompt += `\n\n源文本由【参考上下文】（上一页/下一页，仅用于理解情节）和【当前页】两部分组成。请只翻译【当前页】部分，参考上下文一律不要翻译、不要输出、不要复述。直接输出当前页的中文译文，保留段落结构和换行。`;
+    prompt += `\n\n源文本由【参考上下文】（上一页/下一页，仅用于理解情节）和【当前页】两部分组成。请只翻译【当前页】部分，参考上下文一律不要翻译、不要输出、不要复述。
+
+【当前页】的段落已用 [编号] 标记。请逐段翻译，输出为 JSON Lines 格式：每一行是一个独立的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。
+
+{"id":1,"text":"第一段的译文"}
+{"id":2,"text":"第二段的译文"}
+
+要求：
+1. 每一行必须是一个完整、合法的 JSON 对象，用双引号，不要注释、不要 Markdown 代码块标记、不要任何额外文字；
+2. id 必须与输入 [编号] 一一对应，顺序不变，不得合并或遗漏；
+3. 译文内部的换行用 \\n 转义写在 text 里，段落之间严格分行；
+4. 参考上下文不要翻译、不要出现在输出中。`;
   }
 
 
