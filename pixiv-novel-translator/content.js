@@ -21,6 +21,18 @@ let state = {
   novelAuthor: ''
 };
 
+// ─── Current Page (paged novels) ─────────────────────────────
+
+// Pixiv renders only the current page of a paged novel into the DOM.
+// Read the GTM marker's data-current-page so the background script can
+// translate just this page (the full text stays as context only).
+function getCurrentNovelPage() {
+  const el = document.querySelector('#gtm-novel-work-scroll-begin-reading');
+  if (!el) return 0;
+  const page = parseInt(el.getAttribute('data-current-page') || '0', 10);
+  return page > 0 ? page : 0;
+}
+
 // ─── Detect Novel ID from URL ───────────────────────────────
 
 function getNovelIdFromUrl() {
