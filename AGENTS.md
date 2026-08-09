@@ -52,26 +52,48 @@ python ship.py
 
 ## 3. 服务器部署方案
 
-### 3.1 服务管理
+### 3.1 服务管理（2026-08-07 起改为 watchdog 自动恢复架构）
 
 服务器是 Windows，SSH 断开后 start /B 启动的进程会被杀掉。
-唯一可靠的方式：schtasks 直接跑 Java（不经过 start /B）。
+唯一可靠的方式：schtasks 直接跑 Java/Python（不经过 start /B）。
 
-#### 重启服务的步骤：
+**当前架构（已实测验证崩溃自愈）：**
+
+| 任务 | 身份 | 作用 |
+|------|------|------|
+| SvcShizuku | SYSTEM | 启动后端 `_task_backend.bat`（once，由 watchdog 触发） |
+| ShizukuOCR | SYSTEM | 启动 OCR `_task_ocr.bat`（once，由 watchdog 触发） |
+| ShizukuWatchdog | SYSTEM | 每分钟检查 5566/5557，挂了自动 schtasks /run 拉起 |
+
+- 三个任务都以 **SYSTEM** 身份运行（`/ru SYSTEM`），不依赖登录会话 —— SSH 断开、系统重启都能自愈
+- watchdog 日志：`D:\Sh1ZukuTranslate\logs\watchdog.log`
+- 注意：所有 bat 内使用**完整路径**（SYSTEM 的 PATH 没有用户级配置），java 用 `C:\Program Files\Java\jdk-24\bin\java.exe`，python 用 `C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe`
+
+#### 手动重启服务的步骤：
 
 ```powershell
 # 0. 传文件
 scp -P 22591 -i ~/.ssh/id_rsa translator.jar Administrator@ad.rainplay.cn:D:/Sh1ZukuTranslate/translator.jar
 
-# 1. 停旧服务
-ssh -P 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn "taskkill /f /im java.exe 2>nul"
+# 1. 停旧服务（注意：会误杀 Minecraft 的 java，建议按 PID 杀）
+ssh -p 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn "taskkill /f /pid <后端PID>"
 
-# 2. 重启（schtasks 方式）
-ssh -P 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn `
-  "schtasks /delete /tn SvcShizuku /f 2>nul & `
-   schtasks /create /tn SvcShizuku /tr D:\Sh1ZukuTranslate\_task_backend.bat /sc once /st 00:00 /f 2>nul & `
-   schtasks /run /tn SvcShizuku 2>nul"
+# 2. 重启（schtasks 方式，等 watchdog 或手动触发）
+ssh -p 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn "schtasks /run /tn SvcShizuku"
+ssh -p 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn "schtasks /run /tn ShizukuOCR"
 ```
+
+> ⚠️ 不要 `taskkill /f /im java.exe` 全杀 —— 服务器上还有 Minecraft（SpikeSpigot.jar，8080 端口），用 PID 精确杀。
+
+#### 重建任务的命令（万一被删）：
+
+```powershell
+schtasks /create /tn SvcShizuku /tr "D:\Sh1ZukuTranslate\_task_backend.bat" /sc once /st 00:00 /ru SYSTEM /f
+schtasks /create /tn ShizukuOCR /tr "D:\Sh1ZukuTranslate\_task_ocr.bat" /sc once /st 00:00 /ru SYSTEM /f
+schtasks /create /tn ShizukuWatchdog /tr "D:\Sh1ZukuTranslate\_watchdog.bat" /sc minute /mo 1 /ru SYSTEM /f
+```
+
+> 注意：`/sc once /st 00:00` 会提示"早于当前时间"的报错，可忽略，watchdog 用 /run 触发。
 
 ### 3.2 关键文件
 
@@ -82,7 +104,9 @@ ssh -P 22591 -i ~/.ssh/id_rsa Administrator@ad.rainplay.cn `
 | D:\Sh1ZukuTranslate\logs\backend.log | 后端日志 |
 | D:\Sh1ZukuTranslate\logs\ocr.log | OCR 日志 |
 | D:\Sh1ZukuTranslate\data\translatordb.mv.db | H2 数据库（15MB） |
-| D:\Sh1ZukuTranslate\_task_backend.bat | schtasks 用的启动脚本（不要用 start /B） |
+| D:\Sh1ZukuTranslate\_task_backend.bat | 后端启动脚本（SYSTEM 身份，完整 java 路径） |
+| D:\Sh1ZukuTranslate\_task_ocr.bat | OCR 启动脚本（SYSTEM 身份，完整 python 路径） |
+| D:\Sh1ZukuTranslate\_watchdog.bat | watchdog 自愈脚本（每分钟检查 5566/5557 并拉起） |
 | D:\Sh1ZukuTranslate\_start_svc.bat | 旧版启动脚本（会因 SSH 断开被杀） |
 | D:\Sh1ZukuTranslate\deploy.ps1 | PowerShell 手动部署脚本 |
 
