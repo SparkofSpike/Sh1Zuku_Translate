@@ -66,4 +66,14 @@ public class UserService {
         return userRepository.count();
     }
 
+    public String getAiApiKey(String username) {
+        return findByUsername(username).getAiApiKey();
+    }
+
+    public void updateAiApiKey(String username, String aiApiKey) {
+        User user = findByUsername(username);
+        user.setAiApiKey(aiApiKey == null || aiApiKey.isBlank() ? null : aiApiKey.trim());
+        userRepository.save(user);
+    }
+
 }

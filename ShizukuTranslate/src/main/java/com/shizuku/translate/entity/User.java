@@ -24,6 +24,9 @@ public class User {
     private String email;
     @Column(nullable = false)
     private String passwordHash;
+    /** Per-user DeepSeek API key; null/blank falls back to the global key */
+    @Column(length = 255)
+    private String aiApiKey;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

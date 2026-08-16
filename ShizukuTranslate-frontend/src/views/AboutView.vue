@@ -4,7 +4,8 @@
     <p>Sh1Zuku Translate 是一个面向外文小说爱好者的 AI 翻译工具，帮助您快速将外文文本翻译为流畅的中文，并且尽量保留原文风格与语气。</p>
     <h3>基本信息</h3>
     <ol>
-      <li>网站更新日期 2026.7.5</li>
+      <li>网站更新日期 {{ buildDate }}</li>
+      <li>最新版本 {{ commit }}</li>
     </ol>
     <h3>使用说明</h3>
     <ol>
@@ -43,4 +44,13 @@
 </template>
 
 <script setup>
+// Injected at build time by vite.config.js (define).
+const buildDate = (() => {
+  const ts = Number(import.meta.env.VITE_BUILD_TIME)
+  if (!ts) return '未知'
+  const d = new Date(ts)
+  return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`
+})()
+
+const commit = import.meta.env.VITE_COMMIT || '未知'
 </script>

@@ -32,6 +32,10 @@ public class DeepSeekClient {
     }
 
     public DeepSeekResult chat(String systemPrompt, String userMessage, String model, String thinkingType) {
+        return chat(systemPrompt, userMessage, model, thinkingType, null);
+    }
+
+    public DeepSeekResult chat(String systemPrompt, String userMessage, String model, String thinkingType, String apiKey) {
         Map<String, Object> request = Map.of(
                 "model", model != null ? model : properties.getDefaultModel(),
                 "messages", List.of(
@@ -43,7 +47,7 @@ public class DeepSeekClient {
                 "thinking", Map.of("type", thinkingType != null ? thinkingType : properties.getThinkingType())
         );
 
-        Map<String, Object> response = restClient.post()
+        Map<String, Object> response = clientFor(apiKey).post()
                 .uri("/chat/completions")
                 .body(request)
                 .retrieve()
@@ -75,11 +79,18 @@ public class DeepSeekClient {
     public void chatStream(String systemPrompt, String userMessage, String model, String thinkingType,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError) {
+        chatStream(systemPrompt, userMessage, model, thinkingType, null, onToken, onComplete, onError);
+    }
+
+    public void chatStream(String systemPrompt, String userMessage, String model, String thinkingType, String apiKey,
+                           Consumer<String> onToken, Consumer<TokenUsage> onComplete,
+                           Consumer<String> onError) {
         // DeepSeek overloads frequently (HTTP 503 'Service is too busy').
         // Retry with backoff — the exchange throws before any token is
         // emitted, so a retry never duplicates output.
         final int MAX_RETRIES = 3;
         long startMs = System.currentTimeMillis();
+        RestClient client = clientFor(apiKey);
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             Map<String, Object> request = Map.of(
@@ -97,7 +108,7 @@ public class DeepSeekClient {
                     attempt, model != null ? model : properties.getDefaultModel(),
                     userMessage != null ? userMessage.length() : 0);
 
-            restClient.post()
+            client.post()
                     .uri("/chat/completions")
                     .body(request)
                     .exchange((clientRequest, clientResponse) -> {
@@ -184,6 +195,15 @@ public class DeepSeekClient {
                 break;
             }
         }
+    }
+
+    private RestClient clientFor(String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return restClient;
+        }
+        // Request-level header would also override the default, but mutate()
+        // keeps the per-user client immutable and easy to reason about.
+        return restClient.mutate().defaultHeader("Authorization", "Bearer " + apiKey.trim()).build();
     }
 
     public static class DeepSeekResult {

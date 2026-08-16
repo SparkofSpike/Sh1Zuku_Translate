@@ -3,6 +3,7 @@ package com.shizuku.translate.controller;
 import com.shizuku.translate.config.AppConfig;
 import com.shizuku.translate.dto.LoginRequest;
 import com.shizuku.translate.dto.RegisterRequest;
+import com.shizuku.translate.entity.User;
 import com.shizuku.translate.service.ApiKeyService;
 import com.shizuku.translate.service.UserService;
 import jakarta.validation.Valid;
@@ -48,6 +49,28 @@ public class AuthController {
         String username = principal.getName();
         boolean isAdmin = appProperties.isAdmin(username);
         return ResponseEntity.ok(Map.of("username", username, "isAdmin", isAdmin));
+    }
+
+    /** User profile (requires JWT login) */
+    @GetMapping("/profile")
+    public ResponseEntity<?> profile(Principal principal) {
+        if (principal == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "未登录"));
+        }
+        User user = userService.findByUsername(principal.getName());
+        var data = new java.util.LinkedHashMap<String, Object>();
+        data.put("username", user.getUsername());
+        data.put("email", user.getEmail());
+        data.put("hasAiApiKey", user.getAiApiKey() != null && !user.getAiApiKey().isBlank());
+        data.put("createdAt", user.getCreatedAt() != null ? user.getCreatedAt().toString() : null);
+        return ResponseEntity.ok(data);
+    }
+
+    /** Set / clear the user's own DeepSeek API key (empty string clears it) */
+    @PutMapping("/profile/ai-key")
+    public ResponseEntity<?> updateAiApiKey(Principal principal, @RequestBody Map<String, String> body) {
+        userService.updateAiApiKey(principal.getName(), body.get("aiApiKey"));
+        return ResponseEntity.ok(Map.of("message", "AI API key updated"));
     }
 
     // ──────────────────────────────────────────────

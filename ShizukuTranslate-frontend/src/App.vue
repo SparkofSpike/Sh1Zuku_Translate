@@ -4,6 +4,7 @@
       <div style="max-width: 800px; margin: 0 auto; display: flex; align-items: center; height: 56px;">
         <router-link to="/" class="nav-item">翻译</router-link>
         <router-link to="/history" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">历史</router-link>
+        <router-link to="/profile" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">资料</router-link>
         <router-link to="/survey" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">问卷</router-link>
         <router-link to="/admin" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">管理</router-link>
         <router-link to="/about" class="nav-item" style="margin-left: 24px;">关于</router-link>
