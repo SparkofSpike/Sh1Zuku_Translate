@@ -325,6 +325,8 @@ function updateTranslateButton(status) {
 
   if (status === 'preparing') {
     set(state.miniBtn, '网页处理中... 点击取消', '#e03131');
+  } else if (status === 'reasoning') {
+    set(state.miniBtn, 'AI 推理中... 点击取消', '#1971c2');
   } else if (status === 'ai-processing') {
     set(state.miniBtn, 'AI 处理中... 点击取消', '#1971c2');
   } else {
@@ -689,12 +691,13 @@ async function handleTranslate() {
   // Load settings
   const settings = await new Promise((resolve) => {
     try {
-      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt'], (items) => {
+      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType'], (items) => {
         resolve({
           targetLang: items.targetLang || 'zh',
           displayMode: items.displayMode || 'panel',
           selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
-          customPrompt: items.customPrompt || ''
+          customPrompt: items.customPrompt || '',
+          thinkingType: items.thinkingType || 'disabled'
         });
       });
     } catch (e) {
@@ -746,9 +749,9 @@ async function handleTranslate() {
     const secs = Math.round((Date.now() - state.waitStart) / 1000);
     const btn = state.miniBtn;
     if (btn) {
-      btn.textContent = '等待 AI 响应 ' + secs + 's…';
-      btn.style.background = '#e03131';
-      btn.style.borderColor = '#e03131';
+      btn.textContent = 'AI 推理中 ' + secs + 's…';
+      btn.style.background = '#1971c2';
+      btn.style.borderColor = '#1971c2';
     }
   }, 1000);
 
@@ -770,8 +773,12 @@ async function handleTranslate() {
       fullMode: state.fullMode,
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
-      customPrompt: settings.customPrompt
+      customPrompt: settings.customPrompt,
+      // Request accepted: the button moves to the blue "reasoning"
+      // state until the first token arrives (DeepSeek pre-fill).
+      thinkingType: settings.thinkingType
     });
+    updateTranslateButton('reasoning');
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
     if (state.translating) {

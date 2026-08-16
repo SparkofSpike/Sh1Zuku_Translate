@@ -96,7 +96,7 @@ public class OcrService {
             String userMessage = "Fix the formatting of this Japanese OCR output:\n\n" + rawText;
 
             DeepSeekClient.DeepSeekResult result = deepSeekClient.chat(
-                    systemPrompt, userMessage, "deepseek-v4-flash");
+                    systemPrompt, userMessage, "deepseek-v4-flash", null);
 
             if (result != null && result.getContent() != null) {
                 return result.getContent().trim();

@@ -31,7 +31,7 @@ public class DeepSeekClient {
         this.objectMapper = objectMapper;
     }
 
-    public DeepSeekResult chat(String systemPrompt, String userMessage, String model) {
+    public DeepSeekResult chat(String systemPrompt, String userMessage, String model, String thinkingType) {
         Map<String, Object> request = Map.of(
                 "model", model != null ? model : properties.getDefaultModel(),
                 "messages", List.of(
@@ -39,7 +39,8 @@ public class DeepSeekClient {
                         Map.of("role", "user", "content", userMessage)
                 ),
                 "temperature", 0.3,
-                "max_tokens", 100000
+                "max_tokens", 100000,
+                "thinking", Map.of("type", thinkingType != null ? thinkingType : properties.getThinkingType())
         );
 
         Map<String, Object> response = restClient.post()
@@ -68,7 +69,10 @@ public class DeepSeekClient {
         return new DeepSeekResult(content, usage);
     }
 
-    public void chatStream(String systemPrompt, String userMessage, String model,
+    // DeepSeek v4 internal thinking ("enabled") roughly 6x-slows JSON-structured
+    // output (measured: 7.7s vs 1.3s for 10 paragraphs). Default is disabled;
+    // the client (extension) can opt into reasoning per request.
+    public void chatStream(String systemPrompt, String userMessage, String model, String thinkingType,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError) {
         // DeepSeek overloads frequently (HTTP 503 'Service is too busy').
@@ -86,7 +90,8 @@ public class DeepSeekClient {
                     ),
                     "temperature", 0.3,
                     "max_tokens", 100000,
-                    "stream", true
+                    "stream", true,
+                    "thinking", Map.of("type", thinkingType != null ? thinkingType : properties.getThinkingType())
             );
             log.info("DeepSeek stream start (attempt {}), model={}, promptChars={}",
                     attempt, model != null ? model : properties.getDefaultModel(),

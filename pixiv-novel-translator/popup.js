@@ -6,12 +6,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const backendUrlInput = document.getElementById('backendUrl');
   const apiKeyInput = document.getElementById('apiKey');
   const targetLangSelect = document.getElementById('targetLang');
+  const thinkingTypeSelect = document.getElementById('thinkingType');
   const displayModeSelect = document.getElementById('displayMode');
   const autoTranslateCheckbox = document.getElementById('autoTranslate');
   const customPromptInput = document.getElementById('customPrompt');
   const presetsGroup = document.getElementById('presetsGroup');
   const statusDiv = document.getElementById('status');
   const translateBtn = document.getElementById('translateBtn');
+  const historyBtn = document.getElementById('historyBtn');
   const saveBtn = document.getElementById('saveBtn');
   const pageStatus = document.getElementById('pageStatus');
 
@@ -45,11 +47,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Load saved settings ─────────────────────────────────
 
   chrome.storage.sync.get(
-    ['backendUrl', 'apiKey', 'targetLang', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
+    ['backendUrl', 'apiKey', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
     (items) => {
       if (items.backendUrl) backendUrlInput.value = items.backendUrl;
       if (items.apiKey) apiKeyInput.value = items.apiKey;
       if (items.targetLang) targetLangSelect.value = items.targetLang;
+      if (items.thinkingType) thinkingTypeSelect.value = items.thinkingType;
       if (items.displayMode) displayModeSelect.value = items.displayMode;
       if (items.customPrompt) customPromptInput.value = items.customPrompt;
       if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
@@ -123,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
       targetLang: targetLangSelect.value,
+      thinkingType: thinkingTypeSelect.value,
       displayMode: displayModeSelect.value,
       autoTranslate: autoTranslateCheckbox.checked,
       customPrompt: customPromptInput.value.trim(),
@@ -135,7 +139,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   saveBtn.addEventListener('click', () => saveSettings(true));
 
-  [backendUrlInput, apiKeyInput, targetLangSelect, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
+  // Open the web history page where every finished translation is stored.
+  historyBtn.addEventListener('click', () => {
+    const backendUrl = backendUrlInput.value.trim();
+    if (!backendUrl) {
+      showStatus('请先填写后端地址', 'err');
+      return;
+    }
+    chrome.tabs.create({ url: backendUrl.replace(/\/+$/, '') + '/history' });
+    window.close();
+  });
+
+  [backendUrlInput, apiKeyInput, targetLangSelect, thinkingTypeSelect, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
     el.addEventListener('change', () => saveSettings(false));
   });
 

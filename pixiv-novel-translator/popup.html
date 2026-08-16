@@ -158,6 +158,14 @@
   </div>
 
   <div class="field">
+    <label for="thinkingType">AI 思考</label>
+    <select id="thinkingType">
+      <option value="disabled">关闭</option>
+      <option value="enabled">开启</option>
+    </select>
+  </div>
+
+  <div class="field">
     <label for="targetLang">目标语言</label>
     <select id="targetLang">
       <option value="zh">中文</option>
@@ -197,6 +205,7 @@
   <div class="status" id="status"></div>
 
   <button class="btn btn-primary" id="translateBtn">翻译当前小说</button>
+  <button class="btn btn-secondary" id="historyBtn">查看翻译历史</button>
   <button class="btn btn-secondary" id="saveBtn">保存设置</button>
 
   <hr />

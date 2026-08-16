@@ -12,6 +12,8 @@ public class TranslateRequest {
     private String model;
     private String customPrompt;
     private List<String> presets;
+    /** DeepSeek v4 thinking mode: "enabled" | "disabled" (null = server default) */
+    private String thinkingType;
 
     public String getSourceText() { return sourceText; }
     public void setSourceText(String sourceText) { this.sourceText = sourceText; }
@@ -21,5 +23,7 @@ public class TranslateRequest {
     public void setCustomPrompt(String customPrompt) { this.customPrompt = customPrompt; }
     public List<String> getPresets() { return presets; }
     public void setPresets(List<String> presets) { this.presets = presets; }
+    public String getThinkingType() { return thinkingType; }
+    public void setThinkingType(String thinkingType) { this.thinkingType = thinkingType; }
 
 }

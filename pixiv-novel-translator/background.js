@@ -56,7 +56,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.selectedPresets || [],
         message.customPrompt || '',
         message.currentPage || 0,
-        !!message.fullMode
+        !!message.fullMode,
+        message.thinkingType
       ).catch((error) => {
         const msg = error && error.message ? error.message : String(error);
         // An aborted body stream is almost always the user pressing cancel
@@ -99,7 +100,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false, thinkingType) {
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -153,6 +154,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       targetLang,
       selectedPresets,
       customPrompt,
+      thinkingType,
       controller,
       async (token) => {
         await notifyTab(tabId, { type: 'SSE_TOKEN', token });
@@ -318,7 +320,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selectedPresets, customPrompt, controller, onToken, onDone, onError) {
+async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onToken, onDone, onError) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -373,6 +375,7 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
       sourceText: text,
       model: 'deepseek-v4-flash',
       customPrompt: prompt,
+      thinkingType: thinkingType || undefined,
       presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined
     }),
     signal

@@ -63,7 +63,7 @@ public class TranslationService {
                 request.getCustomPrompt()
         );
 
-        DeepSeekResult result = deepSeekClient.chat(systemPrompt, request.getSourceText(), request.getModel());
+        DeepSeekResult result = deepSeekClient.chat(systemPrompt, request.getSourceText(), request.getModel(), request.getThinkingType());
         String translated = result.getContent();
 
         TranslationRecord record = new TranslationRecord();
@@ -159,6 +159,7 @@ public class TranslationService {
                 systemPrompt,
                 request.getSourceText(),
                 request.getModel(),
+                request.getThinkingType(),
                 token -> {
                     fullText.append(token);
                     onToken.accept(token);
