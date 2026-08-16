@@ -228,10 +228,22 @@ def step_upload():
         log(f"SSH 密钥不存在: {SSH_KEY}", ok=False)
         return False
 
-    # 先停止服务
+    # 先单独上传停止脚本（新文件不受 translator.jar 文件锁影响），
+    # 确保服务器上已有它，再执行 stop，最后传其余部署文件。
+    stop_script_src = PROJECT_ROOT / "_stop_services.ps1"
+    if stop_script_src.exists():
+        _subprocess_run([
+            "scp", "-o", "StrictHostKeyChecking=no",
+            "-P", str(SERVER_PORT),
+            "-i", SSH_KEY,
+            str(stop_script_src),
+            f"{SERVER_USER}@{SERVER_HOST}:{SERVER_PATH}/_stop_services.ps1"
+        ], capture=True)
+
+    # 停止服务（按命令行精确杀，绝不误伤 Minecraft 等其它 Java 进程）
     stop_script = (
-        f'taskkill /f /im java.exe 2>nul & '
-        f'taskkill /f /im python.exe 2>nul'
+        'powershell -ExecutionPolicy Bypass -File '
+        f'{SERVER_PATH}\\_stop_services.ps1'
     )
     _subprocess_run([
         "ssh", "-o", "StrictHostKeyChecking=no",
@@ -267,8 +279,7 @@ def step_restart():
 
     # schtasks 方式：SSH 断开后进程仍在
     restart_script = (
-        f'taskkill /f /im java.exe 2>nul & '
-        f'taskkill /f /im python.exe 2>nul & '
+        f'powershell -ExecutionPolicy Bypass -File {SERVER_PATH}\\_stop_services.ps1 & '
         f'schtasks /delete /tn SvcShizuku /f 2>nul & '
         f'schtasks /create /tn SvcShizuku /tr "{backend_bat}" /sc once /st 00:00 /f 2>nul & '
         f'schtasks /run /tn SvcShizuku 2>nul'
