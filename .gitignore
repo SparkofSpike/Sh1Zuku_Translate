@@ -50,3 +50,6 @@ ShizukuTranslate/src/main/resources/static/
 
 # Backup files
 *.bak
+
+# CodeWhale project instructions (local only)
+AGENTS.md
