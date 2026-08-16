@@ -223,4 +223,71 @@ document.addEventListener('DOMContentLoaded', () => {
     statusDiv.style.display = 'block';
     setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
   }
+
+  // ─── Check for updates (GitHub Releases) ─────────────────
+  // Not a store extension, so the browser cannot self-update it.
+  // Instead we compare against the latest GitHub release and guide
+  // the user to download it (or run install.cmd on Windows).
+
+  const UPDATE_REPO = 'SparkofSpike/Sh1Zuku_Translate';
+  const updateBtn = document.getElementById('updateBtn');
+  const updateStatus = document.getElementById('updateStatus');
+
+  updateBtn.addEventListener('click', checkForUpdates);
+
+  async function checkForUpdates() {
+    const cur = typeof EXTENSION_VERSION !== 'undefined' ? EXTENSION_VERSION : '0.0.0';
+    const base = String(cur).split('+')[0]; // "1.1.0+c8369a1" -> "1.1.0"
+    updateBtn.disabled = true;
+    updateBtn.textContent = '检查中...';
+    try {
+      const res = await fetch('https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest', {
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const rel = await res.json();
+      const latest = String(rel.tag_name || '').replace(/^v/, '');
+      if (latest && compareVersions(latest, base) > 0) {
+        renderUpdateStatus(
+          '发现新版本 ' + latest + '（当前 ' + base + '）→ 点击下载',
+          'new',
+          rel.html_url || ('https://github.com/' + UPDATE_REPO + '/releases/latest')
+        );
+      } else {
+        renderUpdateStatus('已是最新版本（' + base + '）', 'ok');
+      }
+    } catch (e) {
+      renderUpdateStatus('检查更新失败（无法连接更新服务器）', 'err');
+    } finally {
+      updateBtn.disabled = false;
+      updateBtn.textContent = '检查更新';
+    }
+  }
+
+  function compareVersions(a, b) {
+    const pa = String(a).split('.').map(Number);
+    const pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0;
+      const y = pb[i] || 0;
+      if (x !== y) return x - y;
+    }
+    return 0;
+  }
+
+  function renderUpdateStatus(message, type, url) {
+    updateStatus.innerHTML = '';
+    const span = document.createElement('span');
+    span.className = type;
+    span.textContent = message;
+    if (url) {
+      span.style.cursor = 'pointer';
+      span.style.textDecoration = 'underline';
+      span.addEventListener('click', () => {
+        chrome.tabs.create({ url });
+        window.close();
+      });
+    }
+    updateStatus.appendChild(span);
+  }
 });

@@ -66,7 +66,13 @@ The `pixiv-novel-translator/` Chrome/Edge MV3 extension translates Pixiv novels 
 
 Translation runs as an SSE stream through the site backend, authenticated with a user-generated API key (see the **Profile** page). Results can be displayed as a side panel, inline under each original paragraph, or with Pixiv's `[newpage]` breaks preserved.
 
-Non-developers who want to try the extension can follow the step-by-step guide: [`pixiv-novel-translator/TESTING_GUIDE.md`](pixiv-novel-translator/TESTING_GUIDE.md) (in Chinese).
+### Installing the extension
+
+The extension is distributed from this repository (not browser stores). Browsers forbid non-store extensions from replacing their own code, so there is no silent auto-update — instead you get a scripted one-click install/update plus an in-extension update check:
+
+- **One-click install / update (Windows):** download the latest release zip (or clone the repo) and double-click `install.cmd`. It downloads the newest release, extracts it to `%LOCALAPPDATA%\PixivNovelTranslator\`, and prints the next steps. Re-running it later updates the extension in place.
+- **Manual install:** open `edge://extensions` (or `chrome://extensions`), enable **Developer mode**, click **Load unpacked**, and select the `pixiv-novel-translator/` folder.
+- **Checking for updates:** the popup's **检查更新** button compares the installed version against the latest GitHub release and links to the download page. Apply the update by re-running `install.cmd`, then click the reload icon on the extension card in `edge://extensions` and refresh the Pixiv page.
 
 ## Getting Started
 
