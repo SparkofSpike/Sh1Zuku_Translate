@@ -43,20 +43,20 @@ An AI-powered novel translation tool that translates Japanese / Korean light nov
 The `pixiv-novel-translator/` Chrome/Edge MV3 extension translates Pixiv novels without leaving the page:
 
 ```
-┌──────────────────────┐  ① 提取 novel_id   ┌──────────────────────────┐
+┌──────────────────────┐  ① extract novel_id  ┌──────────────────────────┐
 │  Pixiv novel page    │───────────────────▶│  content.js (injected)   │
-│  (user clicks 翻译)   │◀───────────────────│  extracts paragraphs,    │
-└──────────────────────┘  ⑤ 渲染译文         │  renders translated text │
+│  (user clicks go)    │◀───────────────────│  extracts paragraphs,    │
+└──────────────────────┘  ⑤ render output    │  renders translated text │
          ▲                                    └───────────┬──────────────┘
-         │                                  ② novel_id 消息 │
+         │                                  ② novel_id msg │
          │                                    (message)    ▼
 ┌────────┴───────────────┐         ┌─────────────────────────────────────┐
 │   backend              │         │  background.js (MV3 service worker) │
 │   /translate/stream    │◀────────│  + alarm keep-alive                 │
 │   (X-API-Key auth)     │  ③ SSE  │  + per-tab abort control           │
-│   ──▶ DeepSeek API     │  流式译文 │  + chrome.cookies PHPSESSID        │
+│   ──▶ DeepSeek API     │  stream  │  + chrome.cookies PHPSESSID        │
 └────────────────────────┘         └───────────┬─────────────────────────┘
-                                               │ ② bare fetch 原文
+                                               │ ② bare fetch source text
                                                ▼
                                      ┌──────────────────────┐
                                      │  pixiv.net AJAX API  │
@@ -65,6 +65,8 @@ The `pixiv-novel-translator/` Chrome/Edge MV3 extension translates Pixiv novels 
 ```
 
 Translation runs as an SSE stream through the site backend, authenticated with a user-generated API key (see the **Profile** page). Results can be displayed as a side panel, inline under each original paragraph, or with Pixiv's `[newpage]` breaks preserved.
+
+Non-developers who want to try the extension can follow the step-by-step guide: [`pixiv-novel-translator/TESTING_GUIDE.md`](pixiv-novel-translator/TESTING_GUIDE.md) (in Chinese).
 
 ## Getting Started
 
