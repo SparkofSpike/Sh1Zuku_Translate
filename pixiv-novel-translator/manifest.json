@@ -5,6 +5,7 @@
   "description": "Translate Pixiv Japanese novels with AI — powered by ShizukuTranslate",
   "permissions": [
     "activeTab",
+    "alarms",
     "cookies",
     "storage",
     "scripting"

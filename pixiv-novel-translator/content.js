@@ -81,29 +81,46 @@ function getNovelIdFromUrl() {
 
 // ─── Send Message to Background ─────────────────────────────
 
-function sendToBackground(type, payload) {
+// Background acks TRANSLATE_NOVEL_STREAM immediately, so the timeout is
+// a very generous ceiling — it only fires if the service worker died
+// without responding (MV3 reclaim) and the UI would otherwise hang.
+function sendToBackground(type, payload, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('扩展服务无响应，请刷新页面后重试'));
+    }, timeoutMs);
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(arg);
+    };
+
     try {
       chrome.runtime.sendMessage({ type, ...payload }, (response) => {
         if (chrome.runtime.lastError) {
           const msg = chrome.runtime.lastError.message || '';
           if (msg.includes('context invalidated') || msg.includes('Extension context')) {
-            reject(new Error('扩展已更新，请刷新页面后重试'));
+            finish(reject, new Error('扩展已更新，请刷新页面后重试'));
           } else {
-            reject(new Error(msg));
+            finish(reject, new Error(msg));
           }
         } else if (response && response.success) {
-          resolve(response.data);
+          finish(resolve, response.data);
         } else {
-          reject(new Error(response?.error || '未知错误'));
+          finish(reject, new Error(response?.error || '未知错误'));
         }
       });
     } catch (e) {
       const msg = String(e?.message || e);
       if (msg.includes('context invalidated') || msg.includes('Extension context')) {
-        reject(new Error('扩展已更新，请刷新页面后重试'));
+        finish(reject, new Error('扩展已更新，请刷新页面后重试'));
       } else {
-        reject(e);
+        finish(reject, e);
       }
     }
   });
@@ -484,6 +501,11 @@ function appendToken(token) {
   if (state.transBody) {
     if (state.mode === 'paged') {
       renderPagedStreaming();
+    } else if (state.pagedRequest) {
+      // JSON Lines stream landed in the panel renderer (inline mode
+      // degraded to panel, or panel mode on a paged novel): parse and
+      // join it, otherwise the window shows raw {"id":..,"text":..} lines.
+      renderPanelFromJsonLines();
     } else {
       state.transBody.textContent = state.streamingText;
     }
@@ -505,6 +527,22 @@ function renderPagedStreaming() {
       return `<div class="pnt-page">${escapeHtml(text)}</div>`;
     })
     .join('<div class="pnt-page-break">—— [newpage] ——</div>');
+}
+
+// Panel renderer for JSON Lines streams: join entries by id in order.
+// Same id takes the latest (most complete) text, so the progressive
+// parse keeps the typewriter effect as each line finishes.
+function renderPanelFromJsonLines() {
+  if (!state.transBody) return;
+  const entries = parseJsonLines(state.streamingText);
+  if (!entries.length) {
+    state.transBody.textContent = state.streamingText;
+    return;
+  }
+  const byId = new Map();
+  entries.forEach((e) => byId.set(e.id, e.text));
+  const ids = [...byId.keys()].sort((a, b) => a - b);
+  state.transBody.textContent = ids.map((id) => byId.get(id)).join('\n\n');
 }
 
 // Try to parse the accumulated stream as JSON Lines produced by the

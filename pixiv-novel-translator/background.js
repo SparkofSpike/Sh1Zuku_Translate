@@ -2,64 +2,99 @@
 // Pixiv Novel Translator — Background Service Worker
 // ============================================================
 
-// ─── Active translation (for cancellation) ───────────────────
+// ─── Active translations (per-tab, for cancellation) ─────────
 
 const PNT_BG_VERSION = '1.1.0';
 console.log('[PNT] background.js v' + PNT_BG_VERSION + ' loaded');
-let activeController = null;
+// One AbortController per tab: translating in two tabs at once must
+// not clobber each other's cancellation handle.
+const activeControllers = new Map();
+
+// ─── Keepalive (MV3 service worker) ─────────────────────────
+// The long SSE fetch keeps the SW alive while it is in flight, but the
+// gaps between steps (Pixiv fetch done → settings → backend fetch) can
+// exceed the idle-reclaim timer. A periodic alarm resets it, so a
+// several-minute full-novel translation is not killed mid-stream.
+
+const KEEPALIVE_ALARM = 'pnt-keepalive';
+let keepaliveRefs = 0;
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === KEEPALIVE_ALARM) {
+    // No-op: firing the alarm itself resets the SW idle timer.
+  }
+});
+
+function keepaliveStart() {
+  keepaliveRefs++;
+  if (keepaliveRefs === 1) {
+    chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+  }
+}
+
+function keepaliveStop() {
+  keepaliveRefs = Math.max(0, keepaliveRefs - 1);
+  if (keepaliveRefs === 0) {
+    chrome.alarms.clear(KEEPALIVE_ALARM);
+  }
+}
 
 // ─── Message Handler ─────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  (async () => {
-    try {
-      switch (message.type) {
-        case 'TRANSLATE_NOVEL_STREAM':
-          // Start streaming translation; tokens pushed via tabs.sendMessage
-          await startStreamingTranslation(
-            message.novelId,
-            message.targetLang || 'zh',
-            sender.tab?.id,
-            message.selectedPresets || [],
-            message.customPrompt || '',
-            message.currentPage || 0,
-            !!message.fullMode
-          );
-          sendResponse({ success: true });
-          break;
-
-        case 'CANCEL_TRANSLATE':
-          if (activeController) {
-            activeController.abort();
-            activeController = null;
-            sendResponse({ success: true });
-          } else {
-            sendResponse({ success: false, error: '没有进行中的翻译' });
-          }
-          break;
-
-        case 'PING':
-          sendResponse({ pong: true });
-          break;
-
-        default:
-          sendResponse({ success: false, error: '未知消息类型' });
-      }
-    } catch (error) {
-      const msg = error && error.message ? error.message : String(error);
-      // An aborted body stream is almost always the user pressing cancel
-      // (Edge reports it as "BodyStreamBuffer was aborted"). Treat it as
-      // an expected cancellation, not an error — no scary console.error.
-      if (/abort/i.test(msg)) {
-        console.warn('[PixivTranslator] Translation cancelled:', msg);
-        sendResponse({ success: false, cancelled: true, error: '翻译已取消' });
-      } else {
-        console.error('[PixivTranslator] Error:', msg);
-        sendResponse({ success: false, error: msg });
-      }
+  switch (message.type) {
+    case 'TRANSLATE_NOVEL_STREAM': {
+      // Acknowledge immediately; the streaming work runs detached and
+      // reports progress/errors via tabs.sendMessage. Responding only
+      // after the whole stream would hold the message port open for
+      // minutes — a needless SW keepalive dependency.
+      const tabId = sender.tab?.id ?? null;
+      startStreamingTranslation(
+        message.novelId,
+        message.targetLang || 'zh',
+        tabId,
+        message.selectedPresets || [],
+        message.customPrompt || '',
+        message.currentPage || 0,
+        !!message.fullMode
+      ).catch((error) => {
+        const msg = error && error.message ? error.message : String(error);
+        // An aborted body stream is almost always the user pressing cancel
+        // (Edge reports it as "BodyStreamBuffer was aborted"). Treat it as
+        // an expected cancellation, not an error — no scary console.error.
+        if (/abort/i.test(msg)) {
+          console.warn('[PixivTranslator] Translation cancelled:', msg);
+        } else {
+          console.error('[PixivTranslator] Error:', msg);
+          notifyTab(tabId, { type: 'SSE_ERROR', error: msg });
+        }
+      });
+      sendResponse({ success: true });
+      break;
     }
-  })();
-  return true; // async response
+
+    case 'CANCEL_TRANSLATE': {
+      // Cancel by tab so a request in another tab is never aborted.
+      const key = sender.tab?.id ?? 'unknown';
+      const controller = activeControllers.get(key);
+      if (controller) {
+        controller.abort();
+        activeControllers.delete(key);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: '没有进行中的翻译' });
+      }
+      break;
+    }
+
+    case 'PING':
+      sendResponse({ pong: true });
+      break;
+
+    default:
+      sendResponse({ success: false, error: '未知消息类型' });
+  }
+  return false; // all branches respond synchronously
 });
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
@@ -68,36 +103,42 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
-  activeController = controller;
+  const key = tabId ?? 'unknown';
+  // Same-tab re-entry (should not happen — the content script guards
+  // with state.translating) would otherwise leak the old controller.
+  const prev = activeControllers.get(key);
+  if (prev) prev.abort();
+  activeControllers.set(key, controller);
+  keepaliveStart();
 
-  // Step 1: fetch novel from Pixiv API
-  console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + novelId);
-  const novel = await fetchNovelFromPixiv(novelId, controller.signal);
-  console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
-
-  // Notify content script: novel loaded, begin streaming
-  await notifyTab(tabId, {
-    type: 'SSE_NOVEL_LOADED',
-    data: {
-      id: novel.id,
-      title: novel.title,
-      author: novel.userName,
-      originalContent: novel.content,
-      tags: novel.tags || [],
-      characterCount: novel.characterCount,
-      // The content script needs to know whether this request is the
-      // paged-novel flow (numbered paragraphs + JSON Lines output) so it
-      // can pick the right streaming renderer.
-      pagedRequest: currentPage > 0 || fullMode,
-      fullMode
-    }
-  });
-
-  // Step 2: load settings
-  const settings = await loadSettings();
-
-  // Step 3: stream translate via backend
   try {
+    // Step 1: fetch novel from Pixiv API
+    console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + novelId);
+    const novel = await fetchNovelFromPixiv(novelId, controller.signal);
+    console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
+
+    // Notify content script: novel loaded, begin streaming
+    await notifyTab(tabId, {
+      type: 'SSE_NOVEL_LOADED',
+      data: {
+        id: novel.id,
+        title: novel.title,
+        author: novel.userName,
+        originalContent: novel.content,
+        tags: novel.tags || [],
+        characterCount: novel.characterCount,
+        // The content script needs to know whether this request is the
+        // paged-novel flow (numbered paragraphs + JSON Lines output) so it
+        // can pick the right streaming renderer.
+        pagedRequest: currentPage > 0 || fullMode,
+        fullMode
+      }
+    });
+
+    // Step 2: load settings
+    const settings = await loadSettings();
+
+    // Step 3: stream translate via backend
     // Paged novels: translate only the current page (the DOM only shows
     // that page). The neighbouring pages are passed as context so the
     // model keeps continuity — they are marked as reference, not output.
@@ -124,9 +165,12 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       }
     );
   } finally {
-    if (activeController === controller) {
-      activeController = null;
+    // Clean up controller + keepalive on every exit path, STEP1/2
+    // failures included — not only after the stream completes.
+    if (activeControllers.get(key) === controller) {
+      activeControllers.delete(key);
     }
+    keepaliveStop();
   }
 }
 
@@ -293,25 +337,23 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
 
   // Paged-novel request built by buildPageSource(): the text contains
   // reference-only context sections plus the target page. Tell the model
-  // explicitly to translate only the marked page and never echo context.
-  // Full-novel requests (buildFullSource) carry the same [编号] structure.
+  // to translate only the marked page and never echo context. Full-novel
+  // requests (buildFullSource) carry the same [编号] structure.
   if (text.includes('【当前页') || text.includes('【全文翻译')) {
-    prompt += `\n\n源文本中【参考上下文】部分（如有）仅用于理解情节，一律不要翻译、不要输出、不要复述。请只翻译需要翻译的部分。
+    prompt += `
 
-所有需要翻译的段落已用 [编号] 标记（[1]、[2]、...）。请逐段翻译，输出为 JSON Lines 格式：每一行是一个独立的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。
-
-{"id":1,"text":"第一段的译文"}
-{"id":2,"text":"第二段的译文"}
-
-要求：
-1. 每一行必须是一个完整、合法的 JSON 对象，用双引号，不要注释、不要 Markdown 代码块标记、不要任何额外文字；
-2. id 必须与输入 [编号] 一一对应，顺序不变，不得合并或遗漏；
-3. 译文内部的换行用 \\n 转义写在 text 里，段落之间严格分行；
-4. 参考上下文不要翻译、不要出现在输出中；全文模式下必须输出所有编号段落的译文，不得遗漏任何编号。`;
+【参考上下文】部分仅用于理解情节，不要翻译。请只翻译标记了 [编号] 的段落，逐段输出 JSON Lines：每行一个 JSON 对象 {"id":段落编号,"text":"译文"}，id 与输入编号一一对应、顺序不变、不得合并或遗漏，不要输出其他任何内容。`;
   }
 
 
   console.log('[PNT] STEP3 fetch backend:', url);
+  // Guard against a hanging backend: the SSE stream can be long, so the
+  // timeout is generous (2 min) and user cancellation still wins via
+  // AbortSignal.any (Chrome/Edge 116+).
+  const timeoutSignal = AbortSignal.timeout(120000);
+  const signal = typeof AbortSignal.any === 'function'
+    ? AbortSignal.any([controller.signal, timeoutSignal])
+    : controller.signal;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -324,8 +366,14 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
       customPrompt: prompt,
       presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined
     }),
-    signal: controller.signal
+    signal
   }).catch((e) => {
+    if (e && e.name === 'AbortError' && controller.signal.aborted) {
+      throw new Error('翻译已取消');
+    }
+    if (e && e.name === 'TimeoutError') {
+      throw new Error('翻译服务请求超时，请重试');
+    }
     console.error('[PNT] STEP3 FAIL backend fetch:', url, '->', e && e.message, e && e.cause ? String(e.cause) : '');
     throw new Error('翻译服务请求失败(网络): ' + (e && e.message ? e.message : 'network error'));
   });
@@ -341,6 +389,7 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let streamEnded = false; // set once a done/error event was delivered
 
   while (true) {
     const { done, value } = await reader.read();
@@ -362,17 +411,26 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
         if (event.token) {
           await onToken(event.token);
         } else if (event.done) {
+          streamEnded = true;
           await onDone({
             translatedText: event.translatedText,
             id: event.id,
             tokenUsage: event.tokenUsage
           });
         } else if (event.error) {
+          streamEnded = true;
           await onError(event.error);
         }
       } catch (parseErr) {
         console.warn('[PixivTranslator] Bad SSE chunk:', data);
       }
     }
+  }
+
+  // The body stream ended without the backend sending done/error (proxy
+  // cut, backend crash): the content script would otherwise stay stuck
+  // in "translating" forever. Surface it explicitly.
+  if (!streamEnded) {
+    await onError('翻译流意外中断，请重试');
   }
 }

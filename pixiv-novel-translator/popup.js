@@ -70,7 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     try {
       const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/presets', {
-        headers: { 'X-API-Key': apiKey }
+        headers: { 'X-API-Key': apiKey },
+        signal: AbortSignal.timeout(10000)
       });
       if (!response.ok) {
         presetsGroup.innerHTML = '<span style="color:#c5221f;">预设加载失败</span>';
@@ -150,7 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         await chrome.scripting.executeScript({
           target: { tabId },
-          files: ['content.js']
+          // version.js first: content.js reads EXTENSION_VERSION for the
+          // badge, matching the manifest-declared script order.
+          files: ['version.js', 'content.js']
         });
         await chrome.scripting.insertCSS({
           target: { tabId },
