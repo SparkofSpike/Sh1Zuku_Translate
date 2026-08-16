@@ -53,3 +53,16 @@ ShizukuTranslate/src/main/resources/static/
 
 # CodeWhale project instructions (local only)
 AGENTS.md
+
+# Local-only tooling & changelog (not for GitHub)
+/CHANGELOG.md
+/build_extension.py
+/ship.py
+/deploy.bat
+/start.sh
+/_stop_services.ps1
+/_*.py
+/_*.ps1
+
+# Python bytecode
+__pycache__/
