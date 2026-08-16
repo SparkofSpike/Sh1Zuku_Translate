@@ -347,13 +347,22 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
 
 
   console.log('[PNT] STEP3 fetch backend:', url);
-  // Guard against a hanging backend: the SSE stream can be long, so the
-  // timeout is generous (2 min) and user cancellation still wins via
-  // AbortSignal.any (Chrome/Edge 116+).
-  const timeoutSignal = AbortSignal.timeout(120000);
+  // Full-novel requests can take minutes to pre-fill (huge prompt), so a
+  // fixed total timeout would kill legitimate translations. Instead wait
+  // up to 5 min for the FIRST token, then clear the timer — after that
+  // the stream runs without an artificial cap (the backend enforces its
+  // own async timeout). User cancellation still wins via AbortSignal.any
+  // (Chrome/Edge 116+).
+  const firstTokenTimeoutMs = 300000;
+  const firstTokenController = new AbortController();
   const signal = typeof AbortSignal.any === 'function'
-    ? AbortSignal.any([controller.signal, timeoutSignal])
+    ? AbortSignal.any([controller.signal, firstTokenController.signal])
     : controller.signal;
+  // Timer stays harmless after the stream ends (aborting a finished
+  // fetch is a no-op), so no explicit cleanup is needed.
+  let firstTokenTimer = setTimeout(() => {
+    firstTokenController.abort();
+  }, firstTokenTimeoutMs);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -371,8 +380,9 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
     if (e && e.name === 'AbortError' && controller.signal.aborted) {
       throw new Error('翻译已取消');
     }
-    if (e && e.name === 'TimeoutError') {
-      throw new Error('翻译服务请求超时，请重试');
+    if (e && (e.name === 'TimeoutError'
+        || (e.name === 'AbortError' && firstTokenController.signal.aborted))) {
+      throw new Error('AI 响应超时（5 分钟未收到首个 token），请重试');
     }
     console.error('[PNT] STEP3 FAIL backend fetch:', url, '->', e && e.message, e && e.cause ? String(e.cause) : '');
     throw new Error('翻译服务请求失败(网络): ' + (e && e.message ? e.message : 'network error'));
@@ -409,6 +419,12 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
       try {
         const event = JSON.parse(data);
         if (event.token) {
+          // First token received: the pre-fill wait is over, drop the
+          // timeout so a long full-novel stream is never cut short.
+          if (firstTokenTimer) {
+            clearTimeout(firstTokenTimer);
+            firstTokenTimer = null;
+          }
           await onToken(event.token);
         } else if (event.done) {
           streamEnded = true;

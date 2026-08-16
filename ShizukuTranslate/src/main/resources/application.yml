@@ -15,7 +15,9 @@ spring:
       path: /h2-console
   mvc:
     async:
-      request-timeout: 300000
+      # Full-novel SSE streams can run several minutes (DeepSeek pre-fill
+      # + long output); 30 min leaves plenty of headroom.
+      request-timeout: 1800000
   servlet:
     multipart:
       max-file-size: 20MB

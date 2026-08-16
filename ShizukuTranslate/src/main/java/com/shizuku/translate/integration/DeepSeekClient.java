@@ -75,6 +75,7 @@ public class DeepSeekClient {
         // Retry with backoff — the exchange throws before any token is
         // emitted, so a retry never duplicates output.
         final int MAX_RETRIES = 3;
+        long startMs = System.currentTimeMillis();
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             Map<String, Object> request = Map.of(
@@ -87,6 +88,9 @@ public class DeepSeekClient {
                     "max_tokens", 100000,
                     "stream", true
             );
+            log.info("DeepSeek stream start (attempt {}), model={}, promptChars={}",
+                    attempt, model != null ? model : properties.getDefaultModel(),
+                    userMessage != null ? userMessage.length() : 0);
 
             restClient.post()
                     .uri("/chat/completions")
@@ -95,6 +99,7 @@ public class DeepSeekClient {
                         TokenUsage finalUsage = null;
 
                         boolean clientDisconnected = false;
+                        boolean firstTokenLogged = false;
                         try (BufferedReader reader = new BufferedReader(
                                 new InputStreamReader(clientResponse.getBody(), StandardCharsets.UTF_8))) {
                             String line;
@@ -112,6 +117,11 @@ public class DeepSeekClient {
                                             if (delta != null && delta.containsKey("content")) {
                                                 String token = (String) delta.get("content");
                                                 if (token != null) {
+                                                    if (!firstTokenLogged) {
+                                                        firstTokenLogged = true;
+                                                        log.info("DeepSeek first token after {} ms",
+                                                                System.currentTimeMillis() - startMs);
+                                                    }
                                                     onToken.accept(token);
                                                 }
                                             }
