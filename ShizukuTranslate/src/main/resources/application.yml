@@ -23,7 +23,7 @@ spring:
 
 deepseek:
   api:
-    key: ${DEEPSEEK_API_KEY:***REMOVED***}
+    key: ${DEEPSEEK_API_KEY}
     base-url: https://api.deepseek.com/v1
     default-model: deepseek-v4-flash
 
