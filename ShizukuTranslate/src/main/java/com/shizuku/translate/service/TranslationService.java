@@ -5,35 +5,50 @@ import com.shizuku.translate.dto.HistoryResponse;
 import com.shizuku.translate.dto.TokenUsage;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
+import com.shizuku.translate.entity.TranslationCache;
 import com.shizuku.translate.entity.TranslationRecord;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.exception.ResourceNotFoundException;
 import com.shizuku.translate.integration.DeepSeekClient;
+import com.shizuku.translate.repository.TranslationCacheRepository;
 import com.shizuku.translate.repository.TranslationRecordRepository;
 import com.shizuku.translate.integration.DeepSeekClient.DeepSeekResult;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.function.Consumer;
 
 @Service
 public class TranslationService {
 
+    private static final Logger log = LoggerFactory.getLogger(TranslationService.class);
+
     private final DeepSeekClient deepSeekClient;
     private final TranslationRecordRepository recordRepository;
+    private final TranslationCacheRepository cacheRepository;
     private final UserService userService;
     private final PromptTemplateService promptTemplateService;
 
     public TranslationService(DeepSeekClient deepSeekClient,
                               TranslationRecordRepository recordRepository,
+                              TranslationCacheRepository cacheRepository,
                               UserService userService,
                               PromptTemplateService promptTemplateService) {
         this.deepSeekClient = deepSeekClient;
         this.recordRepository = recordRepository;
+        this.cacheRepository = cacheRepository;
         this.userService = userService;
         this.promptTemplateService = promptTemplateService;
     }
@@ -107,6 +122,36 @@ public class TranslationService {
                 request.getCustomPrompt()
         );
 
+        String cacheKey = buildCacheKey(user.getId(), request.getModel(), systemPrompt, request.getSourceText());
+        TranslationCache cached = cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
+        if (cached != null) {
+            log.info("Translation cache hit for user {}, key {}", user.getId(), cacheKey.substring(0, 12));
+            onToken.accept(cached.getTranslatedText());
+
+            TranslationRecord record = new TranslationRecord();
+            record.setUser(user);
+            record.setSourceText(request.getSourceText());
+            record.setTranslatedText(cached.getTranslatedText());
+            record.setModel(request.getModel());
+            record.setCustomPrompt(request.getCustomPrompt());
+            record = recordRepository.save(record);
+
+            TranslateResponse response = new TranslateResponse();
+            response.setId(record.getId());
+            response.setTranslatedText(cached.getTranslatedText());
+            response.setModel(request.getModel());
+            response.setCreatedAt(record.getCreatedAt());
+            if (cached.getTotalTokens() != null && cached.getTotalTokens() > 0) {
+                TokenUsage usage = new TokenUsage();
+                usage.setPromptTokens(cached.getPromptTokens());
+                usage.setCompletionTokens(cached.getCompletionTokens());
+                usage.setTotalTokens(cached.getTotalTokens());
+                response.setTokenUsage(usage);
+            }
+            onComplete.accept(response);
+            return;
+        }
+
         StringBuilder fullText = new StringBuilder();
         TokenUsage[] usageHolder = new TokenUsage[1];
 
@@ -137,9 +182,42 @@ public class TranslationService {
                     if (usage != null) {
                         response.setTokenUsage(usage);
                     }
+                    try {
+                        TranslationCache cache = TranslationCache.builder()
+                                .userId(user.getId())
+                                .cacheKey(cacheKey)
+                                .model(request.getModel())
+                                .translatedText(fullText.toString())
+                                .promptTokens(usage != null ? usage.getPromptTokens() : null)
+                                .completionTokens(usage != null ? usage.getCompletionTokens() : null)
+                                .totalTokens(usage != null ? usage.getTotalTokens() : null)
+                                .build();
+                        cacheRepository.save(cache);
+                    } catch (Exception e) {
+                        log.warn("Failed to write translation cache", e);
+                    }
                     onComplete.accept(response);
                 },
                 error -> onError.accept(error)
         );
+    }
+
+    private String buildCacheKey(Long userId, String model, String systemPrompt, String sourceText) {
+        String raw = userId + "|" + (model == null ? "" : model) + "|" + systemPrompt + "|" + sourceText;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Scheduled(cron = "0 0 3 * * *")
+    @Transactional
+    public void cleanupExpiredCache() {
+        int deleted = cacheRepository.deleteByCreatedAtBefore(LocalDateTime.now().minusDays(30));
+        if (deleted > 0) {
+            log.info("Cleaned {} expired translation cache entries", deleted);
+        }
     }
 }
