@@ -38,6 +38,34 @@ An AI-powered novel translation tool that translates Japanese / Korean light nov
 | **OCR** | Python 3.12, Flask, PaddleOCR (Japanese model) |
 | **AI** | DeepSeek API (`deepseek-v4-flash`) |
 
+### Browser Extension
+
+The `pixiv-novel-translator/` Chrome/Edge MV3 extension translates Pixiv novels without leaving the page:
+
+```
+┌──────────────────────┐  ① 提取 novel_id   ┌──────────────────────────┐
+│  Pixiv novel page    │───────────────────▶│  content.js (injected)   │
+│  (user clicks 翻译)   │◀───────────────────│  extracts paragraphs,    │
+└──────────────────────┘  ⑤ 渲染译文         │  renders translated text │
+         ▲                                    └───────────┬──────────────┘
+         │                                  ② novel_id 消息 │
+         │                                    (message)    ▼
+┌────────┴───────────────┐         ┌─────────────────────────────────────┐
+│   backend              │         │  background.js (MV3 service worker) │
+│   /translate/stream    │◀────────│  + alarm keep-alive                 │
+│   (X-API-Key auth)     │  ③ SSE  │  + per-tab abort control           │
+│   ──▶ DeepSeek API     │  流式译文 │  + chrome.cookies PHPSESSID        │
+└────────────────────────┘         └───────────┬─────────────────────────┘
+                                               │ ② bare fetch 原文
+                                               ▼
+                                     ┌──────────────────────┐
+                                     │  pixiv.net AJAX API  │
+                                     │  /ajax/novel/{id}    │
+                                     └──────────────────────┘
+```
+
+Translation runs as an SSE stream through the site backend, authenticated with a user-generated API key (see the **Profile** page). Results can be displayed as a side panel, inline under each original paragraph, or with Pixiv's `[newpage]` breaks preserved.
+
 ## Getting Started
 
 ### Prerequisites
