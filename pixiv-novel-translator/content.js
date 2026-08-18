@@ -428,11 +428,11 @@ function updateTranslateButton(status) {
   };
 
   if (status === 'preparing') {
-    set(state.miniBtn, '网页处理中... 点击取消', '#e03131');
+    set(state.miniBtn, '网页处理中...', '#e03131');
   } else if (status === 'reasoning') {
-    set(state.miniBtn, 'AI 推理中... 点击取消', '#1971c2');
+    set(state.miniBtn, 'AI 推理中...', '#1971c2');
   } else if (status === 'ai-processing') {
-    set(state.miniBtn, 'AI 处理中... 点击取消', '#1971c2');
+    set(state.miniBtn, 'AI 处理中...', '#1971c2');
   } else {
     // idle: with a rendered translation the pill toggles its display
     // (关闭翻译/显示翻译); otherwise it starts a new translation.
