@@ -136,6 +136,25 @@
   padding: 6px 16px;
   border-bottom: 1px solid #eee;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#pnt-window .pnt-toggle-trans-btn {
+  background: #fff;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+#pnt-window .pnt-toggle-trans-btn:hover {
+  background: #f0f0f0;
+  border-color: #ccc;
 }
 
 #pnt-window .pnt-cancel-btn {

@@ -16,6 +16,8 @@ let state = {
   miniBtn: null,          // bottom-right pill (minimized)
   transBody: null,        // translation output element
   cancelBtn: null,
+  translationVisible: true, // false when the user hid the translation display
+  originalContent: '',    // raw novel text, for rebuilding inline pairs
   originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
   novelAuthor: '',
@@ -194,6 +196,14 @@ function createMiniButton() {
       } else {
         cancelTranslation();
       }
+    } else if (hasTranslationContent()) {
+      // A translation is already rendered: toggle its display
+      // (关闭翻译 ↔ 显示翻译) instead of starting a new one.
+      if (state.translationVisible) {
+        hideTranslationDisplay();
+      } else {
+        showTranslationDisplay();
+      }
     } else {
       // handleTranslate decides whether to open the window
       // (panel mode only; inline mode renders under the original text)
@@ -225,6 +235,7 @@ function createWindow() {
       </div>
     </div>
     <div class="pnt-toolbar">
+      <button class="pnt-toggle-trans-btn" title="隐藏/显示译文">关闭翻译</button>
       <button class="pnt-cancel-btn" style="display:none;">取消翻译</button>
     </div>
     <div class="pnt-content">
@@ -253,13 +264,38 @@ function createWindow() {
     toggle.textContent = hidden ? '▼' : '▶';
   });
 
-  w.querySelector('.pnt-close-btn').onclick = () => removeWindow();
-  w.querySelector('.pnt-min-btn').onclick = () => minimizeWindow();
+  w.querySelector('.pnt-close-btn').onclick = () => {
+    removeWindow();
+    // Closing the window hides the display; the mini pill becomes 显示翻译.
+    if (hasTranslationContent()) {
+      state.translationVisible = false;
+      syncToggleLabels();
+    }
+  };
+  w.querySelector('.pnt-min-btn').onclick = () => {
+    minimizeWindow();
+    // Minimizing hides the display the same way 关闭翻译 does.
+    if (hasTranslationContent()) {
+      state.translationVisible = false;
+      syncToggleLabels();
+    }
+  };
 
   // Cancel button
   const cancelBtn = w.querySelector('.pnt-cancel-btn');
   cancelBtn.addEventListener('click', cancelTranslation);
   state.cancelBtn = cancelBtn;
+
+  // Toggle the whole translation display (关闭翻译 ↔ 显示翻译): hides it
+  // so the page returns to its normal state, or brings it back.
+  const toggleBtn = w.querySelector('.pnt-toggle-trans-btn');
+  toggleBtn.addEventListener('click', () => {
+    if (state.translationVisible) {
+      hideTranslationDisplay();
+    } else {
+      showTranslationDisplay();
+    }
+  });
 
   // Version badge
   const verEl = w.querySelector('.pnt-version');
@@ -271,6 +307,7 @@ function createWindow() {
   document.body.appendChild(w);
   state.windowEl = w;
   state.transBody = w.querySelector('.pnt-trans-body');
+  syncToggleLabels();
   return w;
 }
 
@@ -280,6 +317,73 @@ function removeWindow() {
   state.windowEl = null;
   state.transBody = null;
   state.cancelBtn = null;
+}
+
+// ─── Toggle Translation Display (关闭翻译 ↔ 显示翻译) ────────
+
+// True when a rendered translation exists that can be hidden/shown.
+function hasTranslationContent() {
+  return state.streamingText.length > 0
+    || Object.keys(state.fullTranslations).length > 0;
+}
+
+// Hide the whole translation display so the page returns to its normal
+// (pre-translation) state:
+// - inline modes: remove the inserted translation divs
+// - panel/paged: hide the floating window (mini pill reappears)
+function hideTranslationDisplay() {
+  if (state.mode === 'inline') {
+    restoreOriginalHtml();
+  } else {
+    minimizeWindow();
+  }
+  state.translationVisible = false;
+  syncToggleLabels();
+}
+
+// Bring the translation display back:
+// - inline modes: rebuild the paragraph pairs and refill from the
+//   accumulated stream / global id map
+// - panel/paged: reopen the window and re-render the accumulated text
+function showTranslationDisplay() {
+  state.translationVisible = true;
+  if (state.mode === 'inline' && state.originalContent) {
+    buildInlineParagraphs(state.originalContent);
+    if (state.fullMode) {
+      refillInlineFromMap();
+    } else {
+      renderInlineStreaming();
+    }
+  } else {
+    const hadWindow = !!state.windowEl;
+    openWindow();
+    // Window was recreated (was closed with ×): repaint the content.
+    if (!hadWindow && state.transBody) {
+      if (state.mode === 'paged') {
+        renderPagedStreaming();
+      } else if (state.pagedRequest) {
+        renderPanelFromJsonLines();
+      } else {
+        state.transBody.textContent = state.streamingText;
+      }
+    }
+  }
+  syncToggleLabels();
+}
+
+// Keep the mini pill + toolbar button labels in sync with the state:
+// 关闭翻译 when translations are shown, 显示翻译 when hidden.
+function syncToggleLabels() {
+  const label = state.translationVisible ? '关闭翻译' : '显示翻译';
+  if (state.miniBtn) {
+    state.miniBtn.textContent = label;
+    state.miniBtn.style.background = '#1a1a1a';
+    state.miniBtn.style.borderColor = '#1a1a1a';
+  }
+  if (state.windowEl) {
+    const btn = state.windowEl.querySelector('.pnt-toggle-trans-btn');
+    if (btn) btn.textContent = label;
+  }
 }
 
 function openWindow() {
@@ -330,7 +434,13 @@ function updateTranslateButton(status) {
   } else if (status === 'ai-processing') {
     set(state.miniBtn, 'AI 处理中... 点击取消', '#1971c2');
   } else {
-    set(state.miniBtn, '翻译', '#1a1a1a');
+    // idle: with a rendered translation the pill toggles its display
+    // (关闭翻译/显示翻译); otherwise it starts a new translation.
+    if (hasTranslationContent()) {
+      syncToggleLabels();
+    } else {
+      set(state.miniBtn, '翻译', '#1a1a1a');
+    }
   }
 }
 
@@ -724,6 +834,9 @@ async function handleTranslate() {
   state.firstTokenReceived = false;
   state.streamingText = '';
   state.paraTranslations = [];
+  // A fresh translation is shown by default, even if the previous one
+  // was hidden with 关闭翻译.
+  state.translationVisible = true;
   // Drop any previous full-novel watcher/state before starting fresh.
   if (state.pageFlipObserver) {
     state.pageFlipObserver.disconnect();
@@ -790,6 +903,7 @@ async function handleTranslate() {
 function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
+  state.originalContent = data.originalContent || '';
   state.pagedRequest = !!data.pagedRequest;
   state.fullMode = !!data.fullMode;
   if (state.fullMode) {
@@ -852,6 +966,13 @@ function watchPageFlips(originalContent) {
       lastPage = page;
       const stale = state.inlineTransEls && state.inlineTransEls.length && (!active || pageChanged);
       if (!stale) return;
+
+      // Translations hidden by the user: keep them hidden across page
+      // flips instead of rebuilding the divs.
+      if (!state.translationVisible) {
+        restoreOriginalHtml();
+        return;
+      }
 
       if (state.fullMode) {
         // Full-novel mode: translations follow the user across pages.
