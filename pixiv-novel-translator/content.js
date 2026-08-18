@@ -21,7 +21,7 @@ let state = {
   originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
   novelAuthor: '',
-  pagedRequest: false,    // true when background uses the paged-novel flow
+  numberedRequest: false, // true when the response is numbered JSON Lines
   fullMode: false,        // true: translate whole novel once (inline-full)
   fullTranslations: {},   // global paragraph id -> translated text
   pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
@@ -361,7 +361,7 @@ function showTranslationDisplay() {
     if (!hadWindow && state.transBody) {
       if (state.mode === 'paged') {
         renderPagedStreaming();
-      } else if (state.pagedRequest) {
+      } else if (state.numberedRequest) {
         renderPanelFromJsonLines();
       } else {
         state.transBody.textContent = state.streamingText;
@@ -613,9 +613,9 @@ function appendToken(token) {
   if (state.transBody) {
     if (state.mode === 'paged') {
       renderPagedStreaming();
-    } else if (state.pagedRequest) {
+    } else if (state.numberedRequest) {
       // JSON Lines stream landed in the panel renderer (inline mode
-      // degraded to panel, or panel mode on a paged novel): parse and
+      // degraded to panel, or panel mode on a numbered novel): parse and
       // join it, otherwise the window shows raw {"id":..,"text":..} lines.
       renderPanelFromJsonLines();
     } else {
@@ -739,10 +739,10 @@ function renderInlineStreaming() {
   const transEls = state.inlineTransEls || [];
   if (!transEls.length) return;
 
-  // Preferred path: paged novels stream JSON Lines. If we can parse any
-  // entries, render by id — this stays aligned even if the model merges
-  // or drops paragraphs (the numbered input forces explicit ids).
-  if (state.pagedRequest) {
+  // Preferred path: numbered requests stream JSON Lines. If we can parse
+  // any entries, render by id — this stays aligned even if the model
+  // merges or drops paragraphs (the numbered input forces explicit ids).
+  if (state.numberedRequest) {
     const jsonEntries = parseJsonLines(state.streamingText);
     if (jsonEntries.length) {
       if (state.fullMode) {
@@ -884,6 +884,10 @@ async function handleTranslate() {
       // otherwise translate only the page the user is reading.
       currentPage: state.fullMode ? 0 : getCurrentNovelPage(),
       fullMode: state.fullMode,
+      // background numbers paragraphs + requests JSON Lines for every
+      // inline mode (single-page, paged, full) so the id mapping protects
+      // against model paragraph merges/splits; plain panel stays raw.
+      displayMode: state.mode,
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
       customPrompt: settings.customPrompt,
@@ -904,7 +908,7 @@ function onNovelLoaded(data) {
   state.novelTitle = data.title || '';
   state.novelAuthor = data.author || '';
   state.originalContent = data.originalContent || '';
-  state.pagedRequest = !!data.pagedRequest;
+  state.numberedRequest = !!data.numberedRequest;
   state.fullMode = !!data.fullMode;
   if (state.fullMode) {
     state.pageStartIds = computePageStartIds(data.originalContent);

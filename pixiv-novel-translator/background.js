@@ -57,7 +57,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.customPrompt || '',
         message.currentPage || 0,
         !!message.fullMode,
-        message.thinkingType
+        message.thinkingType,
+        message.displayMode
       ).catch((error) => {
         const msg = error && error.message ? error.message : String(error);
         // An aborted body stream is almost always the user pressing cancel
@@ -100,7 +101,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false, thinkingType) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false, thinkingType, displayMode) {
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -118,6 +119,13 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     const novel = await fetchNovelFromPixiv(novelId, controller.signal);
     console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
+    // All inline modes (single-page, paged, full) number their paragraphs
+    // and receive JSON Lines output, so the content script can map every
+    // translation back to the exact DOM paragraph by id — a model that
+    // merges or splits paragraphs can no longer shift the mapping. Only
+    // plain panel mode on a non-paged novel stays unnumbered.
+    const numbered = fullMode || currentPage > 0 || displayMode === 'inline';
+
     // Notify content script: novel loaded, begin streaming
     await notifyTab(tabId, {
       type: 'SSE_NOVEL_LOADED',
@@ -128,10 +136,11 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         originalContent: novel.content,
         tags: novel.tags || [],
         characterCount: novel.characterCount,
-        // The content script needs to know whether this request is the
-        // paged-novel flow (numbered paragraphs + JSON Lines output) so it
-        // can pick the right streaming renderer.
-        pagedRequest: currentPage > 0 || fullMode,
+        // The content script needs to know whether this request produces
+        // numbered paragraphs + JSON Lines output (all inline/paged/full
+        // modes) so it can pick the right streaming renderer. Only plain
+        // panel mode on a non-paged novel stays unnumbered.
+        numberedRequest: numbered,
         fullMode
       }
     });
@@ -146,7 +155,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // fullMode translates the WHOLE novel in one request with global
     // paragraph ids; the content script maps ids back to whatever page
     // the user is reading, so flipping pages never needs a re-translate.
-    const sourceText = fullMode ? buildFullSource(novel.content) : buildPageSource(novel.content, currentPage);
+    const sourceText = fullMode ? buildFullSource(novel.content) : buildPageSource(novel.content, currentPage, numbered);
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
@@ -203,21 +212,41 @@ function buildFullSource(fullText) {
   return `【全文翻译（所有段落已编号）】\n` + numbered.join('\n');
 }
 
+// Number every paragraph of a text as [1]..[N]. Used for single-page
+// novels in inline mode so the model's JSON Lines ids map 1:1 onto the
+// DOM paragraphs. Also the base for the per-page numbering below.
+function numberAllParagraphs(fullText) {
+  return fullText
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p, i) => `[${i + 1}] ${p}`)
+    .join('\n\n');
+}
+
 // Build the request text for a possibly paged novel.
 // Pixiv marks page breaks with [newpage]; each page is translated
 // independently in inline mode because the DOM only renders the page
 // the user is currently reading. The full text stays as context: the
 // page before and after the target page are included as "reference
 // only" sections, and the prompt tells the model not to translate them.
-function buildPageSource(fullText, currentPage) {
-  if (!currentPage || currentPage <= 0) return fullText;
-
+function buildPageSource(fullText, currentPage, numbered) {
   const pages = fullText
     .split(/\[newpage\]/i)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 
-  if (pages.length <= 1) return fullText; // not actually paged
+  if (!currentPage || currentPage <= 0 || pages.length <= 1) {
+    // Single-page novel (or a "paged" marker with only one real page):
+    // panel mode keeps the raw text (display only), but inline mode
+    // numbers every paragraph so the model emits id-tagged JSON Lines
+    // and the content script maps each translation back to the exact
+    // DOM paragraph. Without numbering, a single merged paragraph
+    // shifts every later translation one slot and the inline pairs
+    // misalign — the root cause of intermittent 错段 on short novels.
+    if (!numbered) return fullText;
+    return `【待翻译文本（段落已编号）】\n` + numberAllParagraphs(fullText);
+  }
 
   const idx = Math.min(Math.max(currentPage - 1, 0), pages.length - 1);
   const current = pages[idx] || '';
@@ -240,13 +269,7 @@ function buildPageSource(fullText, currentPage) {
   // paragraph back to the exact DOM paragraph, even when the model merges
   // or splits paragraphs. Without numbering, a single merged paragraph
   // shifts every later translation one slot and the inline pairs misalign.
-  const numbered = current
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0)
-    .map((p, i) => `[${i + 1}] ${p}`)
-    .join('\n\n');
-  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n${numbered}`;
+  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n` + numberAllParagraphs(current);
   return text;
 }
 
@@ -337,14 +360,29 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
     prompt += `\n\n用户额外指示：` + customPrompt.trim();
   }
 
-  // Paged-novel request built by buildPageSource(): the text contains
-  // reference-only context sections plus the target page. Tell the model
-  // to translate only the marked page and never echo context. Full-novel
-  // requests (buildFullSource) carry the same [编号] structure.
-  if (text.includes('【当前页') || text.includes('【全文翻译')) {
+  // Numbered requests (buildPageSource paged/inline + buildFullSource)
+  // carry [编号] markers and must be answered with id-tagged JSON Lines.
+  // The example lines matter: without them the flash model drifts into
+  // plain-text output, which the fallback renderer maps by position and
+  // misaligns as soon as one paragraph is merged or split.
+  if (text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本')) {
     prompt += `
 
-【参考上下文】部分仅用于理解情节，不要翻译。请只翻译标记了 [编号] 的段落，逐段输出 JSON Lines：每行一个 JSON 对象 {"id":段落编号,"text":"译文"}，id 与输入编号一一对应、顺序不变、不得合并或遗漏，不要输出其他任何内容。`;
+请只翻译标记了 [编号] 的段落，逐段输出 JSON Lines 格式：每一行是一个完整、合法的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。`;
+    if (text.includes('【参考上下文')) {
+      prompt += `
+【参考上下文】部分仅用于理解情节，不要翻译、不要输出。`;
+    }
+    prompt += `
+要求：
+1. 每行一个 JSON 对象，用双引号，不要注释、不要 Markdown 代码块标记、不要任何额外文字；
+2. id 与输入 [编号] 一一对应，顺序不变，不得合并或遗漏；
+3. 译文内部的换行用 \n 转义写在 text 里。
+
+示例：
+{"id":1,"text":"第一段的译文"}
+{"id":2,"text":"第二段的译文"}
+{"id":3,"text":"第三段的译文"}`;
   }
 
 
