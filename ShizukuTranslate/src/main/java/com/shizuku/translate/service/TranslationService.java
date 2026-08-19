@@ -56,7 +56,7 @@ public class TranslationService {
     }
 
     @Transactional
-    public TranslateResponse translate(String username, TranslateRequest request) {
+    public TranslateResponse translate(String username, TranslateRequest request, boolean hideCustomPrompt) {
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -75,7 +75,7 @@ public class TranslationService {
         record.setSourceText(request.getSourceText());
         record.setTranslatedText(translated);
         record.setModel(config.getModel());
-        record.setCustomPrompt(request.getCustomPrompt());
+        record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
         record = recordRepository.save(record);
 
         TranslateResponse response = new TranslateResponse();
@@ -115,7 +115,7 @@ public class TranslationService {
         return r;
     }
 
-    public void translateStream(String username, TranslateRequest request,
+    public void translateStream(String username, TranslateRequest request, boolean hideCustomPrompt,
                                 Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
                                 Consumer<String> onError) {
         User user = userService.findByUsername(username);
@@ -138,7 +138,7 @@ public class TranslationService {
             record.setSourceText(request.getSourceText());
             record.setTranslatedText(cached.getTranslatedText());
             record.setModel(config.getModel());
-            record.setCustomPrompt(request.getCustomPrompt());
+            record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
             record = recordRepository.save(record);
 
             TranslateResponse response = new TranslateResponse();
@@ -177,7 +177,7 @@ public class TranslationService {
                     record.setSourceText(request.getSourceText());
                     record.setTranslatedText(fullText.toString());
                     record.setModel(config.getModel());
-                    record.setCustomPrompt(request.getCustomPrompt());
+                    record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
                     record = recordRepository.save(record);
 
                     TranslateResponse response = new TranslateResponse();

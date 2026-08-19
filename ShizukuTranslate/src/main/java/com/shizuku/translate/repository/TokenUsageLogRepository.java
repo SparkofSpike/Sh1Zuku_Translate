@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface TokenUsageLogRepository extends JpaRepository<TokenUsageLog, Long> {
     List<TokenUsageLog> findByUserIdOrderByCreatedAtDesc(Long userId);
+    boolean existsBySourceTypeAndSourceId(String sourceType, Long sourceId);
 }

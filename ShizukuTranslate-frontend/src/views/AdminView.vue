@@ -98,9 +98,10 @@
         <div v-if="detailLoading" class="muted">加载日志中...</div>
         <div v-else-if="detailUser.logs.length" class="table-wrap log-table">
           <table>
-            <thead><tr><th>时间</th><th>协议</th><th>模型</th><th>输入</th><th>输出</th><th>合计</th></tr></thead>
+            <thead><tr><th>时间</th><th>协议</th><th>模型</th><th>来源</th><th>输入</th><th>输出</th><th>合计</th></tr></thead>
             <tbody><tr v-for="log in detailUser.logs" :key="log.id">
               <td>{{ formatDate(log.createdAt) }}</td><td>{{ providerLabel(log.provider) }}</td><td>{{ log.model }}</td>
+              <td>{{ log.estimated ? '估算' : (log.sourceType === 'CACHE_BACKFILL' ? '缓存实际' : '实际') }}</td>
               <td>{{ formatNumber(log.promptTokens) }}</td><td>{{ formatNumber(log.completionTokens) }}</td><td><strong>{{ formatNumber(log.totalTokens) }}</strong></td>
             </tr></tbody>
           </table>

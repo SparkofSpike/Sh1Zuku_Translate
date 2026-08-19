@@ -37,6 +37,8 @@ public class UsageService {
                 .user(user)
                 .provider(config.getProvider())
                 .model(config.getModel())
+                .sourceType("LIVE")
+                .estimated(false)
                 .promptTokens(Math.max(0, usage.getPromptTokens()))
                 .completionTokens(Math.max(0, usage.getCompletionTokens()))
                 .totalTokens(Math.max(0, usage.getTotalTokens()))
@@ -159,6 +161,8 @@ public class UsageService {
         result.put("promptTokens", log.getPromptTokens());
         result.put("completionTokens", log.getCompletionTokens());
         result.put("totalTokens", log.getTotalTokens());
+        result.put("sourceType", log.getSourceType());
+        result.put("estimated", Boolean.TRUE.equals(log.getEstimated()));
         result.put("createdAt", log.getCreatedAt().toString());
         return result;
     }

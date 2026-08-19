@@ -26,6 +26,16 @@ public class TokenUsageLog {
     @Column(nullable = false, length = 20)
     private String provider;
 
+    /** LIVE, CACHE_BACKFILL, or RECORD_ESTIMATE. Nullable for pre-migration rows. */
+    @Column(length = 30)
+    private String sourceType;
+
+    /** ID of the source cache/record for idempotent historical backfill. */
+    private Long sourceId;
+
+    /** True when the token count was estimated from stored text length. */
+    private Boolean estimated;
+
     @Column(nullable = false, length = 200)
     private String model;
 

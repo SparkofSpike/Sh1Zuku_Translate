@@ -88,5 +88,7 @@ export interface UsageLog extends UsageSummary {
   id: number
   provider: string
   model: string
+  sourceType?: string
+  estimated?: boolean
   createdAt: string
 }
