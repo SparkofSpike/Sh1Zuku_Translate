@@ -256,22 +256,30 @@ async function translate() {
 
 <style scoped>
 .translate-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 800px) minmax(0, 1fr);
-  align-items: start;
-  justify-content: center;
+  display: flex;
+  align-items: flex-start;
   gap: 16px;
+  width: 100%;
 }
 
 .announcement-left,
 .announcement-right {
-  grid-row: 1;
+  flex: 1 1 180px;
+  min-width: 0;
+  order: 1;
 }
 
 .translation-card {
-  grid-column: 2;
+  flex: 0 1 800px;
+  min-width: 0;
+  width: 800px;
+  max-width: 800px;
   margin: 0;
-  width: 100%;
+  order: 2;
+}
+
+.announcement-right {
+  order: 3;
 }
 
 textarea {
