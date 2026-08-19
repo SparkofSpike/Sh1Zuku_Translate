@@ -1,6 +1,10 @@
 <template>
   <div class="translate-layout">
-    <AnnouncementPanel class="announcement-left" :announcements="leftAnnouncements" />
+    <AnnouncementPanel
+      v-if="leftAnnouncements.length"
+      class="announcement-left"
+      :announcements="leftAnnouncements"
+    />
 
     <div class="card translation-card">
       <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
@@ -74,7 +78,11 @@
     <TranslateResult v-else-if="result" :result="result" />
     </div>
 
-    <AnnouncementPanel class="announcement-right" :announcements="rightAnnouncements" />
+    <AnnouncementPanel
+      v-if="rightAnnouncements.length"
+      class="announcement-right"
+      :announcements="rightAnnouncements"
+    />
   </div>
 </template>
 
@@ -256,30 +264,30 @@ async function translate() {
 
 <style scoped>
 .translate-layout {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 800px) minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
   width: 100%;
 }
 
-.announcement-left,
-.announcement-right {
-  flex: 1 1 180px;
-  min-width: 0;
-  order: 1;
+.announcement-left {
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .translation-card {
-  flex: 0 1 800px;
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
-  width: 800px;
+  width: 100%;
   max-width: 800px;
   margin: 0;
-  order: 2;
 }
 
 .announcement-right {
-  order: 3;
+  grid-column: 3;
+  grid-row: 1;
 }
 
 textarea {
