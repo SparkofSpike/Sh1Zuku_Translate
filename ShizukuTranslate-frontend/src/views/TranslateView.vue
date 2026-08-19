@@ -333,4 +333,20 @@ textarea {
   box-sizing: border-box;
 }
 
+@media (max-width: 720px) {
+  .translate-layout.has-announcements {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .announcement-right {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .translate-layout.has-announcements .translation-card {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+
 </style>

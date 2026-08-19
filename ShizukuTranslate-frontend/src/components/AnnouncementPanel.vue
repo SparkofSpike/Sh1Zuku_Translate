@@ -5,7 +5,10 @@
       <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
         <h4>{{ announcement.title }}</h4>
         <time>{{ formatDate(announcement.createdAt) }}</time>
-        <p>{{ announcement.content }}</p>
+        <p :class="{ collapsed: !isExpanded(announcement.id) }">{{ announcement.content }}</p>
+        <button class="announcement-toggle" @click="toggleExpanded(announcement.id)">
+          {{ isExpanded(announcement.id) ? '收起' : '展开' }}
+        </button>
       </article>
     </div>
     <p v-else class="empty-text">暂无公告</p>
@@ -13,11 +16,25 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { Announcement } from '../types'
 
 defineProps<{
   announcements: Announcement[]
 }>()
+
+const expandedIds = ref<Set<number>>(new Set())
+
+function isExpanded(id: number) {
+  return expandedIds.value.has(id)
+}
+
+function toggleExpanded(id: number) {
+  const next = new Set(expandedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedIds.value = next
+}
 
 function formatDate(value: string) {
   return value.replace('T', ' ').slice(0, 16)
@@ -79,9 +96,31 @@ function formatDate(value: string) {
   overflow-wrap: anywhere;
 }
 
+.announcement-toggle {
+  display: none;
+  margin-top: 5px;
+  padding: 0;
+  background: transparent;
+  color: #666;
+  font-size: 12px;
+}
+
 .empty-text {
   margin: 0;
   color: #999;
   font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .announcement-item p.collapsed {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .announcement-toggle {
+    display: inline-block;
+  }
 }
 </style>
