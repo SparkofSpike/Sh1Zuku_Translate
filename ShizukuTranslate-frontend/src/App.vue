@@ -12,7 +12,7 @@
           <router-link to="/register" class="nav-item" style="margin-left: 16px;">注册</router-link>
         </template>
         <template v-else>
-          <router-link to="/profile" class="nav-item" style="margin-left: 16px;">个人资料</router-link>
+          <router-link to="/profile" class="nav-item" style="margin-left: 16px;">个人</router-link>
           <button @click="logout" style="margin-left: 16px; padding: 6px 16px;">登出</button>
         </template>
       </div>

@@ -9,30 +9,42 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "translation_records")
+@Table(name = "token_usage_logs")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class TranslationRecord {
+public class TokenUsageLog {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
-    @Column(columnDefinition = "TEXT", nullable = false)
-    private String sourceText;
-    @Column(columnDefinition = "TEXT")
-    private String translatedText;
+
+    @Column(nullable = false, length = 20)
+    private String provider;
+
     @Column(nullable = false, length = 200)
     private String model;
-    @Column(columnDefinition = "TEXT")
-    private String customPrompt;
+
+    @Column(nullable = false)
+    private int promptTokens;
+
+    @Column(nullable = false)
+    private int completionTokens;
+
+    @Column(nullable = false)
+    private int totalTokens;
+
+    @Column(nullable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now();
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
     }
 }

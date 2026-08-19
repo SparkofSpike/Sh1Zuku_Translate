@@ -24,9 +24,16 @@ public class User {
     private String email;
     @Column(nullable = false)
     private String passwordHash;
-    /** Per-user DeepSeek API key; null/blank falls back to the global key */
+    /** Personal model API key; null/blank falls back to the server DeepSeek configuration. */
     @Column(length = 255)
     private String aiApiKey;
+    /** deepseek, openai, or anthropic. */
+    @Column(length = 20)
+    private String aiProvider;
+    @Column(length = 500)
+    private String aiBaseUrl;
+    @Column(length = 200)
+    private String aiModel;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

@@ -30,7 +30,7 @@ export function checkOcrHealth() {
 
 export function translateStream(
   sourceText: string,
-  model: string,
+  model: string | undefined,
   customPrompt: string | undefined,
   presets: string[] | undefined,
   onToken: (token: string) => void,

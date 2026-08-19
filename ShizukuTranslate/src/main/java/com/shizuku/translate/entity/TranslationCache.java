@@ -32,7 +32,7 @@ public class TranslationCache {
     @Column(nullable = false, length = 64)
     private String cacheKey;
 
-    @Column(nullable = false, length = 50)
+    @Column(nullable = false, length = 200)
     private String model;
 
     @Column(columnDefinition = "TEXT", nullable = false)

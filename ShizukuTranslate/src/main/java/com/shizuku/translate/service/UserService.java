@@ -1,7 +1,10 @@
 package com.shizuku.translate.service;
 
+import com.shizuku.translate.config.DeepSeekConfig;
 import com.shizuku.translate.dto.LoginRequest;
 import com.shizuku.translate.dto.RegisterRequest;
+import com.shizuku.translate.exception.BusinessException;
+import com.shizuku.translate.integration.AiModelClient.AiModelConfig;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.repository.UserRepository;
 import com.shizuku.translate.security.JwtTokenProvider;
@@ -14,13 +17,16 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
+    private final DeepSeekConfig.DeepSeekProperties deepSeekProperties;
 
     public UserService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
-                       JwtTokenProvider tokenProvider) {
+                       JwtTokenProvider tokenProvider,
+                       DeepSeekConfig.DeepSeekProperties deepSeekProperties) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
+        this.deepSeekProperties = deepSeekProperties;
     }
 
     public void register(RegisterRequest request) {
@@ -73,7 +79,66 @@ public class UserService {
     public void updateAiApiKey(String username, String aiApiKey) {
         User user = findByUsername(username);
         user.setAiApiKey(aiApiKey == null || aiApiKey.isBlank() ? null : aiApiKey.trim());
+        if (user.getAiApiKey() == null) {
+            user.setAiProvider(null);
+            user.setAiBaseUrl(null);
+            user.setAiModel(null);
+        }
         userRepository.save(user);
+    }
+
+    public void updateAiModelConfig(String username, String provider, String baseUrl, String model, String apiKey) {
+        User user = findByUsername(username);
+        String normalizedProvider = provider == null || provider.isBlank()
+                ? "deepseek" : provider.trim().toLowerCase();
+        if (!normalizedProvider.equals("deepseek")
+                && !normalizedProvider.equals("openai")
+                && !normalizedProvider.equals("anthropic")) {
+            throw new BusinessException("不支持的模型协议");
+        }
+        if (apiKey != null && !apiKey.isBlank()) {
+            user.setAiApiKey(apiKey.trim());
+        }
+        String normalizedBaseUrl = baseUrl == null || baseUrl.isBlank() ? null : baseUrl.trim();
+        String normalizedModel = model == null || model.isBlank() ? null : model.trim();
+        if (!normalizedProvider.equals("deepseek") && (user.getAiApiKey() == null || user.getAiApiKey().isBlank())) {
+            throw new BusinessException("OpenAI 兼容和 Anthropic 兼容模型必须配置 API Key");
+        }
+        if (!normalizedProvider.equals("deepseek") && (normalizedBaseUrl == null || normalizedBaseUrl.isBlank())) {
+            throw new BusinessException("兼容协议必须配置 Base URL");
+        }
+        if (!normalizedProvider.equals("deepseek") && (normalizedModel == null || normalizedModel.isBlank())) {
+            throw new BusinessException("兼容协议必须配置模型名称");
+        }
+        user.setAiProvider(normalizedProvider);
+        user.setAiBaseUrl(normalizedBaseUrl);
+        user.setAiModel(normalizedModel);
+        userRepository.save(user);
+    }
+
+    public AiModelConfig resolveAiModelConfig(User user, String requestedModel, String thinkingType) {
+        boolean personalKey = user.getAiApiKey() != null && !user.getAiApiKey().isBlank();
+        String provider = personalKey && user.getAiProvider() != null && !user.getAiProvider().isBlank()
+                ? user.getAiProvider().toLowerCase() : "deepseek";
+        String apiKey = personalKey ? user.getAiApiKey().trim() : deepSeekProperties.getKey();
+        String baseUrl = personalKey && user.getAiBaseUrl() != null && !user.getAiBaseUrl().isBlank()
+                ? user.getAiBaseUrl().trim() : deepSeekProperties.getBaseUrl();
+        String model = requestedModel != null && !requestedModel.isBlank()
+                ? requestedModel.trim()
+                : (user.getAiModel() != null && !user.getAiModel().isBlank()
+                    ? user.getAiModel().trim() : deepSeekProperties.getDefaultModel());
+
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new BusinessException("请先在个人页面配置模型 API Key");
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new BusinessException("请先在个人页面配置模型 Base URL");
+        }
+        if (model == null || model.isBlank()) {
+            throw new BusinessException("请先在个人页面配置模型名称");
+        }
+        return new AiModelConfig(provider, apiKey, baseUrl, model,
+                thinkingType == null ? deepSeekProperties.getThinkingType() : thinkingType);
     }
 
 }

@@ -58,3 +58,35 @@ export interface Announcement {
   content: string
   createdAt: string
 }
+
+export interface UsageSummary {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  requestCount: number
+  latestUsedAt?: string | null
+}
+
+export interface UsageDay {
+  date: string
+  totalTokens: number
+}
+
+export interface UsageModel {
+  provider: string
+  model: string
+  totalTokens: number
+}
+
+export interface UsageUser extends UsageSummary {
+  id: number
+  username: string
+  email: string
+}
+
+export interface UsageLog extends UsageSummary {
+  id: number
+  provider: string
+  model: string
+  createdAt: string
+}

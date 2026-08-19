@@ -8,7 +8,7 @@ import java.util.List;
 public class TranslateRequest {
     @NotBlank @Size(max = 16777215)
     private String sourceText;
-    @NotBlank
+    /** Optional: when omitted, use the model configured in the user's profile. */
     private String model;
     private String customPrompt;
     private List<String> presets;

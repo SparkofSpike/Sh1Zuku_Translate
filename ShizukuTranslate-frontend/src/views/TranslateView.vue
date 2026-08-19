@@ -31,8 +31,7 @@
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:16px;">
       <select v-model="model" style="width:auto; min-width:200px;">
-        <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-        <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+        <option v-for="option in modelOptions" :key="option" :value="option">{{ option }}</option>
       </select>
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
@@ -95,6 +94,7 @@ import AnnouncementPanel from '../components/AnnouncementPanel.vue'
 
 const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
+const modelOptions = ref(['deepseek-v4-flash', 'deepseek-v4-pro'])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
@@ -128,6 +128,17 @@ onMounted(async () => {
     presetOptions.value = res.data || []
   } catch (e) {
     console.error('无法加载预设列表', e)
+  }
+  try {
+    const profile = await api.get('/auth/profile')
+    if (profile.data.model) {
+      model.value = profile.data.model
+      if (!modelOptions.value.includes(profile.data.model)) {
+        modelOptions.value.unshift(profile.data.model)
+      }
+    }
+  } catch (e) {
+    console.error('无法加载个人模型配置', e)
   }
   try {
     const res = await api.get('/announcements')
