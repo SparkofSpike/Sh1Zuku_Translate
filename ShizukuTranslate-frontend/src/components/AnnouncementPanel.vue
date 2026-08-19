@@ -5,7 +5,11 @@
       <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
         <h4>{{ announcement.title }}</h4>
         <time>{{ formatDate(announcement.createdAt) }}</time>
-        <p :class="{ collapsed: !isExpanded(announcement.id) }">{{ announcement.content }}</p>
+        <div
+          class="announcement-markdown"
+          :class="{ collapsed: !isExpanded(announcement.id) }"
+          v-html="renderMarkdown(announcement.content)"
+        ></div>
         <button class="announcement-toggle" @click="toggleExpanded(announcement.id)">
           {{ isExpanded(announcement.id) ? '收起' : '展开' }}
         </button>
@@ -18,6 +22,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { Announcement } from '../types'
+import { renderMarkdown } from '../utils/markdown'
 
 defineProps<{
   announcements: Announcement[]
@@ -87,13 +92,63 @@ function formatDate(value: string) {
   font-size: 12px;
 }
 
-.announcement-item p {
+.announcement-markdown {
   margin: 7px 0 0;
   color: #555;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.announcement-markdown :deep(p),
+.announcement-markdown :deep(ul),
+.announcement-markdown :deep(ol),
+.announcement-markdown :deep(blockquote),
+.announcement-markdown :deep(pre) {
+  margin: 0 0 7px;
+}
+
+.announcement-markdown :deep(p:last-child),
+.announcement-markdown :deep(ul:last-child),
+.announcement-markdown :deep(ol:last-child),
+.announcement-markdown :deep(blockquote:last-child),
+.announcement-markdown :deep(pre:last-child) {
+  margin-bottom: 0;
+}
+
+.announcement-markdown :deep(ul),
+.announcement-markdown :deep(ol) {
+  padding-left: 20px;
+}
+
+.announcement-markdown :deep(blockquote) {
+  padding-left: 10px;
+  border-left: 3px solid #ddd;
+  color: #777;
+}
+
+.announcement-markdown :deep(code) {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #f1f1f1;
+  font-size: 12px;
+}
+
+.announcement-markdown :deep(pre) {
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: #f5f5f5;
+}
+
+.announcement-markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.announcement-markdown :deep(a) {
+  color: #444;
+  text-decoration: underline;
 }
 
 .announcement-toggle {
@@ -112,11 +167,9 @@ function formatDate(value: string) {
 }
 
 @media (max-width: 720px) {
-  .announcement-item p.collapsed {
-    display: -webkit-box;
+  .announcement-markdown.collapsed {
+    max-height: 4.8em;
     overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
   }
 
   .announcement-toggle {

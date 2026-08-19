@@ -1,98 +1,103 @@
 # ShizukuTranslate
 
-ShizukuTranslate is an AI translation tool for Japanese and Korean novels. It provides a Vue web application, a Spring Boot API, a local OCR worker for screenshots, and a Chrome/Edge extension for translating Pixiv novels in place.
+ShizukuTranslate is an AI translation service for Japanese and Korean novels. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
 
 ## Features
 
 ### Web application
 
-- **Novel translation** — DeepSeek-powered translation with `deepseek-v4-flash` as the default model; the web UI also offers `deepseek-v4-pro`.
-- **Streaming output** — SSE streaming with typewriter-style rendering and cancellation support.
-- **Translation cache** — Repeated streaming requests for the same user, model, prompt, and source text can be served from a 30-day cache.
-- **Preset prompts** — Server-provided presets for series-specific terminology and character names, plus a custom prompt field.
-- **OCR translation** — Upload, drag, or paste a screenshot; the PaddleOCR worker extracts the text and the web app sends it to the translation pipeline.
-- **Accounts and access control** — JWT registration/login, admin-only statistics and survey management, and a registration agreement that must be read and accepted before registration.
-- **Profile settings** — Users can configure a personal DeepSeek API key. When it is empty, translation falls back to the server key.
-- **Translation history** — Completed translations are stored per user and can be browsed from the history pages.
-- **Feedback survey** — Authenticated users can submit translation feedback.
+- **Novel translation** through DeepSeek, OpenAI-compatible, or Anthropic-compatible model endpoints.
+- **Multiple user model profiles** with independent provider, model, base URL, and API key settings. DeepSeek profiles may use the server key when their own key is empty.
+- **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
+- **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
+- **Preset prompts** for series-specific terminology, plus an optional custom prompt.
+- **OCR translation** from uploaded, dragged, or pasted images through the PaddleOCR worker.
+- **Accounts and access control** with JWT login, API keys for the browser extension, and administrator-only usage and announcement management.
+- **Translation history** stored per user.
+- **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
+- **Markdown announcements** rendered in the web application. Announcement content is stored as Markdown and raw HTML is not executed.
+- **Feedback submission** through the authenticated survey endpoint.
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension, currently version `1.2.0`. It fetches the novel through Pixiv's AJAX endpoint and streams the translation through the ShizukuTranslate backend using an `X-API-Key`.
+The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.2.0`.
 
 The extension supports:
 
-- Side panel display.
-- Inline translation under the paragraphs of the current page.
-- Full-novel inline translation with paragraph IDs mapped back across Pixiv page breaks.
-- Paged translation that preserves Pixiv's `[newpage]` breaks.
+- A floating side-panel translation view.
+- Inline translation under paragraphs on the current Pixiv page.
+- Full-novel inline translation with global paragraph IDs mapped across Pixiv page breaks.
+- Paged translation that preserves Pixiv's `[newpage]` markers.
 - Chinese, English, and Korean output.
-- Multiple server presets and a custom prompt.
+- Site DeepSeek models and the user's saved model profiles.
+- Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
-- Automatic translation, per-tab cancellation, and service-worker keep-alive for long novels.
+- Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
 - A history button that opens the web application's translation history.
-- Background update checks at browser startup and every six hours, plus a manual **检查更新** action.
+- Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 
-The extension does not silently replace its own files: browsers do not permit that for unpacked extensions. Updates are installed with the bundled Windows `CheckUpdate.exe` updater, then applied by refreshing the extension from the browser's extension management page.
+The extension requires an authenticated Pixiv session, a reachable ShizukuTranslate backend URL, and a user-generated extension API key. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
-```
-┌─────────────────┐      ┌────────────────────┐      ┌───────────────┐
-│  Vue 3 SPA      │────▶│  Java Spring Boot  │────▶│  DeepSeek API │
-│  (TypeScript)   │◀────│  (port 5566)       │      └───────────────┘
-│  + Pinia        │      │  + JWT Auth        │      ┌───────────────┐
-│  + Vue Router   │      │  + H2 Database     │────▶│  Python OCR   │
-└─────────────────┘      │  + SSE Streaming   │      │  Worker       │
-                         └────────────────────┘      │  (port 5557)  │
-                                                     │  PaddleOCR    │
-                                                     └───────────────┘
+```text
++----------------------+       +------------------------+       +----------------------+
+| Vue 3 web application| ----> | Spring Boot API        | ----> | DeepSeek or          |
+| TypeScript / Vite    | <---- | JWT and API-key auth   |       | compatible provider  |
++----------------------+       | SSE / JPA / H2        |       +----------------------+
+                               +-----------+------------+
+                                           |
+                                           v
+                               +------------------------+
+                               | Python OCR worker      |
+                               | Flask / PaddleOCR      |
+                               +------------------------+
+
++----------------------+       +------------------------+
+| Pixiv novel page     | ----> | MV3 extension          |
+| content.js           | <---- | background.js          |
++----------------------+       +-----------+------------+
+                                           |
+                                           v
+                               ShizukuTranslate SSE API
 ```
 
-### Tech stack
+### Technology stack
 
 | Layer | Technology |
-|-------|------------|
-| **Frontend** | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios |
-| **Backend** | Java 21, Spring Boot 3.2, Maven, Spring Data JPA, H2, JWT |
-| **OCR** | Python 3.12, Flask, PaddleOCR with the Japanese model |
-| **AI** | DeepSeek API (`deepseek-v4-flash` by default) |
-| **Extension** | Chrome/Edge Manifest V3, vanilla JavaScript, SSE |
-| **Updater** | .NET 8 Windows Forms, self-contained `win-x64` executable |
+|---|---|
+| Web frontend | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios |
+| Backend | Java 21, Spring Boot 3.2.0, Spring Data JPA, H2, Spring Security, JWT |
+| OCR worker | Python, Flask, PaddleOCR with the Japanese model |
+| AI integration | DeepSeek API, OpenAI-compatible chat completions, Anthropic Messages API |
+| Browser extension | Chrome/Edge Manifest V3, vanilla JavaScript, SSE |
+| Windows updater | .NET 8 Windows Forms, self-contained `win-x64` executable |
 
-### Browser extension data flow
+## Extension data flow
 
-```
-┌──────────────────────┐  ① extract novel_id  ┌──────────────────────────┐
-│  Pixiv novel page    │───────────────────▶│  content.js (injected)   │
-│  (user clicks go)    │◀───────────────────│  extracts paragraphs,    │
-└──────────────────────┘  ⑤ render output    │  renders translated text │
-         ▲                                    └───────────┬──────────────┘
-         │                                  ② novel_id msg │
-         │                                    (message)    ▼
-┌────────┴───────────────┐         ┌─────────────────────────────────────┐
-│   backend              │         │  background.js (MV3 service worker) │
-│   /translate/stream    │◀────────│  + alarm keep-alive                 │
-│   (X-API-Key auth)     │  ③ SSE  │  + per-tab abort control            │
-│   ──▶ DeepSeek API     │  stream  │  + chrome.cookies PHPSESSID         │
-└────────────────────────┘         └───────────┬─────────────────────────┘
-                                               │ ② bare fetch source text
-                                               ▼
-                                     ┌──────────────────────┐
-                                     │  pixiv.net AJAX API  │
-                                     │  /ajax/novel/{id}    │
-                                     └──────────────────────┘
+```text
+1. content.js extracts the Pixiv novel ID and sends it to background.js.
+2. background.js fetches the novel from https://www.pixiv.net/ajax/novel/{id}.
+3. background.js sends the source text to /api/v1/translate/stream with X-API-Key.
+4. The backend calls the selected model provider and returns SSE events.
+5. background.js forwards tokens to content.js, which renders the selected view.
 ```
 
-The extension requires an authenticated Pixiv session because it reads the `PHPSESSID` cookie to request the novel. It also requires a reachable backend URL and a user-generated plugin API key from the web app's **Profile** page.
+The extension checks for the `PHPSESSID` cookie before requesting a novel. It does not expose the user's configured model API keys to the extension: model profile responses requested with an extension API key omit API key previews.
 
 ## Installing the extension
 
-### Option 1: install from a Release
+### Install from a release
 
-On Windows, download the latest Release package and run `tranShilator-plugin/CheckUpdate.exe` (or `install.cmd`, which delegates to the bundled updater when it is present). By default, `CheckUpdate.exe` updates the extension directory containing the updater. Use `--path` when the browser already has an unpacked extension loaded from another directory.
+On Windows, download a release package and run the bundled `tranShilator-plugin/CheckUpdate.exe`. The root-level `install.cmd` also delegates to the bundled updater when it is present; otherwise it falls back to `install.ps1`.
 
-For a fresh install under the user's local application data directory, run `install.ps1` directly. It downloads the latest `tranShilator-plugin-*.zip` asset and installs it under:
+For a fresh install using the PowerShell installer, run:
+
+```powershell
+.\install.ps1
+```
+
+The installer downloads the latest `tranShilator-plugin-*.zip` release asset and installs the extension under:
 
 ```text
 %LOCALAPPDATA%\PixivNovelTranslator\tranShilator-plugin
@@ -101,25 +106,25 @@ For a fresh install under the user's local application data directory, run `inst
 Then:
 
 1. Open `edge://extensions` or `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the extension directory returned by the updater or installer.
-4. Open Pixiv, log in, open the extension popup, and configure the backend URL and API key.
+2. Enable Developer mode.
+3. Choose **Load unpacked** and select the installed extension directory.
+4. Log in to Pixiv, open the extension popup, and configure the backend URL and extension API key.
 
-The updater supports these options:
+The standalone updater supports:
 
 ```text
-CheckUpdate.exe --path <folder>
+CheckUpdate.exe --path <extension-folder>
 CheckUpdate.exe --force
 CheckUpdate.exe --no-pause
 ```
 
-`--force` reinstalls the same version; `--no-pause` is retained for script compatibility. The updater validates the release version and, when GitHub provides one, the asset SHA-256 digest. It keeps a timestamped backup of the previous extension directory. After an update, click the extension card's **Reload** button in the browser extension page and refresh the Pixiv tab.
+`--force` reinstalls the current version. `--no-pause` is retained for script compatibility. The updater checks the release version and validates the GitHub asset SHA-256 digest when one is available. It keeps a timestamped backup of the previous extension directory. After updating, click **Reload** on the extension card and refresh the Pixiv tab.
 
-### Option 2: load the repository directory
+### Load the repository directory
 
-For local development, open the browser extension page, enable **Developer mode**, choose **Load unpacked**, and select the repository's `tranShilator-plugin/` directory. Configure the backend URL and API key in the popup before translating.
+For local development, enable Developer mode on the browser extension page, choose **Load unpacked**, and select the repository's `tranShilator-plugin/` directory. Configure the backend URL and extension API key in the popup.
 
-### Building the Windows updater
+### Build the Windows updater
 
 The repository includes a self-contained .NET 8 Windows GUI updater. On Windows with the .NET 8 SDK installed:
 
@@ -133,76 +138,109 @@ The resulting `tranShilator-plugin/CheckUpdate.exe` is placed beside the extensi
 
 ### Prerequisites
 
-- **JDK 21** — required by the backend compiler configuration.
-- **Node.js 20+** and npm — for the Vue frontend.
-- **Python 3.12** — for the OCR worker.
-- **Maven** — for the Java build.
-- **A DeepSeek API key** — the backend requires `DEEPSEEK_API_KEY`; there is no fallback API key in the repository.
+- **JDK 21** for the backend compiler configuration.
+- **Node.js 20+** and npm for the frontend.
+- **Python 3.12** for the OCR worker. The deployment script itself requires a modern Python version supporting the repository's type-hint syntax.
+- **Maven** for the backend build.
+- **OpenSSH** for the deployment workflow.
+- A **DeepSeek API key** if the server should provide the default DeepSeek models or fallback service key.
 
 ### 1. Install and start the OCR worker
 
-The OCR implementation uses PaddleOCR with the Japanese model:
+The OCR source code imports PaddlePaddle and PaddleOCR and initializes the Japanese model. Install those packages explicitly:
 
 ```powershell
 cd ocr-worker
-python -m pip install paddlepaddle paddleocr flask
-python ocr_server.py       # http://localhost:5557
+python -m pip install paddlepaddle paddleocr flask pillow
+python ocr_server.py
 ```
 
-The worker exposes `GET /health` and `POST /ocr`. The image upload field is named `image`. `OCR_PORT` and `OCR_THRESHOLD` can be used to override the worker's port and default confidence threshold.
+The worker listens on `http://localhost:5557` by default and provides:
 
-> The first PaddleOCR startup may download model files. On Windows, install a PaddlePaddle build compatible with the installed Python version if the generic command is not available.
+- `GET /health`
+- `POST /ocr` with a multipart file field named `image`
+
+Use `OCR_PORT` and `OCR_THRESHOLD` to override the default port and confidence threshold. The first PaddleOCR startup may download model files. Install a PaddlePaddle build compatible with the installed Python version if the generic package is unavailable for the platform.
+
+> Note: `ocr-worker/requirements.txt` currently contains the older Flask/EasyOCR dependency list, while the current worker source uses PaddleOCR. The explicit installation command above reflects the code that is executed today.
 
 ### 2. Start the backend
 
 ```powershell
 cd ShizukuTranslate
 $env:DEEPSEEK_API_KEY = "your-deepseek-api-key"
-mvn spring-boot:run       # http://localhost:5566
+mvn spring-boot:run
 ```
 
-The backend serves the API under `http://localhost:5566/api/v1`. It also serves the frontend build from `src/main/resources/static` when production assets have been copied there.
+The backend listens on `http://localhost:5566` and exposes the API under `http://localhost:5566/api/v1`. It serves the frontend from `src/main/resources/static` when a production frontend build has been copied there.
 
 ### 3. Start the frontend development server
 
 ```powershell
 cd ShizukuTranslate-frontend
-npm install
-npm run dev               # http://localhost:5173
+npm ci
+npm run dev
 ```
 
-The frontend calls `http://localhost:5566/api/v1` by default. Set `VITE_API_BASE_URL` before starting Vite to use another backend URL:
+Vite listens on `http://localhost:5173`. The frontend uses `http://localhost:5566/api/v1` by default. Set `VITE_API_BASE_URL` before starting Vite to use another backend:
 
 ```powershell
 $env:VITE_API_BASE_URL = "http://localhost:5566/api/v1"
 npm run dev
 ```
 
-The frontend About page receives the build date and short Git commit automatically from `vite.config.js`.
+The About page receives the build timestamp and short Git commit from `vite.config.js` during a frontend build.
+
+## Model provider configuration
+
+The web application's profile page supports multiple saved model profiles. Each profile contains:
+
+- A display name.
+- A provider protocol: `deepseek`, `openai`, or `anthropic`.
+- A model name.
+- An API key.
+- A base URL for compatible providers.
+
+The defaults are:
+
+| Provider | Default base URL | API key behavior |
+|---|---|---|
+| DeepSeek | The server's `deepseek.api.base-url` setting | An empty personal key falls back to `DEEPSEEK_API_KEY` |
+| OpenAI-compatible | `https://api.openai.com/v1` | A personal API key is required |
+| Anthropic-compatible | `https://api.anthropic.com/v1` | A personal API key is required |
+
+DeepSeek requests use `/chat/completions`. OpenAI-compatible requests use the same format. Anthropic-compatible requests use `/messages` and translate Anthropic usage fields into the application's token usage format. API keys are not returned in full; the authenticated web profile shows a masked preview, while extension model-profile responses omit the preview.
 
 ## Production build and deployment
 
-To build a backend jar that contains the latest frontend assets:
+To build a backend JAR containing the latest frontend assets:
 
 ```powershell
-# 1. Build the frontend
+# Build the frontend
 cd ShizukuTranslate-frontend
 npm ci
 npm run build
 
-# 2. Replace the backend's static resources
+# Replace the backend static directory
 Remove-Item ..\ShizukuTranslate\src\main\resources\static -Recurse -Force -ErrorAction SilentlyContinue
 New-Item ..\ShizukuTranslate\src\main\resources\static -ItemType Directory -Force
 Copy-Item dist\* ..\ShizukuTranslate\src\main\resources\static\ -Recurse
 
-# 3. Package the backend
+# Package the backend
 cd ..\ShizukuTranslate
 mvn clean package -DskipTests
 ```
 
-For the repository's configured Windows server, `python ship.py` is the local deployment workflow. It pulls the repository unless `--skip-pull` is supplied, builds the frontend and backend, packages the OCR worker, uploads the package over SSH, and restarts the services. It depends on the local SSH key and the server settings defined in that script; adapt those settings before using it for another environment.
+The repository's local deployment workflow is:
 
-Useful deployment options:
+```powershell
+cd ..
+python ship.py
+```
+
+`ship.py` uses the server and SSH settings defined at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, builds the frontend, copies the frontend into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the Windows services.
+
+Useful options:
 
 ```text
 python ship.py --skip-pull
@@ -210,43 +248,46 @@ python ship.py --upload-only
 python ship.py --help
 ```
 
-The legacy `deploy.bat`, `debug.bat`, and `start-dev.bat` files contain machine-specific Windows paths and are not the portable deployment interface.
+The deployment script requires the configured local SSH key and access to the target Windows server. Review its server settings before using it for another environment. The legacy `deploy.bat`, `debug.bat`, and `start-dev.bat` scripts contain machine-specific paths and are not the portable deployment interface.
 
 ## Project structure
 
-```
+```text
 Sh1Zuku_Translate/
-├── ShizukuTranslate/           # Java Spring Boot backend and production static files
+├── ShizukuTranslate/           # Spring Boot backend and production static files
 │   ├── src/main/java/com/shizuku/translate/
-│   │   ├── config/             # Application, CORS, DeepSeek, and security config
-│   │   ├── controller/         # Auth, translation, OCR, history, survey, and admin APIs
-│   │   ├── dto/                # Request/response DTOs
-│   │   ├── entity/             # JPA entities and translation cache
-│   │   ├── exception/          # Global handler and custom exceptions
-│   │   ├── integration/        # DeepSeek API client
-│   │   ├── repository/         # JPA repositories
+│   │   ├── config/             # Application, CORS, model, and security configuration
+│   │   ├── controller/         # Auth, translation, OCR, history, survey, admin, and announcement APIs
+│   │   ├── dto/                # Request and response DTOs
+│   │   ├── entity/             # JPA entities, model profiles, cache, and usage logs
+│   │   ├── exception/          # Global exception handler and custom exceptions
+│   │   ├── integration/        # AI provider clients and protocol adapters
+│   │   ├── repository/         # Spring Data repositories
 │   │   ├── security/           # JWT and API-key authentication filters
-│   │   └── service/            # Translation, OCR, user, survey, and key services
+│   │   └── service/            # Translation, OCR, user, survey, usage, and announcement services
 │   └── src/main/resources/
-│       └── application.yml     # Runtime configuration and translation presets
-├── ShizukuTranslate-frontend/  # Vue 3 + TypeScript frontend
+│       ├── application.yml     # Runtime settings and prompt presets
+│       └── static/              # Copied production frontend assets
+├── ShizukuTranslate-frontend/  # Vue 3 and TypeScript frontend
 │   └── src/
 │       ├── api/                # Axios API client and SSE streaming
-│       ├── components/         # Image, OCR, preset, and result components
+│       ├── components/         # OCR, preset, result, and announcement components
 │       ├── router/              # Vue Router routes and auth guards
 │       ├── stores/              # Pinia stores
 │       ├── types/              # TypeScript interfaces
-│       └── views/              # Translate, history, profile, survey, and admin pages
-├── ocr-worker/                 # Python PaddleOCR microservice
-│   ├── config.py               # Environment-based port and threshold config
+│       ├── utils/              # Shared utilities, including Markdown rendering
+│       └── views/               # Translation, history, profile, survey, admin, and auth pages
+├── ocr-worker/                 # Python Flask and PaddleOCR microservice
+│   ├── config.py               # Environment-based port and threshold settings
 │   ├── ocr_server.py           # Flask entry point
 │   ├── ocr_service.py          # PaddleOCR wrapper and line merging
-│   └── install_ocr.md          # OCR deployment notes
+│   └── install_ocr.md          # Older OCR deployment notes
 ├── tranShilator-plugin/        # Chrome/Edge extension and CheckUpdate.exe
-│   └── updatechecking/         # .NET updater source
-├── build_extension.py          # Generates the extension build version metadata
+│   └── updatechecking/         # .NET updater source project
+├── build_extension.py          # Generates extension build metadata
 ├── install.cmd                 # Windows extension install/update entry point
-└── ship.py                     # Local build/package/deployment workflow
+├── install.ps1                 # PowerShell extension installer
+└── ship.py                     # Local build, packaging, upload, and restart workflow
 ```
 
 ## Configuration
@@ -254,39 +295,73 @@ Sh1Zuku_Translate/
 ### Backend environment variables
 
 | Variable | Description |
-|----------|-------------|
-| `DEEPSEEK_API_KEY` | **Required.** Server-wide DeepSeek API key used when a user has not configured a personal key. |
-| `JWT_SECRET` | JWT signing secret. The application has a development default; set a strong value in production. |
-| `OCR_PORT` | OCR worker HTTP port; default `5557`. |
-| `OCR_THRESHOLD` | OCR confidence threshold; default `0.3`. |
+|---|---|
+| `DEEPSEEK_API_KEY` | Server-wide DeepSeek key. Required when using the site-provided DeepSeek models or when a DeepSeek profile has no personal key. |
+| `JWT_SECRET` | JWT signing secret. A development default exists; set a strong value in production. |
+| `OCR_PORT` | OCR worker port. Default: `5557`. |
+| `OCR_THRESHOLD` | OCR confidence threshold. Default: `0.3`. |
+| `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |
 
 Other runtime defaults in `application.yml`:
 
 - Backend HTTP port: `5566`.
+- DeepSeek base URL: `https://api.deepseek.com/v1`.
+- Default DeepSeek model: `deepseek-v4-flash`.
+- DeepSeek thinking mode: disabled by default; requests may override it.
 - OCR worker URL: `http://localhost:5557`.
 - H2 file database: `./data/translatordb`.
-- Multipart upload limit: 20 MB per file and 25 MB per request.
-- DeepSeek thinking mode: disabled by default; the extension can override it per request.
+- Multipart limits: 20 MB per file and 25 MB per request.
 - Translation cache cleanup: entries older than 30 days are removed daily at 03:00.
+- Administrator usernames: configured by `app.admin-usernames` in `application.yml`.
 
-Users can set a personal DeepSeek API key on the **Profile** page. The key is used for that user's translation requests and is never returned by the profile endpoint. The same page can generate, list, and revoke API keys for the browser extension.
+### Persistence and token usage
+
+The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, announcements, translation cache entries, survey records, and token usage logs.
+
+Live model responses that report token usage are logged with the provider, model, input tokens, output tokens, total tokens, source type, estimate flag, and timestamp. Cache hits return cached translations without creating a new live provider usage event. On startup, the historical migration service can backfill cache usage and estimate older translation records that do not contain provider usage data; estimated entries are marked separately in the administrator log view.
 
 ### Main API routes
 
-All routes are prefixed with `/api/v1`:
+All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use `Authorization: Bearer <token>`. The browser extension uses `X-API-Key`.
 
-| Route | Purpose |
-|-------|---------|
-| `POST /auth/register` and `POST /auth/login` | Account registration and JWT login |
-| `GET /auth/profile` and `PUT /auth/profile/ai-key` | Profile and personal DeepSeek key settings |
-| `POST /auth/api-key`, `GET /auth/api-keys`, `DELETE /auth/api-key/{id}` | Browser-extension API key management |
-| `POST /translate` | Non-streaming translation |
-| `POST /translate/stream` | SSE streaming translation |
-| `POST /ocr` and `GET /ocr/health` | OCR proxy and health check |
-| `GET /translations` and `GET /translations/{id}` | Translation history |
-| `GET /presets` | Public translation presets |
+| Route | Access | Purpose |
+|---|---|---|
+| `POST /auth/register` | Public | Register an account. |
+| `POST /auth/login` | Public | Return a JWT. |
+| `GET /auth/me` | Authenticated | Return the current username and administrator status. |
+| `GET /auth/profile` | Authenticated | Return profile and masked model configuration information. |
+| `GET /auth/model-profiles` | Authenticated or extension API key | List the current user's model profiles. Extension requests omit key previews. |
+| `POST /auth/model-profiles` | Authenticated | Create a model profile. |
+| `PUT /auth/model-profiles/{id}` | Authenticated | Update a model profile. |
+| `DELETE /auth/model-profiles/{id}` | Authenticated | Delete a model profile. |
+| `PUT /auth/profile/model` | Authenticated | Legacy single-profile configuration endpoint. |
+| `PUT /auth/profile/ai-key` | Authenticated | Legacy personal API key endpoint. |
+| `GET /auth/usage` | Authenticated | Return the current user's token usage summary and charts. |
+| `POST /auth/api-key` | Authenticated | Generate a browser-extension API key. |
+| `GET /auth/api-keys` | Authenticated | List the user's extension API keys. |
+| `DELETE /auth/api-key/{id}` | Authenticated | Revoke an extension API key. |
+| `POST /translate` | Authenticated or extension API key | Perform a non-streaming translation. |
+| `POST /translate/stream` | Authenticated or extension API key | Stream a translation over SSE. |
+| `GET /translations` | Authenticated | List the current user's translation history. |
+| `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
+| `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
+| `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
+| `GET /presets` | Public | Return configured preset names. |
+| `GET /announcements` | Public | Return announcements in reverse chronological order. |
+| `POST /survey` | Authenticated | Submit translation and experience feedback. |
+| `GET /stats/users` | Authenticated | Return the registered-user count. |
+| `GET /admin/usage` | Administrator | Return global token totals, charts, and per-user summaries. |
+| `GET /admin/usage/users/{userId}` | Administrator | Return one user's token log. |
+| `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text. |
+| `DELETE /admin/announcements/{id}` | Administrator | Delete an announcement. |
 
-Authenticated API requests use the JWT `Authorization: Bearer <token>` header. The extension uses `X-API-Key: <key>`.
+## Known limitations
+
+- The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
+- The OCR worker's checked-in `requirements.txt` is older than the current PaddleOCR implementation and should be aligned before using it as the installation source.
+- H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
+- The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
+- Model providers may impose their own rate limits, context limits, outages, or content policies.
 
 ## License
 
