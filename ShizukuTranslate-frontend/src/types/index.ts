@@ -52,16 +52,9 @@ export interface HistoryRecord {
   createdAt: string
 }
 
-export interface SurveyRequest {
-  translationQuality: number
-  experienceQuality: number
-  favoriteFeature: string
-  suggestion?: string
-}
-
-export interface SurveyStats {
-  total: number
-  avgTranslationQuality: number
-  avgExperienceQuality: number
-  records: any[]
+export interface Announcement {
+  id: number
+  title: string
+  content: string
+  createdAt: string
 }

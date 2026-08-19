@@ -41,6 +41,7 @@ public class SecurityConfig {
                                 DispatcherType.ERROR, DispatcherType.FORWARD).permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/api/v1/presets").permitAll()
+                        .requestMatchers("/api/v1/announcements").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
                         // .requestMatchers("/api/v1/stats/**").permitAll() — removed, restricted to authenticated users only
                         .requestMatchers("/api/v1/**").authenticated()

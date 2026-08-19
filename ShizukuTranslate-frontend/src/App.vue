@@ -4,7 +4,6 @@
       <div style="max-width: 800px; margin: 0 auto; display: flex; align-items: center; height: 56px;">
         <router-link to="/" class="nav-item">翻译</router-link>
         <router-link to="/history" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">历史</router-link>
-        <router-link to="/survey" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">问卷</router-link>
         <router-link to="/admin" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">管理</router-link>
         <router-link to="/about" class="nav-item" style="margin-left: 24px;">关于</router-link>
         <div style="flex:1;"></div>
@@ -18,7 +17,7 @@
         </template>
       </div>
     </header>
-    <main style="max-width: 800px; margin: 0 auto; padding: 24px 20px;">
+    <main class="app-main">
       <router-view />
     </main>
   </div>
@@ -61,4 +60,10 @@ function logout() {
 }
 .nav-item:hover { color: #000; border-bottom-color: #000; text-decoration: none; }
 .router-link-exact-active { color: #000 !important; border-bottom-color: #000 !important; }
+
+.app-main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
 </style>

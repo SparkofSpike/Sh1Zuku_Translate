@@ -1,6 +1,9 @@
 <template>
-  <div class="card">
-    <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
+  <div class="translate-layout">
+    <AnnouncementPanel class="announcement-left" :announcements="leftAnnouncements" />
+
+    <div class="card translation-card">
+      <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
 
     <ImageUploader @file-selected="handleImageFile" />
 
@@ -69,25 +72,32 @@
 
     <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" />
     <TranslateResult v-else-if="result" :result="result" />
+    </div>
+
+    <AnnouncementPanel class="announcement-right" :announcements="rightAnnouncements" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateStream } from '../api'
-import type { TranslateResponse } from '../types'
+import type { Announcement, TranslateResponse } from '../types'
 import ImageUploader from '../components/ImageUploader.vue'
 import OcrPreview from '../components/OcrPreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
 import SseTranslateResult from '../components/SseTranslateResult.vue'
+import AnnouncementPanel from '../components/AnnouncementPanel.vue'
 
 const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
+const announcements = ref<Announcement[]>([])
+const leftAnnouncements = computed(() => announcements.value.filter((_, index) => index % 2 === 0))
+const rightAnnouncements = computed(() => announcements.value.filter((_, index) => index % 2 === 1))
 
 const result = ref<TranslateResponse | null>(null)
 const error = ref('')
@@ -117,6 +127,12 @@ onMounted(async () => {
     presetOptions.value = res.data || []
   } catch (e) {
     console.error('无法加载预设列表', e)
+  }
+  try {
+    const res = await api.get('/announcements')
+    announcements.value = res.data || []
+  } catch (e) {
+    console.error('无法加载公告列表', e)
   }
 })
 
@@ -231,7 +247,7 @@ async function translate() {
       if (axios.isCancel(e)) return
       error.value = e.response?.data?.error || '翻译失败'
     } finally {
-      if (status.value !== 'idle') status.value = 'idle'
+      status.value = 'idle'
       cancelFn = null
     }
   }
@@ -239,9 +255,56 @@ async function translate() {
 </script>
 
 <style scoped>
+.translate-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 800px) minmax(0, 180px);
+  align-items: start;
+  justify-content: center;
+  gap: 16px;
+}
+
+.announcement-left,
+.announcement-right {
+  grid-row: 1;
+}
+
+.translation-card {
+  grid-column: 2;
+  margin: 0;
+  width: 100%;
+}
+
 textarea {
   resize: vertical;
   width: 100%;
   box-sizing: border-box;
+}
+
+@media (max-width: 1050px) {
+  .translate-layout {
+    grid-template-columns: minmax(0, 800px);
+  }
+
+  .announcement-left,
+  .announcement-right,
+  .translation-card {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .announcement-left {
+    grid-row: 1;
+  }
+
+  .translation-card {
+    grid-row: 2;
+  }
+
+  .announcement-right {
+    grid-row: 3;
+  }
 }
 </style>

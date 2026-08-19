@@ -1,9 +1,12 @@
 package com.shizuku.translate.controller;
 
 import com.shizuku.translate.config.AppConfig;
-import com.shizuku.translate.service.SurveyService;
+import com.shizuku.translate.dto.AnnouncementRequest;
+import com.shizuku.translate.service.AnnouncementService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.security.Principal;
 import java.util.Map;
 
@@ -11,11 +14,11 @@ import java.util.Map;
 @RequestMapping("/api/v1/admin")
 public class AdminController {
 
-    private final SurveyService surveyService;
+    private final AnnouncementService announcementService;
     private final AppConfig.AppProperties appProperties;
 
-    public AdminController(SurveyService surveyService, AppConfig.AppProperties appProperties) {
-        this.surveyService = surveyService;
+    public AdminController(AnnouncementService announcementService, AppConfig.AppProperties appProperties) {
+        this.announcementService = announcementService;
         this.appProperties = appProperties;
     }
 
@@ -25,9 +28,17 @@ public class AdminController {
         }
     }
 
-    @GetMapping("/surveys")
-    public ResponseEntity<?> getSurveys(Principal principal) {
+    @PostMapping("/announcements")
+    public ResponseEntity<?> createAnnouncement(@Valid @RequestBody AnnouncementRequest request,
+                                                Principal principal) {
         checkAdmin(principal);
-        return ResponseEntity.ok(surveyService.getStatistics());
+        return ResponseEntity.ok(announcementService.create(request));
+    }
+
+    @DeleteMapping("/announcements/{id}")
+    public ResponseEntity<?> deleteAnnouncement(@PathVariable Long id, Principal principal) {
+        checkAdmin(principal);
+        announcementService.delete(id);
+        return ResponseEntity.ok(Map.of("message", "公告已删除"));
     }
 }
