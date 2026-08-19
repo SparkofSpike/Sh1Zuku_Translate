@@ -131,7 +131,10 @@ onMounted(async () => {
   }
   try {
     const profile = await api.get('/auth/profile')
-    if (profile.data.model) {
+    if (profile.data.provider !== 'deepseek' && profile.data.model) {
+      modelOptions.value = [profile.data.model]
+      model.value = profile.data.model
+    } else if (profile.data.model) {
       model.value = profile.data.model
       if (!modelOptions.value.includes(profile.data.model)) {
         modelOptions.value.unshift(profile.data.model)

@@ -7,8 +7,10 @@ import com.shizuku.translate.entity.User;
 import com.shizuku.translate.service.ApiKeyService;
 import com.shizuku.translate.service.UserService;
 import com.shizuku.translate.service.UsageService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
@@ -57,7 +59,7 @@ public class AuthController {
 
     /** User profile (requires JWT login) */
     @GetMapping("/profile")
-    public ResponseEntity<?> profile(Principal principal) {
+    public ResponseEntity<?> profile(Principal principal, HttpServletRequest request) {
         if (principal == null) {
             return ResponseEntity.status(401).body(Map.of("error", "未登录"));
         }
@@ -66,6 +68,9 @@ public class AuthController {
         data.put("username", user.getUsername());
         data.put("email", user.getEmail());
         data.put("hasAiApiKey", user.getAiApiKey() != null && !user.getAiApiKey().isBlank());
+        boolean pluginRequest = StringUtils.hasText(request.getHeader("X-API-Key"))
+                || StringUtils.hasText(request.getParameter("api_key"));
+        data.put("apiKeyPreview", pluginRequest ? "" : userService.getAiApiKeyPreview(principal.getName()));
         data.put("provider", user.getAiProvider() == null ? "deepseek" : user.getAiProvider());
         data.put("baseUrl", user.getAiBaseUrl() == null ? "" : user.getAiBaseUrl());
         data.put("model", user.getAiModel() == null ? "" : user.getAiModel());

@@ -76,6 +76,13 @@ public class UserService {
         return findByUsername(username).getAiApiKey();
     }
 
+    public String getAiApiKeyPreview(String username) {
+        String key = findByUsername(username).getAiApiKey();
+        if (key == null || key.isBlank()) return "";
+        if (key.length() <= 4) return "••••";
+        return key.substring(0, 2) + "..." + key.substring(key.length() - 2);
+    }
+
     public void updateAiApiKey(String username, String aiApiKey) {
         User user = findByUsername(username);
         user.setAiApiKey(aiApiKey == null || aiApiKey.isBlank() ? null : aiApiKey.trim());
@@ -100,6 +107,11 @@ public class UserService {
             user.setAiApiKey(apiKey.trim());
         }
         String normalizedBaseUrl = baseUrl == null || baseUrl.isBlank() ? null : baseUrl.trim();
+        if (normalizedBaseUrl == null && normalizedProvider.equals("openai")) {
+            normalizedBaseUrl = "https://api.openai.com/v1";
+        } else if (normalizedBaseUrl == null && normalizedProvider.equals("anthropic")) {
+            normalizedBaseUrl = "https://api.anthropic.com/v1";
+        }
         String normalizedModel = model == null || model.isBlank() ? null : model.trim();
         if (!normalizedProvider.equals("deepseek") && (user.getAiApiKey() == null || user.getAiApiKey().isBlank())) {
             throw new BusinessException("OpenAI 兼容和 Anthropic 兼容模型必须配置 API Key");
@@ -116,13 +128,19 @@ public class UserService {
         userRepository.save(user);
     }
 
+    private String defaultBaseUrl(String provider) {
+        if ("openai".equals(provider)) return "https://api.openai.com/v1";
+        if ("anthropic".equals(provider)) return "https://api.anthropic.com/v1";
+        return deepSeekProperties.getBaseUrl();
+    }
+
     public AiModelConfig resolveAiModelConfig(User user, String requestedModel, String thinkingType) {
         boolean personalKey = user.getAiApiKey() != null && !user.getAiApiKey().isBlank();
         String provider = personalKey && user.getAiProvider() != null && !user.getAiProvider().isBlank()
                 ? user.getAiProvider().toLowerCase() : "deepseek";
         String apiKey = personalKey ? user.getAiApiKey().trim() : deepSeekProperties.getKey();
         String baseUrl = personalKey && user.getAiBaseUrl() != null && !user.getAiBaseUrl().isBlank()
-                ? user.getAiBaseUrl().trim() : deepSeekProperties.getBaseUrl();
+                ? user.getAiBaseUrl().trim() : defaultBaseUrl(provider);
         String model = requestedModel != null && !requestedModel.isBlank()
                 ? requestedModel.trim()
                 : (user.getAiModel() != null && !user.getAiModel().isBlank()

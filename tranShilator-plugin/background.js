@@ -203,6 +203,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tabId,
         message.selectedPresets || [],
         message.customPrompt || '',
+        message.model || 'deepseek-v4-flash',
         message.currentPage || 0,
         !!message.fullMode,
         message.thinkingType,
@@ -261,7 +262,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', currentPage = 0, fullMode = false, thinkingType, displayMode) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = 'deepseek-v4-flash', currentPage = 0, fullMode = false, thinkingType, displayMode) {
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -319,6 +320,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
+      settings.model,
       sourceText,
       targetLang,
       selectedPresets,
@@ -492,10 +494,11 @@ async function fetchNovelFromPixiv(novelId, signal) {
 
 async function loadSettings() {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['backendUrl', 'apiKey'], (items) => {
+    chrome.storage.sync.get(['backendUrl', 'apiKey', 'model'], (items) => {
       resolve({
         backendUrl: items.backendUrl || '',
-        apiKey: items.apiKey || ''
+        apiKey: items.apiKey || '',
+        model: items.model || 'deepseek-v4-flash'
       });
     });
   });
@@ -503,7 +506,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onToken, onDone, onError) {
+async function streamTranslateApi(backendUrl, apiKey, model, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onToken, onDone, onError) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -571,7 +574,7 @@ async function streamTranslateApi(backendUrl, apiKey, text, targetLang, selected
     },
     body: JSON.stringify({
       sourceText: text,
-      model: 'deepseek-v4-flash',
+      model: model || 'deepseek-v4-flash',
       customPrompt: prompt,
       thinkingType: thinkingType || undefined,
       presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined

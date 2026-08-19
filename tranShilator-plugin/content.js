@@ -801,13 +801,14 @@ async function handleTranslate() {
   // Load settings
   const settings = await new Promise((resolve) => {
     try {
-      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType'], (items) => {
+      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType', 'model'], (items) => {
         resolve({
           targetLang: items.targetLang || 'zh',
           displayMode: items.displayMode || 'panel',
           selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
           customPrompt: items.customPrompt || '',
-          thinkingType: items.thinkingType || 'disabled'
+          thinkingType: items.thinkingType || 'disabled',
+          model: items.model || 'deepseek-v4-flash'
         });
       });
     } catch (e) {
@@ -817,7 +818,8 @@ async function handleTranslate() {
         targetLang: 'zh',
         displayMode: 'panel',
         selectedPresets: [],
-        customPrompt: ''
+        customPrompt: '',
+        model: 'deepseek-v4-flash'
       });
     }
   });
@@ -891,6 +893,7 @@ async function handleTranslate() {
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
       customPrompt: settings.customPrompt,
+      model: settings.model,
       // Request accepted: the button moves to the blue "reasoning"
       // state until the first token arrives (DeepSeek pre-fill).
       thinkingType: settings.thinkingType

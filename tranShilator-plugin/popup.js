@@ -5,6 +5,8 @@
 document.addEventListener('DOMContentLoaded', () => {
   const backendUrlInput = document.getElementById('backendUrl');
   const apiKeyInput = document.getElementById('apiKey');
+  const modelSelect = document.getElementById('model');
+  const modelStatus = document.getElementById('modelStatus');
   const targetLangSelect = document.getElementById('targetLang');
   const thinkingTypeSelect = document.getElementById('thinkingType');
   const displayModeSelect = document.getElementById('displayMode');
@@ -27,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let selectedPresets = [];
+  let savedModel = '';
+  const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 
   // ─── Check current tab on open ──────────────────────────
 
@@ -47,10 +51,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Load saved settings ─────────────────────────────────
 
   chrome.storage.sync.get(
-    ['backendUrl', 'apiKey', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
+    ['backendUrl', 'apiKey', 'model', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
     (items) => {
       if (items.backendUrl) backendUrlInput.value = items.backendUrl;
       if (items.apiKey) apiKeyInput.value = items.apiKey;
+      savedModel = items.model || '';
       if (items.targetLang) targetLangSelect.value = items.targetLang;
       if (items.thinkingType) thinkingTypeSelect.value = items.thinkingType;
       if (items.displayMode) displayModeSelect.value = items.displayMode;
@@ -58,9 +63,62 @@ document.addEventListener('DOMContentLoaded', () => {
       if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
       autoTranslateCheckbox.checked = items.autoTranslate !== false;
 
+      renderModelOptions(null);
+      loadUserModel();
       loadPresets();
     }
   );
+
+  function renderModelOptions(profile) {
+    const configuredModel = profile && profile.model ? profile.model : '';
+    const customProvider = profile && profile.provider && profile.provider !== 'deepseek';
+    let models = customProvider && configuredModel
+      ? [configuredModel]
+      : [...defaultModels];
+    if (!customProvider && configuredModel && !models.includes(configuredModel)) {
+      models.unshift(configuredModel);
+    }
+    modelSelect.innerHTML = '';
+    models.forEach((model) => {
+      const option = document.createElement('option');
+      option.value = model;
+      option.textContent = model;
+      modelSelect.appendChild(option);
+    });
+    if (models.includes(savedModel)) {
+      modelSelect.value = savedModel;
+    } else if (configuredModel && models.includes(configuredModel)) {
+      modelSelect.value = configuredModel;
+      savedModel = configuredModel;
+    } else if (models.length) {
+      modelSelect.value = models[0];
+    }
+    if (modelStatus) {
+      modelStatus.textContent = customProvider && configuredModel
+        ? '已加载个人页面配置的模型'
+        : configuredModel ? '可选择个人配置模型或 DeepSeek 模型' : '';
+    }
+  }
+
+  async function loadUserModel() {
+    const backendUrl = backendUrlInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    if (!backendUrl || !apiKey) {
+      renderModelOptions(null);
+      return;
+    }
+    try {
+      const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/auth/profile', {
+        headers: { 'X-API-Key': apiKey },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) throw new Error('profile ' + response.status);
+      renderModelOptions(await response.json());
+    } catch (e) {
+      renderModelOptions(null);
+      if (modelStatus) modelStatus.textContent = '无法读取个人模型配置';
+    }
+  }
 
   // ─── Fetch presets from backend ─────────────────────────
 
@@ -125,6 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
+      model: modelSelect.value,
       targetLang: targetLangSelect.value,
       thinkingType: thinkingTypeSelect.value,
       displayMode: displayModeSelect.value,
@@ -153,8 +212,16 @@ document.addEventListener('DOMContentLoaded', () => {
   [backendUrlInput, apiKeyInput, targetLangSelect, thinkingTypeSelect, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
     el.addEventListener('change', () => saveSettings(false));
   });
+  modelSelect.addEventListener('change', () => {
+    savedModel = modelSelect.value;
+    saveSettings(false);
+  });
 
-  backendUrlInput.addEventListener('change', loadPresets);
+  backendUrlInput.addEventListener('change', () => {
+    loadUserModel();
+    loadPresets();
+  });
+  apiKeyInput.addEventListener('change', loadUserModel);
 
   // ─── Inject content script if needed ────────────────────
 
