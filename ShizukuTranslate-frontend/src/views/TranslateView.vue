@@ -257,7 +257,7 @@ async function translate() {
 <style scoped>
 .translate-layout {
   display: grid;
-  grid-template-columns: minmax(0, 180px) minmax(0, 800px) minmax(0, 180px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 800px) minmax(0, 1fr);
   align-items: start;
   justify-content: center;
   gap: 16px;
@@ -280,7 +280,7 @@ textarea {
   box-sizing: border-box;
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 760px) {
   .translate-layout {
     grid-template-columns: minmax(0, 800px);
   }
