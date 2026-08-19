@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let selectedPresets = [];
   let savedModel = '';
+  let savedModelProfileId = '';
   const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 
   // ─── Check current tab on open ──────────────────────────
@@ -51,11 +52,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Load saved settings ─────────────────────────────────
 
   chrome.storage.sync.get(
-    ['backendUrl', 'apiKey', 'model', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
+    ['backendUrl', 'apiKey', 'model', 'modelProfileId', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
     (items) => {
       if (items.backendUrl) backendUrlInput.value = items.backendUrl;
       if (items.apiKey) apiKeyInput.value = items.apiKey;
       savedModel = items.model || '';
+      savedModelProfileId = items.modelProfileId ? 'profile:' + String(items.modelProfileId) : (items.model ? 'site:' + items.model : '');
       if (items.targetLang) targetLangSelect.value = items.targetLang;
       if (items.thinkingType) thinkingTypeSelect.value = items.thinkingType;
       if (items.displayMode) displayModeSelect.value = items.displayMode;
@@ -69,34 +71,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   );
 
-  function renderModelOptions(profile) {
-    const configuredModel = profile && profile.model ? profile.model : '';
-    const customProvider = profile && profile.provider && profile.provider !== 'deepseek';
-    let models = customProvider && configuredModel
-      ? [configuredModel]
-      : [...defaultModels];
-    if (!customProvider && configuredModel && !models.includes(configuredModel)) {
-      models.unshift(configuredModel);
-    }
+  function renderModelOptions(profiles) {
+    const profileList = Array.isArray(profiles) ? profiles : [];
+    const models = [
+      ...defaultModels.map(model => ({ key: 'site:' + model, profileId: '0', model, label: '站方 DeepSeek · ' + model })),
+      ...profileList.map(profile => ({
+        key: 'profile:' + String(profile.id),
+        profileId: String(profile.id),
+        model: profile.model,
+        label: profile.name + ' · ' + profile.model
+      }))
+    ];
     modelSelect.innerHTML = '';
-    models.forEach((model) => {
+    models.forEach((item) => {
       const option = document.createElement('option');
-      option.value = model;
-      option.textContent = model;
+      option.value = item.key;
+      option.dataset.model = item.model;
+      option.dataset.profileId = item.profileId;
+      option.textContent = item.label;
       modelSelect.appendChild(option);
     });
-    if (models.includes(savedModel)) {
-      modelSelect.value = savedModel;
-    } else if (configuredModel && models.includes(configuredModel)) {
-      modelSelect.value = configuredModel;
-      savedModel = configuredModel;
-    } else if (models.length) {
-      modelSelect.value = models[0];
+    const selected = models.find(item => item.key === savedModelProfileId)
+      || models.find(item => !savedModelProfileId && item.model === savedModel)
+      || models[0];
+    if (selected) {
+      modelSelect.value = selected.key;
+      savedModel = selected.model;
+      savedModelProfileId = selected.key;
     }
     if (modelStatus) {
-      modelStatus.textContent = customProvider && configuredModel
-        ? '已加载个人页面配置的模型'
-        : configuredModel ? '可选择个人配置模型或 DeepSeek 模型' : '';
+      modelStatus.textContent = profileList.length
+        ? '已加载个人页面配置的模型，可在此选择'
+        : '';
     }
   }
 
@@ -108,11 +114,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/auth/profile', {
+      const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/auth/model-profiles', {
         headers: { 'X-API-Key': apiKey },
         signal: AbortSignal.timeout(10000)
       });
-      if (!response.ok) throw new Error('profile ' + response.status);
+      if (!response.ok) throw new Error('model profiles ' + response.status);
       renderModelOptions(await response.json());
     } catch (e) {
       renderModelOptions(null);
@@ -183,7 +189,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
-      model: modelSelect.value,
+      model: modelSelect.options[modelSelect.selectedIndex]?.dataset?.model || savedModel,
+      modelProfileId: modelSelect.options[modelSelect.selectedIndex]?.dataset?.profileId || '0',
       targetLang: targetLangSelect.value,
       thinkingType: thinkingTypeSelect.value,
       displayMode: displayModeSelect.value,
@@ -213,7 +220,9 @@ document.addEventListener('DOMContentLoaded', () => {
     el.addEventListener('change', () => saveSettings(false));
   });
   modelSelect.addEventListener('change', () => {
-    savedModel = modelSelect.value;
+    const selected = modelSelect.options[modelSelect.selectedIndex];
+    savedModelProfileId = modelSelect.value;
+    savedModel = selected?.dataset?.model || modelSelect.value;
     saveSettings(false);
   });
 

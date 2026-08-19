@@ -801,14 +801,16 @@ async function handleTranslate() {
   // Load settings
   const settings = await new Promise((resolve) => {
     try {
-      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType', 'model'], (items) => {
+      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType', 'model', 'modelProfileId'], (items) => {
         resolve({
           targetLang: items.targetLang || 'zh',
           displayMode: items.displayMode || 'panel',
           selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
           customPrompt: items.customPrompt || '',
           thinkingType: items.thinkingType || 'disabled',
-          model: items.model || 'deepseek-v4-flash'
+          model: items.model || 'deepseek-v4-flash',
+          modelProfileId: items.modelProfileId !== null && items.modelProfileId !== undefined && items.modelProfileId !== ''
+            ? Number(items.modelProfileId) : 0
         });
       });
     } catch (e) {
@@ -819,7 +821,8 @@ async function handleTranslate() {
         displayMode: 'panel',
         selectedPresets: [],
         customPrompt: '',
-        model: 'deepseek-v4-flash'
+        model: 'deepseek-v4-flash',
+        modelProfileId: 0
       });
     }
   });
@@ -894,6 +897,7 @@ async function handleTranslate() {
       selectedPresets: settings.selectedPresets,
       customPrompt: settings.customPrompt,
       model: settings.model,
+      modelProfileId: settings.modelProfileId,
       // Request accepted: the button moves to the blue "reasoning"
       // state until the first token arrives (DeepSeek pre-fill).
       thinkingType: settings.thinkingType

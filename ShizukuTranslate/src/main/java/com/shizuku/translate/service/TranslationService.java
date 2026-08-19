@@ -64,7 +64,7 @@ public class TranslationService {
                 request.getPresets(),
                 request.getCustomPrompt()
         );
-        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType());
+        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
 
         DeepSeekResult result = aiModelClient.chat(systemPrompt, request.getSourceText(), config);
         String translated = result.getContent();
@@ -126,7 +126,7 @@ public class TranslationService {
                 request.getCustomPrompt()
         );
 
-        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType());
+        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
         String cacheKey = buildCacheKey(user.getId(), config, systemPrompt, request.getSourceText());
         TranslationCache cached = cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
         if (cached != null) {

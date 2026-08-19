@@ -78,7 +78,51 @@ public class AuthController {
         return ResponseEntity.ok(data);
     }
 
-    /** Save the user's model protocol, endpoint, and default model. */
+    @GetMapping("/model-profiles")
+    public ResponseEntity<?> modelProfiles(Principal principal, HttpServletRequest request) {
+        boolean pluginRequest = StringUtils.hasText(request.getHeader("X-API-Key"))
+                || StringUtils.hasText(request.getParameter("api_key"));
+        return ResponseEntity.ok(userService.listModelProfiles(principal.getName()).stream()
+                .map(profile -> modelProfileResponse(profile, pluginRequest))
+                .toList());
+    }
+
+    @PostMapping("/model-profiles")
+    public ResponseEntity<?> createModelProfile(Principal principal, @RequestBody Map<String, String> body) {
+        var profile = userService.createModelProfile(principal.getName(), body.get("name"), body.get("provider"),
+                body.get("baseUrl"), body.get("model"), body.get("apiKey"));
+        return ResponseEntity.ok(modelProfileResponse(profile, false));
+    }
+
+    @PutMapping("/model-profiles/{id}")
+    public ResponseEntity<?> updateModelProfile(@PathVariable Long id, Principal principal,
+                                                 @RequestBody Map<String, String> body) {
+        boolean clearApiKey = "true".equalsIgnoreCase(body.get("clearApiKey"));
+        var profile = userService.updateModelProfile(principal.getName(), id, body.get("name"), body.get("provider"),
+                body.get("baseUrl"), body.get("model"), body.get("apiKey"), clearApiKey);
+        return ResponseEntity.ok(modelProfileResponse(profile, false));
+    }
+
+    @DeleteMapping("/model-profiles/{id}")
+    public ResponseEntity<?> deleteModelProfile(@PathVariable Long id, Principal principal) {
+        userService.deleteModelProfile(principal.getName(), id);
+        return ResponseEntity.ok(Map.of("message", "模型配置已删除"));
+    }
+
+    private Map<String, Object> modelProfileResponse(com.shizuku.translate.entity.AiModelProfile profile,
+                                                      boolean pluginRequest) {
+        var data = new java.util.LinkedHashMap<String, Object>();
+        data.put("id", profile.getId());
+        data.put("name", profile.getName());
+        data.put("provider", profile.getProvider());
+        data.put("baseUrl", profile.getBaseUrl() == null ? "" : profile.getBaseUrl());
+        data.put("model", profile.getModel());
+        data.put("hasApiKey", profile.getApiKey() != null && !profile.getApiKey().isBlank());
+        data.put("apiKeyPreview", pluginRequest ? "" : UserService.maskApiKey(profile.getApiKey()));
+        return data;
+    }
+
+    /** Save the legacy single model configuration for old clients. */
     @PutMapping("/profile/model")
     public ResponseEntity<?> updateModelConfig(Principal principal, @RequestBody Map<String, String> body) {
         userService.updateAiModelConfig(principal.getName(), body.get("provider"), body.get("baseUrl"), body.get("model"), body.get("apiKey"));

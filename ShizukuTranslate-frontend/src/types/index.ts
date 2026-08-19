@@ -1,6 +1,7 @@
 export interface TranslateRequest {
   sourceText: string
   model?: string
+  modelProfileId?: number | null
   customPrompt?: string
   presets?: string[]
 }

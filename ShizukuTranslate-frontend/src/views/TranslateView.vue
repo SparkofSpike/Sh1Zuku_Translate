@@ -30,8 +30,8 @@
     ></textarea>
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:16px;">
-      <select v-model="model" style="width:auto; min-width:200px;">
-        <option v-for="option in modelOptions" :key="option" :value="option">{{ option }}</option>
+      <select v-model="selectedModelKey" @change="handleModelChange" style="width:auto; min-width:240px;">
+        <option v-for="option in modelOptions" :key="option.key" :value="option.key">{{ option.label }}</option>
       </select>
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
@@ -94,7 +94,12 @@ import AnnouncementPanel from '../components/AnnouncementPanel.vue'
 
 const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
-const modelOptions = ref(['deepseek-v4-flash', 'deepseek-v4-pro'])
+const modelProfileId = ref<number | null>(readSelectedProfileId())
+const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-v4-flash'))
+const modelOptions = ref([
+  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
+  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' }
+])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
@@ -130,16 +135,24 @@ onMounted(async () => {
     console.error('无法加载预设列表', e)
   }
   try {
-    const profile = await api.get('/auth/profile')
-    if (profile.data.provider !== 'deepseek' && profile.data.model) {
-      modelOptions.value = [profile.data.model]
-      model.value = profile.data.model
-    } else if (profile.data.model) {
-      model.value = profile.data.model
-      if (!modelOptions.value.includes(profile.data.model)) {
-        modelOptions.value.unshift(profile.data.model)
-      }
+    const res = await api.get('/auth/model-profiles')
+    const profiles = res.data || []
+    modelOptions.value = [
+      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
+      { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' },
+      ...profiles.map((item: any) => ({
+        key: `profile:${item.id}`,
+        id: item.id,
+        model: item.model,
+        label: `${item.name} · ${item.model}`
+      }))
+    ]
+    if (!localStorage.getItem('modelSelection') && profiles.length) {
+      selectedModelKey.value = 'profile:' + profiles[0].id
+    } else if (!modelOptions.value.some(option => option.key === selectedModelKey.value)) {
+      selectedModelKey.value = 'site:deepseek-v4-flash'
     }
+    handleModelChange()
   } catch (e) {
     console.error('无法加载个人模型配置', e)
   }
@@ -150,6 +163,21 @@ onMounted(async () => {
     console.error('无法加载公告列表', e)
   }
 })
+
+function readSelectedProfileId(): number | null {
+  const value = localStorage.getItem('modelProfileId')
+  return value ? Number(value) : 0
+}
+
+function handleModelChange() {
+  const selected = modelOptions.value.find(option => option.key === selectedModelKey.value)
+  if (!selected) return
+  model.value = selected.model
+  modelProfileId.value = selected.id === null ? 0 : selected.id
+  localStorage.setItem('modelSelection', selected.key)
+  if (selected.id === null) localStorage.setItem('modelProfileId', '0')
+  else localStorage.setItem('modelProfileId', String(selected.id))
+}
 
 function handleImageFile(file: File) {
   ocrError.value = ''
@@ -208,6 +236,7 @@ async function translate() {
     const ctrl = translateStream(
       sourceText.value,
       model.value,
+      modelProfileId.value,
       customPrompt.value || undefined,
       selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
       (token: string) => {
@@ -254,6 +283,7 @@ async function translate() {
       const res = await api.post<TranslateResponse>('/translate', {
         sourceText: sourceText.value,
         model: model.value,
+        modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined,
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
       }, { cancelToken: source.token })
