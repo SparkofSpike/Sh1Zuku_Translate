@@ -1,10 +1,5 @@
 <template>
-  <div class="translate-layout">
-    <AnnouncementPanel
-      v-if="leftAnnouncements.length"
-      class="announcement-left"
-      :announcements="leftAnnouncements"
-    />
+  <div class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
     <div class="card translation-card">
       <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
@@ -79,15 +74,15 @@
     </div>
 
     <AnnouncementPanel
-      v-if="rightAnnouncements.length"
+      v-if="announcements.length"
       class="announcement-right"
-      :announcements="rightAnnouncements"
+      :announcements="announcements"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
@@ -104,8 +99,6 @@ const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
 const announcements = ref<Announcement[]>([])
-const leftAnnouncements = computed(() => announcements.value.filter((_, index) => index % 2 === 0))
-const rightAnnouncements = computed(() => announcements.value.filter((_, index) => index % 2 === 1))
 
 const result = ref<TranslateResponse | null>(null)
 const error = ref('')
@@ -265,19 +258,19 @@ async function translate() {
 <style scoped>
 .translate-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 800px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 800px);
+  justify-content: center;
   align-items: start;
   gap: 16px;
   width: 100%;
 }
 
-.announcement-left {
-  grid-column: 1;
-  grid-row: 1;
+.translate-layout.has-announcements {
+  grid-template-columns: minmax(0, 800px) minmax(180px, 240px);
 }
 
 .translation-card {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
   min-width: 0;
   width: 100%;
@@ -286,7 +279,7 @@ async function translate() {
 }
 
 .announcement-right {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
 }
 
