@@ -20,6 +20,12 @@ ocr-worker/.venv/
 logs/
 deploy_package/
 
+# ===== Windows updater build output =====
+/CheckUpdate.exe
+/CheckUpdate-publish/
+/bin/
+/obj/
+
 # ===== IDE =====
 .idea/
 .vscode/

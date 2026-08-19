@@ -6,6 +6,152 @@
 
 const PNT_BG_VERSION = '1.1.0';
 console.log('[PNT] background.js v' + PNT_BG_VERSION + ' loaded');
+
+// ─── Automatic update checks ────────────────────────────────
+// Unpacked/non-store extensions cannot replace their own files. We still
+// check releases in the background so the user does not have to remember
+// to look for updates, then show a badge + one OS notification per release.
+const UPDATE_ALARM = 'pnt-update-check';
+const UPDATE_PERIOD_MINUTES = 360; // check at most four times per day
+const UPDATE_REPO = 'SparkofSpike/Sh1Zuku_Translate';
+const UPDATE_API_URL = 'https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest';
+
+let updateCheckInFlight = null;
+
+function currentExtensionVersion() {
+  return String(chrome.runtime.getManifest().version || '0.0.0');
+}
+
+function normalizeVersion(version) {
+  const value = String(version || '')
+    .replace(/^v/i, '')
+    .split('+')[0]
+    .split('-')[0]
+    .trim();
+  return /^[0-9]+(?:[.][0-9]+)*$/.test(value) ? value : '';
+}
+
+function compareVersions(a, b) {
+  const pa = normalizeVersion(a).split('.').map(Number);
+  const pb = normalizeVersion(b).split('.').map(Number);
+  if (!pa[0] || !pb[0]) return 0;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const left = pa[i] || 0;
+    const right = pb[i] || 0;
+    if (left !== right) return left - right;
+  }
+  return 0;
+}
+
+function getUpdateState() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get('pntUpdate', (items) => resolve(items.pntUpdate || null));
+  });
+}
+
+function setUpdateState(state) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ pntUpdate: state }, resolve);
+  });
+}
+
+function setUpdateBadge(available) {
+  return new Promise((resolve) => {
+    chrome.action.setBadgeText({ text: available ? '!' : '' }, () => {
+      chrome.action.setBadgeBackgroundColor({ color: '#1a73e8' }, resolve);
+    });
+  });
+}
+
+async function checkForUpdates({ notify = true } = {}) {
+  if (updateCheckInFlight) return updateCheckInFlight;
+
+  updateCheckInFlight = (async () => {
+    const current = normalizeVersion(currentExtensionVersion()) || '0.0.0';
+    try {
+      const response = await fetch(UPDATE_API_URL, {
+        headers: { 'Accept': 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+
+      const release = await response.json();
+      const latest = normalizeVersion(release.tag_name);
+      if (!latest) throw new Error('GitHub release has no semantic version tag');
+
+      const available = compareVersions(latest, current) > 0;
+      const previous = await getUpdateState();
+      const state = {
+        available,
+        currentVersion: current,
+        latestVersion: latest,
+        releaseUrl: release.html_url || ('https://github.com/' + UPDATE_REPO + '/releases/latest'),
+        checkedAt: Date.now(),
+        lastNotifiedVersion: previous?.lastNotifiedVersion || ''
+      };
+      await setUpdateBadge(available);
+
+      if (available && notify && state.lastNotifiedVersion !== latest) {
+        state.lastNotifiedVersion = latest;
+        await setUpdateState(state);
+        chrome.notifications.create('pnt-update-' + latest.replace(/[^0-9.]/g, '-'), {
+          type: 'basic',
+          iconUrl: 'icons/icon128.png',
+          title: 'Pixiv 小说翻译有新版本',
+          message: '发现版本 ' + latest + '，点击查看下载和更新说明。'
+        });
+      } else {
+        await setUpdateState(state);
+      }
+      return state;
+    } catch (error) {
+      const state = {
+        available: false,
+        currentVersion: current,
+        latestVersion: '',
+        releaseUrl: '',
+        checkedAt: Date.now(),
+        error: error?.message || 'network error'
+      };
+      await setUpdateState(state);
+      return state;
+    } finally {
+      updateCheckInFlight = null;
+    }
+  })();
+
+  return updateCheckInFlight;
+}
+
+function ensureUpdateAlarm() {
+  chrome.alarms.get(UPDATE_ALARM, (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: UPDATE_PERIOD_MINUTES });
+    }
+  });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureUpdateAlarm();
+  // Do not show a notification immediately after installation/update.
+  checkForUpdates({ notify: false });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureUpdateAlarm();
+  checkForUpdates();
+});
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  if (!notificationId.startsWith('pnt-update-')) return;
+  getUpdateState().then((state) => {
+    if (state?.releaseUrl) chrome.tabs.create({ url: state.releaseUrl });
+  });
+  chrome.notifications.clear(notificationId);
+});
+
+ensureUpdateAlarm();
+
 // One AbortController per tab: translating in two tabs at once must
 // not clobber each other's cancellation handle.
 const activeControllers = new Map();
@@ -22,6 +168,8 @@ let keepaliveRefs = 0;
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) {
     // No-op: firing the alarm itself resets the SW idle timer.
+  } else if (alarm.name === UPDATE_ALARM) {
+    checkForUpdates();
   }
 });
 
@@ -88,6 +236,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       break;
     }
+
+    case 'GET_UPDATE_STATUS':
+      getUpdateState().then((state) => {
+        sendResponse({ success: true, update: state });
+      });
+      return true;
+
+    case 'CHECK_FOR_UPDATES':
+      checkForUpdates({ notify: false }).then((state) => {
+        sendResponse({ success: true, update: state });
+      });
+      return true;
 
     case 'PING':
       sendResponse({ pong: true });

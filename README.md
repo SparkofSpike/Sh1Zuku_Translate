@@ -68,11 +68,23 @@ Translation runs as an SSE stream through the site backend, authenticated with a
 
 ### Installing the extension
 
-The extension is distributed from this repository (not browser stores). Browsers forbid non-store extensions from replacing their own code, so there is no silent auto-update — instead you get a scripted one-click install/update plus an in-extension update check:
+The extension is distributed from this repository (not browser stores). Browsers forbid non-store extensions from silently replacing their own code, so the extension uses background update detection plus a one-click Windows updater:
 
-- **One-click install / update (Windows):** download the latest release zip (or clone the repo) and double-click `install.cmd`. It downloads the newest release, extracts it to `%LOCALAPPDATA%\PixivNovelTranslator\`, and prints the next steps. Re-running it later updates the extension in place.
+- **Automatic update detection:** the background service worker checks the latest GitHub release when the browser starts and every 6 hours. A new-version badge and one OS notification are shown when an update is found.
+- **One-click updater (`CheckUpdate.exe`):** download `CheckUpdate.exe` from the latest Release and double-click it. It automatically checks the version, downloads the matching extension zip, verifies the package when GitHub provides a SHA-256 digest, installs it to `%LOCALAPPDATA%\PixivNovelTranslator\pixiv-novel-translator\`, keeps a backup of the previous copy, and opens the extension management page.
+- **Command-line options:** `CheckUpdate.exe --chrome` opens Chrome's extension page; `CheckUpdate.exe --path <folder>` updates a custom unpacked-extension directory; `--force` reinstalls the same version; `--no-pause` is useful in scripts. `install.cmd` automatically uses `CheckUpdate.exe` when it is beside the script, and otherwise falls back to PowerShell.
 - **Manual install:** open `edge://extensions` (or `chrome://extensions`), enable **Developer mode**, click **Load unpacked**, and select the `pixiv-novel-translator/` folder.
-- **Checking for updates:** the popup's **检查更新** button compares the installed version against the latest GitHub release and links to the download page. Apply the update by re-running `install.cmd`, then click the reload icon on the extension card in `edge://extensions` and refresh the Pixiv page.
+- **Applying an update:** click the notification or the popup's **检查更新** result to open the release page, run `CheckUpdate.exe`, then click the reload icon on the extension card in `edge://extensions` and refresh the Pixiv page.
+
+## Building the Windows updater
+
+The repository includes a self-contained .NET 8 updater. On Windows with the .NET 8 SDK installed:
+
+```powershell
+dotnet publish CheckUpdate.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o CheckUpdate-publish
+```
+
+The resulting `CheckUpdate-publish/CheckUpdate.exe` can be distributed beside `install.cmd` or uploaded as a Release asset. It does not require .NET to be installed on the user's machine.
 
 ## Getting Started
 
@@ -161,7 +173,9 @@ Sh1Zuku_Translate/
 │   ├── config.py               # Environment-based configuration
 │   ├── ocr_server.py           # Flask entry point (port 5557)
 │   └── ocr_service.py          # PaddleOCR wrapper
-└── pixiv-novel-translator/     # Chrome/Edge browser extension
+├── pixiv-novel-translator/     # Chrome/Edge browser extension
+├── CheckUpdate.cs              # Standalone Windows updater source
+└── CheckUpdate.csproj          # Self-contained CheckUpdate.exe build
 ```
 
 ## Configuration
