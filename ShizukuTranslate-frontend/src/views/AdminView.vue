@@ -64,8 +64,29 @@
     <section class="card admin-card announcement-section">
       <h3 class="section-title">发布公告</h3>
       <input v-model.trim="title" type="text" maxlength="100" placeholder="公告标题" />
-      <textarea v-model="content" rows="5" placeholder="公告内容"></textarea>
-      <p class="markdown-hint">支持 Markdown：例如 <code>**加粗**</code>、<code>[链接](https://example.com)</code>、列表和代码块。</p>
+      <div class="markdown-editor">
+        <div class="markdown-tabs" role="tablist" aria-label="公告内容编辑模式">
+          <button
+            type="button"
+            class="markdown-tab"
+            :class="{ active: editorMode === 'write' }"
+            :aria-selected="editorMode === 'write'"
+            role="tab"
+            @click="editorMode = 'write'"
+          >编辑</button>
+          <button
+            type="button"
+            class="markdown-tab"
+            :class="{ active: editorMode === 'preview' }"
+            :aria-selected="editorMode === 'preview'"
+            role="tab"
+            @click="editorMode = 'preview'"
+          >预览</button>
+        </div>
+        <textarea v-if="editorMode === 'write'" v-model="content" rows="5" placeholder="公告内容"></textarea>
+        <div v-else-if="content.trim()" class="announcement-markdown markdown-preview" v-html="renderMarkdown(content)"></div>
+        <p v-else class="markdown-preview-empty">暂无内容可预览</p>
+      </div>
       <button @click="publish" :disabled="publishing">{{ publishing ? '发布中...' : '发布公告' }}</button>
       <p v-if="success" class="success">{{ success }}</p>
 
@@ -125,6 +146,7 @@ const detailLoading = ref(false)
 const error = ref('')
 const title = ref('')
 const content = ref('')
+const editorMode = ref('write')
 const announcements = ref([])
 const loading = ref(true)
 const publishing = ref(false)
@@ -171,7 +193,7 @@ async function publish() {
   error.value = ''
   try {
     await api.post('/admin/announcements', { title: title.value, content: content.value })
-    title.value = ''; content.value = ''; success.value = '公告发布成功'
+    title.value = ''; content.value = ''; editorMode.value = 'write'; success.value = '公告发布成功'
     await loadAnnouncements()
   } catch (e) { error.value = e.response?.data?.error || '发布失败' }
   finally { publishing.value = false }
@@ -226,7 +248,7 @@ h3 { font-size: 16px; font-weight: 600; }
 .subheading { margin: 24px 0 10px; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; font-size: 13px; } th, td { padding: 10px 8px; border-bottom: 1px solid #eee; text-align: left; white-space: nowrap; } th { color: #777; font-size: 12px; font-weight: 500; } td small { display: block; color: #999; font-size: 11px; }
 .btn-refresh, .btn-detail { background: #fff; color: #333; border-color: #bbb; }.btn-refresh:hover, .btn-detail:hover { background: #eee; }
-.announcement-section textarea { resize: vertical; width: 100%; margin: 12px 0 4px; }.markdown-hint { margin: 0 0 12px; color: #777; font-size: 12px; }.markdown-hint code { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; }.section-title { margin: 0 0 12px; }.announcement-list { display: flex; flex-direction: column; }.announcement-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }.announcement-content { min-width: 0; flex: 1; }.announcement-item h4 { margin: 0; font-size: 15px; }.announcement-item time { color: #999; font-size: 12px; }.announcement-markdown { margin: 7px 0 0; color: #555; overflow-wrap: anywhere; }.announcement-markdown :deep(p), .announcement-markdown :deep(ul), .announcement-markdown :deep(ol), .announcement-markdown :deep(blockquote), .announcement-markdown :deep(pre) { margin: 0 0 7px; }.announcement-markdown :deep(p:last-child), .announcement-markdown :deep(ul:last-child), .announcement-markdown :deep(ol:last-child), .announcement-markdown :deep(blockquote:last-child), .announcement-markdown :deep(pre:last-child) { margin-bottom: 0; }.announcement-markdown :deep(ul), .announcement-markdown :deep(ol) { padding-left: 20px; }.announcement-markdown :deep(blockquote) { padding-left: 10px; border-left: 3px solid #ddd; color: #777; }.announcement-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; font-size: 12px; }.announcement-markdown :deep(pre) { padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: #f5f5f5; }.announcement-markdown :deep(pre code) { padding: 0; background: transparent; }.announcement-markdown :deep(a) { color: #444; text-decoration: underline; }
+.markdown-editor { margin: 12px 0 12px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }.markdown-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid #eee; background: #fafafa; }.markdown-tab { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #666; font-size: 13px; }.markdown-tab:hover { background: #f0f0f0; color: #222; }.markdown-tab.active { border-bottom-color: #222; color: #222; font-weight: 600; }.markdown-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; margin: 0; border: 0; border-radius: 0; resize: vertical; }.announcement-markdown.markdown-preview { min-height: 140px; margin: 0; padding: 10px 12px; }.markdown-preview-empty { min-height: 140px; margin: 0; padding: 10px 12px; color: #999; font-size: 13px; }.section-title { margin: 0 0 12px; }.announcement-list { display: flex; flex-direction: column; }.announcement-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }.announcement-content { min-width: 0; flex: 1; }.announcement-item h4 { margin: 0; font-size: 15px; }.announcement-item time { color: #999; font-size: 12px; }.announcement-markdown { margin: 7px 0 0; color: #555; overflow-wrap: anywhere; }.announcement-markdown :deep(p), .announcement-markdown :deep(ul), .announcement-markdown :deep(ol), .announcement-markdown :deep(blockquote), .announcement-markdown :deep(pre) { margin: 0 0 7px; }.announcement-markdown :deep(p:last-child), .announcement-markdown :deep(ul:last-child), .announcement-markdown :deep(ol:last-child), .announcement-markdown :deep(blockquote:last-child), .announcement-markdown :deep(pre:last-child) { margin-bottom: 0; }.announcement-markdown :deep(ul), .announcement-markdown :deep(ol) { padding-left: 20px; }.announcement-markdown :deep(blockquote) { padding-left: 10px; border-left: 3px solid #ddd; color: #777; }.announcement-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; font-size: 12px; }.announcement-markdown :deep(pre) { padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: #f5f5f5; }.announcement-markdown :deep(pre code) { padding: 0; background: transparent; }.announcement-markdown :deep(a) { color: #444; text-decoration: underline; }
 .success { color: #2b8a3e; }.error { color: #e03131; }.detail-summary { display: flex; gap: 18px; margin: 14px 0; color: #777; font-size: 13px; }.detail-summary strong { color: #222; font-size: 20px; }.log-table { max-height: 390px; overflow-y: auto; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.42); }.modal { width: min(900px, 100%); max-height: calc(100vh - 40px); overflow: auto; margin: 0; box-shadow: 0 16px 50px rgba(0,0,0,.25); }
 @media (max-width: 720px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.charts-grid { grid-template-columns: 1fr; }.model-row { grid-template-columns: 1fr 1.2fr auto; }.announcement-item { flex-direction: column; gap: 8px; } }
