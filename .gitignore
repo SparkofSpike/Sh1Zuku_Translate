@@ -22,6 +22,9 @@ deploy_package/
 
 # ===== Windows updater build output =====
 /CheckUpdate.exe
+/tranShilator-plugin/CheckUpdate.exe
+/tranShilator-plugin/updatechecking/bin/
+/tranShilator-plugin/updatechecking/obj/
 /CheckUpdate-publish/
 /bin/
 /obj/

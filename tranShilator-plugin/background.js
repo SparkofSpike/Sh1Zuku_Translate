@@ -4,7 +4,7 @@
 
 // ─── Active translations (per-tab, for cancellation) ─────────
 
-const PNT_BG_VERSION = '1.1.0';
+const PNT_BG_VERSION = '1.2.0';
 console.log('[PNT] background.js v' + PNT_BG_VERSION + ' loaded');
 
 // ─── Automatic update checks ────────────────────────────────

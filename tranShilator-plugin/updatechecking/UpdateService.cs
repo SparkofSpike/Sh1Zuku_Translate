@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
@@ -8,53 +7,47 @@ using System.Text.RegularExpressions;
 
 namespace PixivNovelTranslatorUpdater;
 
-internal static class Program
+internal sealed class UpdateService
 {
     private const string Repository = "SparkofSpike/Sh1Zuku_Translate";
     private const string ApiUrl = "https://api.github.com/repos/" + Repository + "/releases/latest";
     private const string ReleasePage = "https://github.com/" + Repository + "/releases/latest";
-    private const string ProductName = "Pixiv Novel Translator";
 
-    private static async Task<int> Main(string[] args)
+    public async Task<UpdateResult> RunAsync(UpdateOptions options, Action<string> log)
     {
-        var options = Options.Parse(args);
-        PrintHeader();
-
+        string? extensionDirectory = null;
+        string? currentVersion = null;
         try
         {
-            var extensionDirectory = ResolveExtensionDirectory(options.Path);
-            var currentVersion = ReadManifestVersion(extensionDirectory);
-            Console.WriteLine($"安装目录: {extensionDirectory}");
-            Console.WriteLine($"当前版本: {(currentVersion ?? "未安装")}");
-            Console.WriteLine();
+            extensionDirectory = ResolveExtensionDirectory(options.Path);
+            currentVersion = ReadManifestVersion(extensionDirectory);
+            log($"安装目录: {extensionDirectory}\n");
+            log($"当前版本: {(currentVersion ?? "未安装")}\n\n");
 
             using var client = CreateHttpClient();
-            Console.WriteLine("[1/4] 正在检查最新版本...");
+            log("[1/4] 正在检查最新版本...\n");
             var release = await GetLatestReleaseAsync(client);
-            Console.WriteLine($"最新版本: {release.Version}");
+            log($"最新版本: {release.Version}\n");
 
-            if (!options.Force && currentVersion is not null && CompareVersions(release.Version, currentVersion) <= 0)
+            if (!options.Force && currentVersion is not null
+                && CompareVersions(release.Version, currentVersion) <= 0)
             {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("已经是最新版本，无需更新。");
-                Console.ResetColor();
-                OpenExtensionsPage(options.Browser);
-                return Finish(options, 0);
+                log("已经是最新版本，无需更新。\n");
+                log("如需重新加载插件，请点击窗口中的“复制插件目录”按钮。\n");
+                return new UpdateResult(true, extensionDirectory, currentVersion, release.Version, null);
             }
 
             var zipPath = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}.zip");
             var stagingDirectory = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}");
             try
             {
-                Console.WriteLine();
-                Console.WriteLine("[2/4] 正在下载更新包...");
-                await DownloadAsync(client, release, zipPath);
-                VerifyDigest(zipPath, release.Digest);
+                log("\n[2/4] 正在下载更新包...\n");
+                await DownloadAsync(client, release, zipPath, log);
+                VerifyDigest(zipPath, release.Digest, log);
 
-                Console.WriteLine();
-                Console.WriteLine("[3/4] 正在校验并安装插件...");
+                log("\n[3/4] 正在校验并安装插件...\n");
                 var extractedDirectory = ExtractExtension(zipPath, stagingDirectory, release.Version);
-                InstallExtension(extractedDirectory, extensionDirectory);
+                InstallExtension(extractedDirectory, extensionDirectory, log);
             }
             finally
             {
@@ -62,36 +55,51 @@ internal static class Program
                 TryDeleteDirectory(stagingDirectory);
             }
 
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[4/4] 更新完成！");
-            Console.ResetColor();
-            Console.WriteLine($"插件位置: {extensionDirectory}");
-            Console.WriteLine();
-            Console.WriteLine("浏览器不会自动刷新加载解压缩的插件，接下来请在扩展管理页点击一次刷新按钮。");
-            OpenExtensionsPage(options.Browser);
-            return Finish(options, 0);
+            log("\n[4/4] 更新完成！\n");
+            log($"插件位置: {extensionDirectory}\n");
+            log("请点击窗口中的“复制插件目录”按钮，将目录粘贴到浏览器扩展管理页。\n");
+            return new UpdateResult(true, extensionDirectory, currentVersion, release.Version, null);
         }
         catch (Exception error)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine();
-            Console.WriteLine("更新失败: " + error.Message);
-            Console.ResetColor();
-            Console.WriteLine();
-            Console.WriteLine("如果插件正在使用，请先关闭 Pixiv 页面或浏览器后重试。");
-            return Finish(options, 1);
+            log($"\n更新失败: {error.Message}\n\n");
+            log("如果插件正在使用，请先关闭 Pixiv 页面或浏览器后重试。\n");
+            return new UpdateResult(false, extensionDirectory, currentVersion, null, error.Message);
         }
     }
 
-    private static void PrintHeader()
+    public static string ResolveExtensionDirectory(string? requestedPath)
     {
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("===============================================");
-        Console.WriteLine("  CheckUpdate - Pixiv Novel Translator 更新器");
-        Console.WriteLine("===============================================");
-        Console.ResetColor();
-        Console.WriteLine();
+        if (!string.IsNullOrWhiteSpace(requestedPath))
+        {
+            return Path.GetFullPath(Environment.ExpandEnvironmentVariables(requestedPath));
+        }
+
+        var updaterDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+        if (File.Exists(Path.Combine(updaterDirectory, "manifest.json")))
+        {
+            return updaterDirectory;
+        }
+
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var installed = Path.Combine(localAppData, "PixivNovelTranslator", "tranShilator-plugin");
+        if (File.Exists(Path.Combine(installed, "manifest.json"))) return installed;
+
+        var legacy = Path.Combine(localAppData, "PixivNovelTranslator", "pixiv-novel-translator");
+        if (File.Exists(Path.Combine(legacy, "manifest.json")))
+        {
+            try
+            {
+                Directory.Move(legacy, installed);
+                return installed;
+            }
+            catch
+            {
+                return legacy;
+            }
+        }
+
+        return installed;
     }
 
     private static HttpClient CreateHttpClient()
@@ -102,10 +110,7 @@ internal static class Program
             UseProxy = true,
             Proxy = WebRequest.DefaultWebProxy
         };
-        var client = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(60)
-        };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
         client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("CheckUpdate", "1.0"));
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return client;
@@ -124,11 +129,8 @@ internal static class Program
         using var document = await JsonDocument.ParseAsync(stream);
         var root = document.RootElement;
         var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
-        var version = NormalizeVersion(tag);
-        if (version is null)
-        {
-            throw new InvalidOperationException("最新 Release 没有合法的版本号标签，例如 v1.2.0。");
-        }
+        var version = NormalizeVersion(tag)
+            ?? throw new InvalidOperationException("最新 Release 没有合法的版本号标签，例如 v1.2.0。");
 
         var assets = new List<ReleaseAsset>();
         if (root.TryGetProperty("assets", out var assetsElement))
@@ -150,18 +152,26 @@ internal static class Program
         }
 
         var zip = assets.FirstOrDefault(asset =>
+            Regex.IsMatch(asset.Name, @"^tranShilator-plugin-.*\.zip$", RegexOptions.IgnoreCase));
+        zip ??= assets.FirstOrDefault(asset =>
             Regex.IsMatch(asset.Name, @"^pixiv-novel-translator-.*\.zip$", RegexOptions.IgnoreCase));
+        zip ??= assets.FirstOrDefault(asset =>
+            string.Equals(asset.Name, "tranShilator-plugin.zip", StringComparison.OrdinalIgnoreCase));
         zip ??= assets.FirstOrDefault(asset =>
             string.Equals(asset.Name, "pixiv-novel-translator.zip", StringComparison.OrdinalIgnoreCase));
         zip ??= new ReleaseAsset(
-            "pixiv-novel-translator.zip",
-            $"https://github.com/{Repository}/releases/latest/download/pixiv-novel-translator.zip",
+            "tranShilator-plugin.zip",
+            $"https://github.com/{Repository}/releases/latest/download/tranShilator-plugin.zip",
             null);
 
         return new ReleaseInfo(version, zip);
     }
 
-    private static async Task DownloadAsync(HttpClient client, ReleaseInfo release, string outputPath)
+    private static async Task DownloadAsync(
+        HttpClient client,
+        ReleaseInfo release,
+        string outputPath,
+        Action<string> log)
     {
         using var response = await client.GetAsync(release.Asset.Url, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
@@ -181,21 +191,21 @@ internal static class Program
             downloaded += read;
             if (total is > 0)
             {
-                Console.Write($"\r  {downloaded / 1024d / 1024d:0.0} / {total.Value / 1024d / 1024d:0.0} MB ({downloaded * 100d / total.Value:0}%)");
+                log($"\r  {downloaded / 1024d / 1024d:0.0} / {total.Value / 1024d / 1024d:0.0} MB ({downloaded * 100d / total.Value:0}%)");
             }
             else
             {
-                Console.Write($"\r  已下载 {downloaded / 1024d / 1024d:0.0} MB");
+                log($"\r  已下载 {downloaded / 1024d / 1024d:0.0} MB");
             }
         }
-        Console.WriteLine();
+        log("\n");
     }
 
-    private static void VerifyDigest(string zipPath, string? digest)
+    private static void VerifyDigest(string zipPath, string? digest, Action<string> log)
     {
         if (string.IsNullOrWhiteSpace(digest))
         {
-            Console.WriteLine("  Release 未提供 SHA-256 摘要，将继续校验压缩包内容。");
+            log("  Release 未提供 SHA-256 摘要，将继续校验压缩包内容。\n");
             return;
         }
 
@@ -207,7 +217,7 @@ internal static class Program
         {
             throw new InvalidOperationException("更新包 SHA-256 校验失败，已停止安装。");
         }
-        Console.WriteLine("  SHA-256 校验通过。");
+        log("  SHA-256 校验通过。\n");
     }
 
     private static string ExtractExtension(string zipPath, string stagingDirectory, string expectedVersion)
@@ -227,10 +237,13 @@ internal static class Program
         }
         ZipFile.ExtractToDirectory(zipPath, stagingDirectory, overwriteFiles: true);
 
-        var direct = Path.Combine(stagingDirectory, "pixiv-novel-translator");
+        var direct = Path.Combine(stagingDirectory, "tranShilator-plugin");
+        var legacyDirect = Path.Combine(stagingDirectory, "pixiv-novel-translator");
         var manifestPath = File.Exists(Path.Combine(direct, "manifest.json"))
             ? Path.Combine(direct, "manifest.json")
-            : Directory.GetFiles(stagingDirectory, "manifest.json", SearchOption.AllDirectories).FirstOrDefault();
+            : File.Exists(Path.Combine(legacyDirect, "manifest.json"))
+                ? Path.Combine(legacyDirect, "manifest.json")
+                : Directory.GetFiles(stagingDirectory, "manifest.json", SearchOption.AllDirectories).FirstOrDefault();
         if (manifestPath is null)
         {
             throw new InvalidOperationException("更新包中没有找到 manifest.json。");
@@ -246,32 +259,56 @@ internal static class Program
         return extensionDirectory;
     }
 
-    private static void InstallExtension(string sourceDirectory, string targetDirectory)
+    private static void InstallExtension(string sourceDirectory, string targetDirectory, Action<string> log)
     {
         var parent = Path.GetDirectoryName(targetDirectory)!;
         Directory.CreateDirectory(parent);
         var backupDirectory = targetDirectory + ".backup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        string? updaterBackup = null;
+        var runningUpdater = Environment.ProcessPath;
+        var updaterInTarget = runningUpdater is not null
+            && File.Exists(runningUpdater)
+            && IsPathInside(runningUpdater, targetDirectory);
 
-        if (Directory.Exists(targetDirectory))
+        if (updaterInTarget)
         {
-            Directory.Move(targetDirectory, backupDirectory);
+            updaterBackup = Path.Combine(Path.GetTempPath(), $"pnt-updater-{Guid.NewGuid():N}.exe");
+            File.Copy(runningUpdater!, updaterBackup, overwrite: true);
         }
 
         try
         {
-            CopyDirectory(sourceDirectory, targetDirectory);
-        }
-        catch
-        {
-            TryDeleteDirectory(targetDirectory);
-            if (Directory.Exists(backupDirectory))
+            if (Directory.Exists(targetDirectory)) Directory.Move(targetDirectory, backupDirectory);
+            try
             {
-                Directory.Move(backupDirectory, targetDirectory);
+                CopyDirectory(sourceDirectory, targetDirectory);
+                var packagedUpdater = Path.Combine(sourceDirectory, "CheckUpdate.exe");
+                var installedUpdater = Path.Combine(targetDirectory, "CheckUpdate.exe");
+                if (!File.Exists(packagedUpdater) && updaterBackup is not null)
+                {
+                    File.Copy(updaterBackup, installedUpdater, overwrite: true);
+                }
             }
-            throw;
+            catch
+            {
+                TryDeleteDirectory(targetDirectory);
+                if (Directory.Exists(backupDirectory)) Directory.Move(backupDirectory, targetDirectory);
+                throw;
+            }
+        }
+        finally
+        {
+            if (updaterBackup is not null) TryDeleteFile(updaterBackup);
         }
 
-        Console.WriteLine("  文件已安装。旧版本备份: " + backupDirectory);
+        log($"  文件已安装。旧版本备份: {backupDirectory}\n");
+    }
+
+    private static bool IsPathInside(string filePath, string directory)
+    {
+        var file = Path.GetFullPath(filePath);
+        var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return file.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void CopyDirectory(string source, string target)
@@ -285,24 +322,6 @@ internal static class Program
         {
             CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
         }
-    }
-
-    private static string ResolveExtensionDirectory(string? requestedPath)
-    {
-        if (!string.IsNullOrWhiteSpace(requestedPath))
-        {
-            return Path.GetFullPath(Environment.ExpandEnvironmentVariables(requestedPath));
-        }
-
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var installed = Path.Combine(localAppData, "PixivNovelTranslator", "pixiv-novel-translator");
-        if (File.Exists(Path.Combine(installed, "manifest.json"))) return installed;
-
-        // Also support placing CheckUpdate.exe beside the unpacked extension.
-        var besideUpdater = Path.Combine(AppContext.BaseDirectory, "pixiv-novel-translator");
-        if (File.Exists(Path.Combine(besideUpdater, "manifest.json"))) return besideUpdater;
-
-        return installed;
     }
 
     private static string? ReadManifestVersion(string extensionDirectory)
@@ -334,33 +353,6 @@ internal static class Program
         return 0;
     }
 
-    private static void OpenExtensionsPage(string browser)
-    {
-        var url = browser.Equals("chrome", StringComparison.OrdinalIgnoreCase)
-            ? "chrome://extensions"
-            : "edge://extensions";
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            Console.WriteLine($"已打开 {url}，请点击插件卡片上的刷新按钮。");
-        }
-        catch
-        {
-            Console.WriteLine($"请手动打开 {url}，然后点击插件卡片上的刷新按钮。");
-        }
-    }
-
-    private static int Finish(Options options, int exitCode)
-    {
-        if (!options.NoPause)
-        {
-            Console.WriteLine();
-            Console.WriteLine("按任意键退出...");
-            try { Console.ReadKey(intercept: true); } catch { /* non-interactive terminal */ }
-        }
-        return exitCode;
-    }
-
     private static void TryDeleteFile(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
@@ -377,50 +369,11 @@ internal static class Program
     }
 
     private sealed record ReleaseAsset(string Name, string Url, string? Digest);
-
-    private sealed record Options(string Browser, string? Path, bool Force, bool NoPause)
-    {
-        public static Options Parse(string[] args)
-        {
-            var browser = "edge";
-            string? path = null;
-            var force = false;
-            var noPause = false;
-            for (var i = 0; i < args.Length; i++)
-            {
-                switch (args[i].ToLowerInvariant())
-                {
-                    case "--chrome":
-                        browser = "chrome";
-                        break;
-                    case "--edge":
-                        browser = "edge";
-                        break;
-                    case "--force":
-                        force = true;
-                        break;
-                    case "--no-pause":
-                        noPause = true;
-                        break;
-                    case "--path" when i + 1 < args.Length:
-                        path = args[++i];
-                        break;
-                    case "--help":
-                    case "-h":
-                        PrintUsage();
-                        Environment.Exit(0);
-                        break;
-                    default:
-                        throw new ArgumentException($"未知参数: {args[i]}");
-                }
-            }
-            return new Options(browser, path, force, noPause);
-        }
-
-        private static void PrintUsage()
-        {
-            Console.WriteLine("用法: CheckUpdate.exe [--chrome|--edge] [--path 插件目录] [--force] [--no-pause]");
-            Console.WriteLine("默认目录: %LOCALAPPDATA%\\PixivNovelTranslator\\pixiv-novel-translator");
-        }
-    }
 }
+
+internal sealed record UpdateResult(
+    bool Success,
+    string? ExtensionDirectory,
+    string? CurrentVersion,
+    string? LatestVersion,
+    string? Error);

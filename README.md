@@ -13,7 +13,7 @@ An AI-powered novel translation tool that translates Japanese / Korean light nov
 - **Registration agreement** — First-time users must scroll through and accept the terms before registering
 - **Translation history** — Full-text history of past translations, browsable on the web
 - **Feedback survey** — Rate translation quality and suggest improvements
-- **Browser extension** — A Chrome/Edge MV3 extension (`pixiv-novel-translator/`) that translates Pixiv novels in place, in four display modes (side panel, inline, inline-full, paged)
+- **Browser extension** — A Chrome/Edge MV3 extension (`tranShilator-plugin/`) that translates Pixiv novels in place, in four display modes (side panel, inline, inline-full, paged)
 
 ## Architecture
 
@@ -40,7 +40,7 @@ An AI-powered novel translation tool that translates Japanese / Korean light nov
 
 ### Browser Extension
 
-The `pixiv-novel-translator/` Chrome/Edge MV3 extension translates Pixiv novels without leaving the page:
+The `tranShilator-plugin/` Chrome/Edge MV3 extension translates Pixiv novels without leaving the page:
 
 ```
 ┌──────────────────────┐  ① extract novel_id  ┌──────────────────────────┐
@@ -71,20 +71,20 @@ Translation runs as an SSE stream through the site backend, authenticated with a
 The extension is distributed from this repository (not browser stores). Browsers forbid non-store extensions from silently replacing their own code, so the extension uses background update detection plus a one-click Windows updater:
 
 - **Automatic update detection:** the background service worker checks the latest GitHub release when the browser starts and every 6 hours. A new-version badge and one OS notification are shown when an update is found.
-- **One-click updater (`CheckUpdate.exe`):** download `CheckUpdate.exe` from the latest Release and double-click it. It automatically checks the version, downloads the matching extension zip, verifies the package when GitHub provides a SHA-256 digest, installs it to `%LOCALAPPDATA%\PixivNovelTranslator\pixiv-novel-translator\`, keeps a backup of the previous copy, and opens the extension management page.
-- **Command-line options:** `CheckUpdate.exe --chrome` opens Chrome's extension page; `CheckUpdate.exe --path <folder>` updates a custom unpacked-extension directory; `--force` reinstalls the same version; `--no-pause` is useful in scripts. `install.cmd` automatically uses `CheckUpdate.exe` when it is beside the script, and otherwise falls back to PowerShell.
-- **Manual install:** open `edge://extensions` (or `chrome://extensions`), enable **Developer mode**, click **Load unpacked**, and select the `pixiv-novel-translator/` folder.
-- **Applying an update:** click the notification or the popup's **检查更新** result to open the release page, run `CheckUpdate.exe`, then click the reload icon on the extension card in `edge://extensions` and refresh the Pixiv page.
+- **One-click updater (`tranShilator-plugin/CheckUpdate.exe`):** download the updater inside `tranShilator-plugin/` from the latest Release and double-click it. It opens a graphical update window, automatically checks the version, downloads the matching extension zip, updates the directory containing the updater, and keeps a backup of the previous copy. The window includes a button to copy the plugin directory for the browser's "Load unpacked" or reload action.
+- **Command-line options:** `CheckUpdate.exe --path <folder>` updates a custom unpacked-extension directory; `--force` reinstalls the same version; `--no-pause` is retained for script compatibility. `install.cmd` automatically uses `tranShilator-plugin/CheckUpdate.exe`, and otherwise falls back to PowerShell.
+- **Manual install:** open `edge://extensions` (or `chrome://extensions`), enable **Developer mode**, click **Load unpacked**, and select the `tranShilator-plugin/` folder.
+- **Applying an update:** click the notification or the popup's **检查更新** result to open the release page, run `tranShilator-plugin/CheckUpdate.exe`, click **复制插件目录**, then open `edge://extensions` (or `chrome://extensions`) and paste the directory when loading or refreshing the unpacked extension.
 
 ## Building the Windows updater
 
-The repository includes a self-contained .NET 8 updater. On Windows with the .NET 8 SDK installed:
+The repository includes a self-contained .NET 8 Windows GUI updater. On Windows with the .NET 8 SDK installed:
 
 ```powershell
-dotnet publish CheckUpdate.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o CheckUpdate-publish
+dotnet publish tranShilator-plugin/updatechecking/CheckUpdate.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o tranShilator-plugin
 ```
 
-The resulting `CheckUpdate-publish/CheckUpdate.exe` can be distributed beside `install.cmd` or uploaded as a Release asset. It does not require .NET to be installed on the user's machine.
+The resulting `tranShilator-plugin/CheckUpdate.exe` is placed beside the extension files before packaging the Release asset. It does not require .NET to be installed on the user's machine.
 
 ## Getting Started
 
@@ -173,9 +173,8 @@ Sh1Zuku_Translate/
 │   ├── config.py               # Environment-based configuration
 │   ├── ocr_server.py           # Flask entry point (port 5557)
 │   └── ocr_service.py          # PaddleOCR wrapper
-├── pixiv-novel-translator/     # Chrome/Edge browser extension
-├── CheckUpdate.cs              # Standalone Windows updater source
-└── CheckUpdate.csproj          # Self-contained CheckUpdate.exe build
+├── tranShilator-plugin/        # Chrome/Edge extension + CheckUpdate.exe
+│   └── updatechecking/          # GUI updater source and project
 ```
 
 ## Configuration

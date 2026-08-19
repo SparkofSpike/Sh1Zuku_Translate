@@ -14,7 +14,13 @@ param([switch]$Update)
 $ErrorActionPreference = 'Stop'
 $repo = 'SparkofSpike/Sh1Zuku_Translate'
 $rootDir = Join-Path $env:LOCALAPPDATA 'PixivNovelTranslator'
-$extDir = Join-Path $rootDir 'pixiv-novel-translator'
+$extDir = Join-Path $rootDir 'tranShilator-plugin'
+$legacyExtDir = Join-Path $rootDir 'pixiv-novel-translator'
+
+if ((Test-Path (Join-Path $legacyExtDir 'manifest.json')) -and -not (Test-Path (Join-Path $extDir 'manifest.json'))) {
+    New-Item -ItemType Directory -Path $rootDir -Force | Out-Null
+    Move-Item -Path $legacyExtDir -Destination $extDir
+}
 
 Write-Host '==============================================' -ForegroundColor Cyan
 Write-Host '  Pixiv Novel Translator - 安装 / 更新' -ForegroundColor Cyan
@@ -34,9 +40,12 @@ $apiUrl = "https://api.github.com/repos/$repo/releases/latest"
 $zipUrl = $null
 $tag = $null
 try {
-    $rel = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'pixiv-novel-translator-installer' } -TimeoutSec 20
+    $rel = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'tranShilator-plugin-installer' } -TimeoutSec 20
     $tag = $rel.tag_name
-    $asset = $rel.assets | Where-Object { $_.name -match '^pixiv-novel-translator-.*\.zip$' } | Select-Object -First 1
+    $asset = $rel.assets | Where-Object { $_.name -match '^tranShilator-plugin-.*\.zip$' } | Select-Object -First 1
+    if (-not $asset) {
+        $asset = $rel.assets | Where-Object { $_.name -match '^pixiv-novel-translator-.*\.zip$' } | Select-Object -First 1
+    }
     if ($asset) { $zipUrl = $asset.browser_download_url }
 } catch {
     Write-Host "  无法访问 GitHub API: $($_.Exception.Message)" -ForegroundColor Red
@@ -45,8 +54,8 @@ try {
 }
 if (-not $zipUrl) {
     # Fallback: GitHub "latest download" shortcut for a
-    # pixiv-novel-translator.zip asset.
-    $zipUrl = "https://github.com/$repo/releases/latest/download/pixiv-novel-translator.zip"
+    # tranShilator-plugin.zip asset.
+    $zipUrl = "https://github.com/$repo/releases/latest/download/tranShilator-plugin.zip"
 }
 Write-Host "  最新版本: $tag"
 
@@ -60,14 +69,17 @@ try {
     Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
 
     # Locate the extension folder (zip may or may not have a top-level folder).
-    $candidate = Join-Path $tmpDir 'pixiv-novel-translator'
+    $candidate = Join-Path $tmpDir 'tranShilator-plugin'
+    if (-not (Test-Path (Join-Path $candidate 'manifest.json'))) {
+        $candidate = Join-Path $tmpDir 'pixiv-novel-translator'
+    }
     if (-not (Test-Path (Join-Path $candidate 'manifest.json'))) {
         $candidate = Get-ChildItem -Path $tmpDir -Recurse -Filter manifest.json |
-            Where-Object { $_.DirectoryName -like '*pixiv-novel-translator*' } |
+            Where-Object { $_.DirectoryName -like '*tranShilator-plugin*' -or $_.DirectoryName -like '*pixiv-novel-translator*' } |
             Select-Object -First 1 -ExpandProperty DirectoryName
     }
     if (-not $candidate -or -not (Test-Path (Join-Path $candidate 'manifest.json'))) {
-        throw '压缩包中未找到 pixiv-novel-translator 扩展目录'
+        throw '压缩包中未找到 tranShilator-plugin 扩展目录'
     }
 
     New-Item -ItemType Directory -Path $rootDir -Force | Out-Null
