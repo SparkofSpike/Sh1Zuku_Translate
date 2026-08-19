@@ -280,31 +280,4 @@ textarea {
   box-sizing: border-box;
 }
 
-@media (max-width: 760px) {
-  .translate-layout {
-    grid-template-columns: minmax(0, 800px);
-  }
-
-  .announcement-left,
-  .announcement-right,
-  .translation-card {
-    grid-column: 1;
-    grid-row: auto;
-    width: 100%;
-    max-width: 800px;
-    margin: 0 auto;
-  }
-
-  .announcement-left {
-    grid-row: 1;
-  }
-
-  .translation-card {
-    grid-row: 2;
-  }
-
-  .announcement-right {
-    grid-row: 3;
-  }
-}
 </style>
