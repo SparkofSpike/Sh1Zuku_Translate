@@ -62,28 +62,39 @@ export function translateStream(
     if (!reader) { onError('Stream not supported'); return }
     const decoder = new TextDecoder()
     let buffer = ''
+
+    const processLine = (line: string) => {
+      if (!line.startsWith('data:')) return
+      const data = line.slice(line.indexOf(':') + 1).trim()
+      if (!data) return
+      try {
+        const parsed = JSON.parse(data)
+        if (typeof parsed.token === 'string') onToken(parsed.token)
+        if (parsed.done) { doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
+        if (parsed.error) { doneReceived = true; onError(parsed.error) }
+      } catch (e) {
+        // Ignore malformed SSE records and continue consuming the stream.
+      }
+    }
+
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data:') || line.startsWith('data: ')) {
-          const data = line.slice(line.indexOf(':') + 1).trim()
-          if (!data) continue
-          try {
-            const parsed = JSON.parse(data)
-            if (parsed.token) onToken(parsed.token)
-            if (parsed.done) { doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
-            if (parsed.error) { doneReceived = true; onError(parsed.error) }
-          } catch (e) {}
-        }
-      }
+      for (const line of lines) processLine(line)
     }
-    if (!doneReceived) onDone({ id: 0, translatedText: '', model: '', createdAt: '' } as TranslateResponse)
+
+    // Process a final event even if the server closes without a trailing
+    // newline; otherwise a final `done` record can be lost.
+    buffer += decoder.decode()
+    if (buffer) processLine(buffer)
+    if (!doneReceived) onError('翻译流意外中断，请重试')
   }).catch(err => {
-    if (!doneReceived) onError(err.message)
+    // Abort is the expected cancellation path from the web UI, not an
+    // error that should overwrite the user's cleared state.
+    if (!doneReceived && !controller.signal.aborted) onError(err.message)
   })
 
   return controller
