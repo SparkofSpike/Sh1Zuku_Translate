@@ -26,6 +26,8 @@ async function login() {
   try {
     const res = await api.post('/auth/login', { username: username.value, password: password.value })
     authStore.setToken(res.data.token)
+    const me = await api.get('/auth/me')
+    authStore.setAdmin(!!me.data.isAdmin)
     router.push('/')
   } catch (e) {
     error.value = e.response?.data?.error || '登录失败'
