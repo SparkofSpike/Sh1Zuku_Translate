@@ -31,7 +31,12 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin',
     component: () => import('../views/AdminView.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/logs',
+    component: () => import('../views/LogView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]
 
@@ -44,6 +49,8 @@ router.beforeEach((to, from, next) => {
   const authStore = useAuthStore()
   if (to.meta.requiresAuth && !authStore.token) {
     next('/login')
+  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    next('/')
   } else {
     next()
   }
