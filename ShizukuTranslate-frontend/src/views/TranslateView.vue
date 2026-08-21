@@ -147,9 +147,25 @@ onMounted(async () => {
         label: `${item.name} · ${item.model}`
       }))
     ]
-    if (!localStorage.getItem('modelSelection') && profiles.length) {
+    const storedProfileId = modelProfileId.value && modelProfileId.value > 0
+      ? modelProfileId.value
+      : null
+    const storedProfileKey = storedProfileId ? 'profile:' + storedProfileId : ''
+    const storedSelection = localStorage.getItem('modelSelection') || ''
+    const profileSelectionIsValid = storedProfileKey
+      && modelOptions.value.some(option => option.key === storedProfileKey)
+    const savedSelectionIsValid = modelOptions.value.some(option => option.key === storedSelection)
+
+    // A profile ID is more authoritative than the legacy display-mode key.
+    // This recovers users whose old localStorage still says "site" after
+    // they configured a personal model profile.
+    if (profileSelectionIsValid) {
+      selectedModelKey.value = storedProfileKey
+    } else if (savedSelectionIsValid) {
+      selectedModelKey.value = storedSelection
+    } else if (profiles.length) {
       selectedModelKey.value = 'profile:' + profiles[0].id
-    } else if (!modelOptions.value.some(option => option.key === selectedModelKey.value)) {
+    } else {
       selectedModelKey.value = 'site:deepseek-v4-flash'
     }
     handleModelChange()
@@ -166,7 +182,8 @@ onMounted(async () => {
 
 function readSelectedProfileId(): number | null {
   const value = localStorage.getItem('modelProfileId')
-  return value ? Number(value) : 0
+  const id = value ? Number(value) : 0
+  return Number.isInteger(id) && id > 0 ? id : null
 }
 
 function handleModelChange() {
