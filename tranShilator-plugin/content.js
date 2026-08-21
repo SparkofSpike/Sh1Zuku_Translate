@@ -7,7 +7,7 @@
 let state = {
   novelId: null,
   translating: false,
-  mode: 'panel',          // 'panel' | 'inline'
+  mode: 'panel',          // 'panel' | 'inline' | 'paged'
   targetLang: 'zh',
   streamingText: '',
   paraTranslations: [],
@@ -18,7 +18,6 @@ let state = {
   cancelBtn: null,
   translationVisible: true, // false when the user hid the translation display
   originalContent: '',    // raw novel text, for rebuilding inline pairs
-  originalHtml: null,     // saved original container HTML (inline)
   novelTitle: '',
   novelAuthor: '',
   numberedRequest: false, // true when the response is numbered JSON Lines
@@ -26,6 +25,10 @@ let state = {
   fullTranslations: {},   // global paragraph id -> translated text
   pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
   pageFlipObserver: null,  // MutationObserver for page flips (fullMode)
+  inlineTransEls: [],      // translation elements inserted after Pixiv paragraphs
+  inlineWaitCleanup: null, // cancels a pending inline-container wait
+  firstTokenTimer: null,   // pre-fill feedback timer
+  waitTick: null,          // elapsed-time display timer
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false // true once the first SSE token arrived
 };
@@ -236,6 +239,7 @@ function createWindow() {
     </div>
     <div class="pnt-toolbar">
       <button class="pnt-toggle-trans-btn" title="隐藏/显示译文">关闭翻译</button>
+      <button class="pnt-retranslate-btn" style="display:none;" title="用当前设置重新翻译">重新翻译</button>
       <button class="pnt-cancel-btn" style="display:none;">取消翻译</button>
     </div>
     <div class="pnt-content">
@@ -286,6 +290,20 @@ function createWindow() {
   cancelBtn.addEventListener('click', cancelTranslation);
   state.cancelBtn = cancelBtn;
 
+  // Retranslate button: starts a fresh translation with current settings.
+  // Visible whenever a translation is not in flight (finished or failed),
+  // so re-running is one click away.
+  const retranslateBtn = w.querySelector('.pnt-retranslate-btn');
+  retranslateBtn.addEventListener('click', () => {
+    if (state.translating) {
+      cancelTranslation();
+      handleTranslate();
+    } else {
+      handleTranslate();
+    }
+  });
+  state.retranslateBtn = retranslateBtn;
+
   // Toggle the whole translation display (关闭翻译 ↔ 显示翻译): hides it
   // so the page returns to its normal state, or brings it back.
   const toggleBtn = w.querySelector('.pnt-toggle-trans-btn');
@@ -317,6 +335,7 @@ function removeWindow() {
   state.windowEl = null;
   state.transBody = null;
   state.cancelBtn = null;
+  state.retranslateBtn = null;
 }
 
 // ─── Toggle Translation Display (关闭翻译 ↔ 显示翻译) ────────
@@ -572,8 +591,6 @@ function buildInlineParagraphs(originalContent) {
   let paraEls = findNovelParagraphs(originalContent);
   if (!paraEls || paraEls.length === 0) return null;
 
-  state.originalHtml = paraEls[0].parentElement?.innerHTML || ''; // backup for restore
-
   // Insert one translation div after each paragraph element
   const transEls = [];
   const currentPage = getCurrentNovelPage() || 1;
@@ -595,12 +612,6 @@ function buildInlineParagraphs(originalContent) {
 function restoreOriginalHtml() {
   // Remove only the translation divs we inserted; leave Pixiv DOM intact
   document.querySelectorAll('.pnt-inline-trans').forEach(el => el.remove());
-  document.querySelectorAll('.pnt-inline-orig').forEach(el => {
-    const parent = el.parentNode;
-    if (parent) {
-      parent.replaceChild(document.createTextNode(el.textContent), el);
-    }
-  });
   state.inlineContainer = null;
   state.inlineTransEls = [];
 }
@@ -834,6 +845,11 @@ async function handleTranslate() {
   state.fullMode = settings.displayMode === 'inline-full';
   state.mode = state.fullMode ? 'inline' : settings.displayMode;
   state.translating = true;
+  if (state.inlineWaitCleanup) {
+    state.inlineWaitCleanup();
+    state.inlineWaitCleanup = null;
+  }
+  if (state.retranslateBtn) state.retranslateBtn.style.display = 'none';
   // Manual invocations (button / popup) take over from autoTranslate.
   state.autoStarted = false;
   state.firstTokenReceived = false;
@@ -1032,6 +1048,7 @@ function waitForInlineContainer(data) {
     if (timer) clearTimeout(timer);
     observer = null;
     timer = null;
+    if (state.inlineWaitCleanup === cleanup) state.inlineWaitCleanup = null;
   };
 
   const fallbackToPanel = () => {
@@ -1039,6 +1056,14 @@ function waitForInlineContainer(data) {
     openWindow();
     state.mode = 'panel'; // render into the window from now on
     fillWindowFromNovel(data);
+    // Tokens may have arrived while the inline DOM was still rendering.
+    // Paint the accumulated result immediately instead of waiting for
+    // another token (or leaving the completed translation blank).
+    if (state.numberedRequest) {
+      renderPanelFromJsonLines();
+    } else if (state.transBody) {
+      state.transBody.textContent = state.streamingText;
+    }
     showToast('未找到原文容器，已改用侧边面板显示');
     updateTranslateButton('preparing');
   };
@@ -1065,6 +1090,8 @@ function waitForInlineContainer(data) {
     }
     return false;
   };
+
+  state.inlineWaitCleanup = cleanup;
 
   // Try once immediately, then keep watching for the body to render.
   if (tryBuild()) return;
@@ -1105,9 +1132,19 @@ function onStreamError(error) {
 function finishTranslate(success, errorMsg, data) {
   state.translating = false;
   if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
+  if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
+  if (state.inlineWaitCleanup) {
+    state.inlineWaitCleanup();
+    state.inlineWaitCleanup = null;
+  }
   updateTranslateButton('idle');
 
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
+  // Translation over (finished or failed with text kept): offer a
+  // one-click retranslate instead of leaving the user to hunt for it.
+  if (state.retranslateBtn) {
+    state.retranslateBtn.style.display = hasTranslationContent() ? '' : 'none';
+  }
 
   if (success) {
     showToast('翻译完成');

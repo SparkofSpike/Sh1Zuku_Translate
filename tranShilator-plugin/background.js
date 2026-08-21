@@ -156,6 +156,36 @@ ensureUpdateAlarm();
 // not clobber each other's cancellation handle.
 const activeControllers = new Map();
 
+// ─── Error log (for the popup's "submit log" button) ───────
+// Keep the most recent translation errors in local storage so the user
+// can report them to the server with one click (popup → POST
+// /api/v1/plugin/logs). User cancellations are not errors and skipped.
+const ERROR_LOG_KEY = 'pntErrorLog';
+const MAX_ERROR_LOG = 20;
+let errorLogWrite = Promise.resolve();
+
+function recordPluginError(message) {
+  if (!message) return;
+  const entry = {
+    time: new Date().toISOString(),
+    message: String(message).slice(0, 2000)
+  };
+  // Serialize read-modify-write operations so errors arriving together do
+  // not overwrite one another in storage.
+  errorLogWrite = errorLogWrite
+    .then(() => new Promise((resolve) => {
+      chrome.storage.local.get(ERROR_LOG_KEY, (items) => {
+        const log = Array.isArray(items[ERROR_LOG_KEY]) ? items[ERROR_LOG_KEY] : [];
+        log.push(entry);
+        if (log.length > MAX_ERROR_LOG) log.shift();
+        chrome.storage.local.set({ [ERROR_LOG_KEY]: log }, resolve);
+      });
+    }))
+    .catch((error) => {
+      console.warn('[PixivTranslator] Failed to store plugin error:', error);
+    });
+}
+
 // ─── Keepalive (MV3 service worker) ─────────────────────────
 // The long SSE fetch keeps the SW alive while it is in flight, but the
 // gaps between steps (Pixiv fetch done → settings → backend fetch) can
@@ -214,10 +244,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // An aborted body stream is almost always the user pressing cancel
         // (Edge reports it as "BodyStreamBuffer was aborted"). Treat it as
         // an expected cancellation, not an error — no scary console.error.
-        if (/abort/i.test(msg)) {
+        if (/abort|取消/i.test(msg)) {
           console.warn('[PixivTranslator] Translation cancelled:', msg);
         } else {
           console.error('[PixivTranslator] Error:', msg);
+          recordPluginError(msg);
           notifyTab(tabId, { type: 'SSE_ERROR', error: msg });
         }
       });
@@ -336,6 +367,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         await notifyTab(tabId, { type: 'SSE_DONE', data: result });
       },
       async (error) => {
+        recordPluginError(error);
         await notifyTab(tabId, { type: 'SSE_ERROR', error });
       }
     );
@@ -452,14 +484,27 @@ async function notifyTab(tabId, message) {
 // ─── Step 1: Fetch Pixiv Novel ───────────────────────────────
 
 async function fetchNovelFromPixiv(novelId, signal) {
-  const cookie = await chrome.cookies.get({
-    url: 'https://www.pixiv.net',
-    name: 'PHPSESSID'
-  });
-
-  if (!cookie) {
-    console.error('[PNT] STEP1 FAIL: PHPSESSID cookie not found');
-    throw new Error('未登录 Pixiv，请先登录 pixiv.net');
+  // PHPSESSID is only a login hint — the Pixiv AJAX novel API serves
+  // public novels without any cookie (verified: bare fetch returns 200
+  // with no login). Reading the cookie may also throw "No host
+  // permissions for cookies at url" when the extension's cookie host
+  // permission is missing or revoked (e.g. Edge restricted "all sites"
+  // access), and that must NOT abort the whole translation. So this
+  // read is best-effort: if it fails we simply cannot tell the login
+  // state, and we continue the bare fetch anyway.
+  let hasLogin = false;
+  let cookieUnavailable = false;
+  try {
+    const cookie = await chrome.cookies.get({
+      url: 'https://www.pixiv.net',
+      name: 'PHPSESSID'
+    });
+    hasLogin = !!cookie;
+  } catch (e) {
+    // No host permission for cookies — cannot check login state.
+    // Not an error: public novels still translate fine without it.
+    cookieUnavailable = true;
+    console.warn('[PNT] STEP1 cookie read unavailable (no host permission?); continuing:', e && e.message);
   }
 
   console.log('[PNT] STEP1 fetch pixiv api...');
@@ -470,6 +515,9 @@ async function fetchNovelFromPixiv(novelId, signal) {
   // PHPSESSID auth is handled by Chrome automatically via host
   // permission + credentials when needed.
   const response = await fetch(`https://www.pixiv.net/ajax/novel/${novelId}`, {
+    // Extension-origin fetches are cross-origin; explicitly include the
+    // browser-managed Pixiv session for login-gated novels.
+    credentials: 'include',
     signal
   }).catch((e) => {
     if (e && e.name === 'AbortError') {
@@ -481,6 +529,22 @@ async function fetchNovelFromPixiv(novelId, signal) {
   });
 
   if (!response.ok) {
+    // 401/403 usually means login-gated content.
+    if (response.status === 401 || response.status === 403) {
+      if (!cookieUnavailable && !hasLogin) {
+        // Cookie was readable and there was no session — clear hint.
+        throw new Error('未登录 Pixiv，请先登录 pixiv.net 后重试');
+      }
+      if (cookieUnavailable) {
+        // Cookie host permission was not granted (common on Chrome for
+        // unpacked extensions with wildcard hosts): the bare fetch may
+        // not have carried the session cookie either. Give the user a
+        // path to restore it instead of a dead end.
+        throw new Error(`Pixiv 返回 ${response.status}，该小说可能需要登录。已登录仍失败时，请在浏览器扩展详情中允许插件访问 pixiv.net`);
+      }
+      // Cookie readable + logged in: the novel itself is members-only.
+      throw new Error(`Pixiv 返回 ${response.status}，该小说可能需要登录 Pixiv 后翻译`);
+    }
     throw new Error(`Pixiv API 请求失败 (${response.status})`);
   }
 
@@ -610,6 +674,42 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   let buffer = '';
   let streamEnded = false; // set once a done/error event was delivered
 
+  const processSseLine = async (line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return;
+
+    const data = trimmed.substring(5).trim();
+    if (!data) return;
+
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch (parseErr) {
+      console.warn('[PixivTranslator] Bad SSE chunk:', data);
+      return;
+    }
+
+    if (typeof event.token === 'string') {
+      // First token received: the pre-fill wait is over, drop the
+      // timeout so a long full-novel stream is never cut short.
+      if (firstTokenTimer) {
+        clearTimeout(firstTokenTimer);
+        firstTokenTimer = null;
+      }
+      await onToken(event.token);
+    } else if (event.done) {
+      streamEnded = true;
+      await onDone({
+        translatedText: event.translatedText,
+        id: event.id,
+        tokenUsage: event.tokenUsage
+      });
+    } else if (event.error) {
+      streamEnded = true;
+      await onError(event.error);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -619,37 +719,17 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-
-      const data = trimmed.substring(5).trim();
-      if (!data) continue;
-
-      try {
-        const event = JSON.parse(data);
-        if (event.token) {
-          // First token received: the pre-fill wait is over, drop the
-          // timeout so a long full-novel stream is never cut short.
-          if (firstTokenTimer) {
-            clearTimeout(firstTokenTimer);
-            firstTokenTimer = null;
-          }
-          await onToken(event.token);
-        } else if (event.done) {
-          streamEnded = true;
-          await onDone({
-            translatedText: event.translatedText,
-            id: event.id,
-            tokenUsage: event.tokenUsage
-          });
-        } else if (event.error) {
-          streamEnded = true;
-          await onError(event.error);
-        }
-      } catch (parseErr) {
-        console.warn('[PixivTranslator] Bad SSE chunk:', data);
-      }
+      await processSseLine(line);
     }
+  }
+
+  // A final SSE event is valid even when the server closes without a
+  // trailing newline. Flush the decoder and process that buffered line.
+  buffer += decoder.decode();
+  if (buffer) await processSseLine(buffer);
+  if (firstTokenTimer) {
+    clearTimeout(firstTokenTimer);
+    firstTokenTimer = null;
   }
 
   // The body stream ended without the backend sending done/error (proxy

@@ -8,8 +8,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const modelSelect = document.getElementById('model');
   const modelStatus = document.getElementById('modelStatus');
   const targetLangSelect = document.getElementById('targetLang');
-  const thinkingTypeSelect = document.getElementById('thinkingType');
+  const thinkingCheck = document.getElementById('thinking');
   const displayModeSelect = document.getElementById('displayMode');
+  const settingsToggle = document.getElementById('settingsToggle');
+  const settingsPanel = document.getElementById('settingsPanel');
   const autoTranslateCheckbox = document.getElementById('autoTranslate');
   const customPromptInput = document.getElementById('customPrompt');
   const presetsGroup = document.getElementById('presetsGroup');
@@ -36,17 +38,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Check current tab on open ──────────────────────────
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab && tab.url && tab.url.includes('pixiv.net')) {
-      pageStatus.textContent = '当前在 Pixiv 页面';
-      pageStatus.className = 'status-ok';
-      translateBtn.disabled = false;
-    } else {
-      pageStatus.textContent = tab && tab.url && tab.url.includes('pixiv.net')
-        ? '请在小说页面使用'
-        : '请打开 Pixiv 页面';
-      pageStatus.className = 'status-err';
-      translateBtn.disabled = true;
-    }
+    const isNovelPage = !!tab?.url && tab.url.includes('pixiv.net/novel/');
+    pageStatus.textContent = isNovelPage ? '当前在 Pixiv 小说页面' : '请在 Pixiv 小说页面使用';
+    pageStatus.className = isNovelPage ? 'status-ok' : 'status-err';
+    translateBtn.disabled = !isNovelPage;
   });
 
   // ─── Load saved settings ─────────────────────────────────
@@ -59,17 +54,33 @@ document.addEventListener('DOMContentLoaded', () => {
       savedModel = items.model || '';
       savedModelProfileId = items.modelProfileId ? 'profile:' + String(items.modelProfileId) : (items.model ? 'site:' + items.model : '');
       if (items.targetLang) targetLangSelect.value = items.targetLang;
-      if (items.thinkingType) thinkingTypeSelect.value = items.thinkingType;
+      // 思考：复选框，勾选 = 开启思考推理（默认关闭，与后端 disabled 一致）
+      thinkingCheck.checked = items.thinkingType === 'enabled';
       if (items.displayMode) displayModeSelect.value = items.displayMode;
       if (items.customPrompt) customPromptInput.value = items.customPrompt;
       if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
       autoTranslateCheckbox.checked = items.autoTranslate !== false;
+
+      // 已配置过：后端地址 / API Key / 目标语言收进“设置”；首次配置直接展示
+      const isConfigured = !!(items.backendUrl && items.apiKey);
+      if (isConfigured) {
+        settingsToggle.style.display = '';
+        settingsPanel.style.display = 'none';
+      } else {
+        settingsToggle.style.display = 'none';
+        settingsPanel.style.display = 'block';
+      }
 
       renderModelOptions(null);
       loadUserModel();
       loadPresets();
     }
   );
+
+  settingsToggle.addEventListener('click', () => {
+    const hidden = settingsPanel.style.display === 'none';
+    settingsPanel.style.display = hidden ? 'block' : 'none';
+  });
 
   function renderModelOptions(profiles) {
     const profileList = Array.isArray(profiles) ? profiles : [];
@@ -192,18 +203,92 @@ document.addEventListener('DOMContentLoaded', () => {
       model: modelSelect.options[modelSelect.selectedIndex]?.dataset?.model || savedModel,
       modelProfileId: modelSelect.options[modelSelect.selectedIndex]?.dataset?.profileId || '0',
       targetLang: targetLangSelect.value,
-      thinkingType: thinkingTypeSelect.value,
+      thinkingType: thinkingCheck.checked ? 'enabled' : 'disabled',
       displayMode: displayModeSelect.value,
       autoTranslate: autoTranslateCheckbox.checked,
       customPrompt: customPromptInput.value.trim(),
       selectedPresets
     };
-    chrome.storage.sync.set(data, () => {
-      if (showToast) showStatus('设置已保存', 'ok');
+    return new Promise((resolve) => {
+      chrome.storage.sync.set(data, () => {
+        if (showToast) showStatus('设置已保存', 'ok');
+        resolve();
+      });
     });
   }
 
   saveBtn.addEventListener('click', () => saveSettings(true));
+
+  // ─── Submit error log ─────────────────────────────────────
+  // Send the most recent recorded extension errors to the server's log
+  // page (POST /api/v1/plugin/logs, X-API-Key auth). The submitter is
+  // resolved server-side from the API key; we only attach version + the
+  // error text gathered by background.js.
+
+  const submitLogBtn = document.getElementById('submitLogBtn');
+  const logInfo = document.getElementById('logInfo');
+
+  function renderLogPreview() {
+    chrome.storage.local.get('pntErrorLog', (items) => {
+      const log = Array.isArray(items.pntErrorLog) ? items.pntErrorLog : [];
+      if (logInfo) {
+        const latestMessage = log[log.length - 1]?.message || '';
+        logInfo.textContent = log.length
+          ? '最近 ' + log.length + ' 条错误' + (latestMessage ? '：' + String(latestMessage).slice(0, 60) : '')
+          : '暂无记录的错误';
+      }
+    });
+  }
+
+  renderLogPreview();
+
+  submitLogBtn.addEventListener('click', async () => {
+    const backendUrl = backendUrlInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    if (!backendUrl || !apiKey) {
+      showStatus('请先在设置中填写后端地址和 API Key', 'err');
+      return;
+    }
+    const items = await new Promise((resolve) => {
+      chrome.storage.local.get('pntErrorLog', resolve);
+    });
+    const log = Array.isArray(items.pntErrorLog) ? items.pntErrorLog : [];
+    if (!log.length) {
+      showStatus('当前没有可提交的错误记录', 'err');
+      return;
+    }
+    const version = typeof EXTENSION_VERSION !== 'undefined' ? String(EXTENSION_VERSION) : '';
+    const fullErrorMessage = log
+      .map((e) => '[' + (e.time || '') + '] ' + (e.message || ''))
+      .join('\n');
+    const errorMessage = fullErrorMessage.length > 4000
+      ? '[日志过长，仅保留最近内容]\n' + fullErrorMessage.slice(-3970)
+      : fullErrorMessage;
+
+    submitLogBtn.disabled = true;
+    submitLogBtn.textContent = '提交中...';
+    try {
+      const response = await fetch(backendUrl.replace(/\/+$/, '') + '/api/v1/plugin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({ version, errorMessage }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error('HTTP ' + response.status + (text ? ': ' + text.slice(0, 200) : ''));
+      }
+      // Submitted successfully: clear so the next report is fresh.
+      chrome.storage.local.set({ pntErrorLog: [] });
+      renderLogPreview();
+      showStatus('错误日志已提交，感谢反馈！', 'ok');
+    } catch (e) {
+      showStatus('提交失败: ' + (e && e.message ? e.message : '网络错误'), 'err');
+    } finally {
+      submitLogBtn.disabled = false;
+      submitLogBtn.textContent = '提交错误日志';
+    }
+  });
 
   // Open the web history page where every finished translation is stored.
   historyBtn.addEventListener('click', () => {
@@ -216,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.close();
   });
 
-  [backendUrlInput, apiKeyInput, targetLangSelect, thinkingTypeSelect, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
+  [backendUrlInput, apiKeyInput, targetLangSelect, thinkingCheck, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
     el.addEventListener('change', () => saveSettings(false));
   });
   modelSelect.addEventListener('change', () => {
@@ -260,9 +345,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ─── Translate current page ──────────────────────────────
+  // Both the primary and the "retranslate" buttons trigger the same
+  // flow: the content script starts a fresh translation (cancelling any
+  // in-flight one), so re-running after a finished translation simply
+  // retranslates.
 
-  translateBtn.addEventListener('click', async () => {
-    saveSettings(false);
+  async function startTranslate() {
+    await saveSettings(false);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) {
@@ -289,7 +378,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       showStatus('请刷新 Pixiv 小说页面后重试', 'err');
     }
-  });
+  }
+
+  translateBtn.addEventListener('click', startTranslate);
+  const retranslateBtn = document.getElementById('retranslateBtn');
+  retranslateBtn.addEventListener('click', startTranslate);
 
   // ─── Status helper ───────────────────────────────────────
 
