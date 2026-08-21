@@ -24,8 +24,8 @@ The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chr
 
 The extension supports:
 
-- A floating side-panel translation view.
-- Inline translation under paragraphs on the current Pixiv page.
+- A floating side-panel translation view (used as a fallback when inline paragraphs cannot be located).
+- Inline translation under paragraphs on the current Pixiv page (the default display mode).
 - Full-novel inline translation with global paragraph IDs mapped across Pixiv page breaks.
 - Paged translation that preserves Pixiv's `[newpage]` markers.
 - Chinese, English, and Korean output.
@@ -33,10 +33,11 @@ The extension supports:
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
 - Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
+- One-click retranslation and local error-log submission from the popup.
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 
-The extension requires an authenticated Pixiv session, a reachable ShizukuTranslate backend URL, and a user-generated extension API key. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
+The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
@@ -83,7 +84,7 @@ The extension requires an authenticated Pixiv session, a reachable ShizukuTransl
 5. background.js forwards tokens to content.js, which renders the selected view.
 ```
 
-The extension checks for the `PHPSESSID` cookie before requesting a novel. It does not expose the user's configured model API keys to the extension: model profile responses requested with an extension API key omit API key previews.
+The extension makes a best-effort `PHPSESSID` check before requesting a novel and includes browser-managed Pixiv credentials for login-gated content. It does not expose the user's configured model API keys to the extension: model profile responses requested with an extension API key omit API key previews.
 
 ## Installing the extension
 
@@ -276,7 +277,7 @@ Sh1Zuku_Translate/
 │       ├── stores/              # Pinia stores
 │       ├── types/              # TypeScript interfaces
 │       ├── utils/              # Shared utilities, including Markdown rendering
-│       └── views/               # Translation, history, profile, survey, admin, and auth pages
+│       └── views/               # Translation, history, profile, survey, logs, admin, and auth pages
 ├── ocr-worker/                 # Python Flask and PaddleOCR microservice
 │   ├── config.py               # Environment-based port and threshold settings
 │   ├── ocr_server.py           # Flask entry point
@@ -353,6 +354,8 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /admin/usage` | Administrator | Return global token totals, charts, and per-user summaries. |
 | `GET /admin/usage/users/{userId}` | Administrator | Return one user's token log. |
 | `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text. |
+| `POST /plugin/logs` | Authenticated or extension API key | Submit browser-extension error reports. |
+| `GET /plugin/logs` | Authenticated | List the current user's reports; administrators see all reports. |
 | `DELETE /admin/announcements/{id}` | Administrator | Delete an announcement. |
 
 ## Known limitations
