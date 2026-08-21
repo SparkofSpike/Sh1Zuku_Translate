@@ -145,7 +145,8 @@ function emptyForm() {
 
 function readSelectedProfileId() {
   const value = localStorage.getItem(PROFILE_SELECTION_KEY)
-  return value ? Number(value) : null
+  const id = value ? Number(value) : 0
+  return Number.isInteger(id) && id > 0 ? id : null
 }
 
 function selectProfile(id) {

@@ -13,6 +13,8 @@ import com.shizuku.translate.security.JwtTokenProvider;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+
 @Service
 public class UserService {
 
@@ -20,6 +22,8 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final DeepSeekConfig.DeepSeekProperties deepSeekProperties;
+    private static final String LEGACY_PROFILE_NAME = "旧模型配置";
+
     private final AiModelProfileRepository modelProfileRepository;
 
     public UserService(UserRepository userRepository,
@@ -95,8 +99,10 @@ public class UserService {
     public java.util.List<AiModelProfile> listModelProfiles(String username) {
         User user = findByUsername(username);
         java.util.List<AiModelProfile> profiles = modelProfileRepository.findByUserIdOrderByCreatedAtAsc(user.getId());
-        if (profiles.isEmpty() && hasLegacyModelConfig(user)) {
-            profiles = java.util.List.of(createLegacyProfile(user));
+        if (hasLegacyModelConfig(user)
+                && profiles.stream().noneMatch(profile -> LEGACY_PROFILE_NAME.equals(profile.getName()))) {
+            profiles = new ArrayList<>(profiles);
+            profiles.add(createLegacyProfile(user));
         }
         return profiles;
     }
@@ -153,7 +159,7 @@ public class UserService {
                 ? "deepseek" : user.getAiProvider().toLowerCase();
         String model = user.getAiModel() == null || user.getAiModel().isBlank()
                 ? deepSeekProperties.getDefaultModel() : user.getAiModel();
-        ModelProfileValues values = normalizeModelProfile("旧模型配置", provider, user.getAiBaseUrl(), model, user.getAiApiKey());
+        ModelProfileValues values = normalizeModelProfile(LEGACY_PROFILE_NAME, provider, user.getAiBaseUrl(), model, user.getAiApiKey());
         return modelProfileRepository.save(AiModelProfile.builder()
                 .user(user).name(values.name).provider(values.provider).baseUrl(values.baseUrl)
                 .model(values.model).apiKey(values.apiKey).build());
