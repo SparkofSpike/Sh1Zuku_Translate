@@ -157,6 +157,22 @@
   border-color: #ccc;
 }
 
+#pnt-window .pnt-retranslate-btn {
+  background: #fff;
+  color: #1971c2;
+  border: 1px solid #a5d8ff;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+#pnt-window .pnt-retranslate-btn:hover {
+  background: #e7f5ff;
+  border-color: #74c0fc;
+}
+
 #pnt-window .pnt-cancel-btn {
   background: #1a1a1a;
   color: #fff;
@@ -225,36 +241,8 @@
    Inline Mode (原文内嵌对照)
    ============================================================ */
 
-#pnt-inline-wrapper {
-  display: block;
-}
-
-.pnt-inline-block {
-  margin-bottom: 8px;
-}
-
-.pnt-inline-block .pnt-inline-orig {
-  margin: 0 0 2px 0;
-  color: #333;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.pnt-inline-block .pnt-inline-trans {
-  margin: 0 0 8px 0;
-  color: #555;
-  font-size: 15px;
-  line-height: 1.8;
-  border-left: 3px solid #c8c8c8;
-  background: #f3f4f6;
-  border-radius: 4px;
-  padding: 6px 10px;
-  white-space: pre-wrap;
-}
-
 /* The content script inserts bare .pnt-inline-trans divs directly after
-   Pixiv's <p> elements (no .pnt-inline-block ancestor), so the styling
-   must not depend on that wrapper. */
+   Pixiv's <p> elements. */
 .pnt-inline-trans {
   margin: 0 0 8px 0;
   color: #555;
@@ -265,10 +253,6 @@
   border-radius: 4px;
   padding: 6px 10px;
   white-space: pre-wrap;
-}
-
-.pnt-inline-block .pnt-inline-trans:empty {
-  display: none;
 }
 
 .pnt-inline-trans:empty {
