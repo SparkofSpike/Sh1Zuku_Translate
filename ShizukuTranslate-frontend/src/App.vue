@@ -5,6 +5,7 @@
         <router-link to="/" class="nav-item">翻译</router-link>
         <router-link to="/history" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">历史</router-link>
         <router-link to="/admin" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">管理</router-link>
+        <router-link to="/logs" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">日志</router-link>
         <router-link to="/about" class="nav-item" style="margin-left: 24px;">关于</router-link>
         <div style="flex:1;"></div>
         <template v-if="!authStore.token">
@@ -38,8 +39,11 @@ onMounted(async () => {
       const res = await api.get('/auth/me')
       authStore.setAdmin(res.data.isAdmin)
     } catch (e) {
-      // token 失效，清除
+      // Token expired or revoked: clear it and leave protected pages.
       authStore.logout()
+      if (router.currentRoute.value.meta.requiresAuth) {
+        router.replace('/login')
+      }
     }
   }
 })
