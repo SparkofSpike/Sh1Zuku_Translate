@@ -13,58 +13,114 @@ internal sealed class UpdateService
     private const string ApiUrl = "https://api.github.com/repos/" + Repository + "/releases/latest";
     private const string ReleasePage = "https://github.com/" + Repository + "/releases/latest";
 
-    public async Task<UpdateResult> RunAsync(UpdateOptions options, Action<string> log)
+    public async Task<UpdateCheckResult> CheckAsync(
+        UpdateOptions options,
+        Action<string> log,
+        Action<int?> progress)
     {
         string? extensionDirectory = null;
         string? currentVersion = null;
         try
         {
+            progress(null);
             extensionDirectory = ResolveExtensionDirectory(options.Path);
             currentVersion = ReadManifestVersion(extensionDirectory);
             log($"安装目录: {extensionDirectory}\n");
             log($"当前版本: {(currentVersion ?? "未安装")}\n\n");
 
             using var client = CreateHttpClient();
-            log("[1/4] 正在检查最新版本...\n");
+            log("正在获取最新版本...\n");
             var release = await GetLatestReleaseAsync(client);
-            log($"最新版本: {release.Version}\n");
+            var updateAvailable = options.Force
+                || currentVersion is null
+                || CompareVersions(release.Version, currentVersion) > 0;
 
-            if (!options.Force && currentVersion is not null
-                && CompareVersions(release.Version, currentVersion) <= 0)
+            log($"最新版本: {release.Version}\n");
+            if (updateAvailable)
+            {
+                log("发现可用更新，点击“立即更新”开始安装。\n");
+            }
+            else
             {
                 log("已经是最新版本，无需更新。\n");
-                log("如需重新加载插件，请点击窗口中的“复制插件目录”按钮。\n");
-                return new UpdateResult(true, extensionDirectory, currentVersion, release.Version, null);
             }
 
-            var zipPath = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}.zip");
-            var stagingDirectory = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}");
-            try
-            {
-                log("\n[2/4] 正在下载更新包...\n");
-                await DownloadAsync(client, release, zipPath, log);
-                VerifyDigest(zipPath, release.Digest, log);
-
-                log("\n[3/4] 正在校验并安装插件...\n");
-                var extractedDirectory = ExtractExtension(zipPath, stagingDirectory, release.Version);
-                InstallExtension(extractedDirectory, extensionDirectory, log);
-            }
-            finally
-            {
-                TryDeleteFile(zipPath);
-                TryDeleteDirectory(stagingDirectory);
-            }
-
-            log("\n[4/4] 更新完成！\n");
-            log($"插件位置: {extensionDirectory}\n");
-            log("请点击窗口中的“复制插件目录”按钮，将目录粘贴到浏览器扩展管理页。\n");
-            return new UpdateResult(true, extensionDirectory, currentVersion, release.Version, null);
+            progress(100);
+            return new UpdateCheckResult(
+                true,
+                extensionDirectory,
+                currentVersion,
+                release.Version,
+                release.Asset.Url,
+                release.Asset.Digest,
+                updateAvailable,
+                null);
         }
         catch (Exception error)
         {
+            progress(0);
+            log($"\n检查更新失败: {error.Message}\n\n");
+            return new UpdateCheckResult(
+                false,
+                extensionDirectory,
+                currentVersion,
+                null,
+                null,
+                null,
+                false,
+                error.Message);
+        }
+    }
+
+    public async Task<UpdateResult> InstallAsync(
+        UpdateOptions options,
+        UpdateCheckResult check,
+        Action<string> log,
+        Action<int?> progress)
+    {
+        if (!check.Success || !check.UpdateAvailable || check.LatestVersion is null || check.AssetUrl is null)
+        {
+            return new UpdateResult(true, check.ExtensionDirectory, check.CurrentVersion, check.LatestVersion, null);
+        }
+
+        var extensionDirectory = check.ExtensionDirectory ?? ResolveExtensionDirectory(options.Path);
+        var zipPath = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}.zip");
+        var stagingDirectory = Path.Combine(Path.GetTempPath(), $"pnt-update-{Guid.NewGuid():N}");
+        try
+        {
+            using var client = CreateHttpClient();
+            progress(0);
+            log("正在下载更新包...\n");
+            await DownloadAsync(
+                client,
+                new ReleaseInfo(check.LatestVersion, new ReleaseAsset("update.zip", check.AssetUrl, check.Digest)),
+                zipPath,
+                log,
+                progress);
+            VerifyDigest(zipPath, check.Digest, log);
+
+            progress(null);
+            log("\n正在校验并安装插件...\n");
+            var extractedDirectory = ExtractExtension(zipPath, stagingDirectory, check.LatestVersion);
+            InstallExtension(extractedDirectory, extensionDirectory, log);
+            progress(100);
+
+            log("\n更新完成！\n");
+            log($"插件位置: {extensionDirectory}\n");
+            log("请在浏览器扩展管理页重新加载插件。\n");
+            return new UpdateResult(true, extensionDirectory, check.CurrentVersion, check.LatestVersion, null);
+        }
+        catch (Exception error)
+        {
+            progress(0);
             log($"\n更新失败: {error.Message}\n\n");
             log("如果插件正在使用，请先关闭 Pixiv 页面或浏览器后重试。\n");
-            return new UpdateResult(false, extensionDirectory, currentVersion, null, error.Message);
+            return new UpdateResult(false, extensionDirectory, check.CurrentVersion, check.LatestVersion, error.Message);
+        }
+        finally
+        {
+            TryDeleteFile(zipPath);
+            TryDeleteDirectory(stagingDirectory);
         }
     }
 
@@ -171,7 +227,8 @@ internal sealed class UpdateService
         HttpClient client,
         ReleaseInfo release,
         string outputPath,
-        Action<string> log)
+        Action<string> log,
+        Action<int?> progress)
     {
         using var response = await client.GetAsync(release.Asset.Url, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
@@ -184,6 +241,7 @@ internal sealed class UpdateService
         await using var output = File.Create(outputPath);
         var buffer = new byte[64 * 1024];
         long downloaded = 0;
+        var lastLoggedPercent = -1;
         int read;
         while ((read = await input.ReadAsync(buffer)) > 0)
         {
@@ -191,14 +249,24 @@ internal sealed class UpdateService
             downloaded += read;
             if (total is > 0)
             {
-                log($"\r  {downloaded / 1024d / 1024d:0.0} / {total.Value / 1024d / 1024d:0.0} MB ({downloaded * 100d / total.Value:0}%)");
+                var percent = (int)Math.Min(100, downloaded * 100d / total.Value);
+                progress(percent);
+                if (percent >= lastLoggedPercent + 5 || percent == 100)
+                {
+                    lastLoggedPercent = percent;
+                    log($"  下载进度 {percent}%\n");
+                }
             }
             else
             {
-                log($"\r  已下载 {downloaded / 1024d / 1024d:0.0} MB");
+                progress(null);
+                if (downloaded / (1024 * 1024) > lastLoggedPercent)
+                {
+                    lastLoggedPercent = (int)(downloaded / (1024 * 1024));
+                    log($"  已下载 {lastLoggedPercent} MB\n");
+                }
             }
         }
-        log("\n");
     }
 
     private static void VerifyDigest(string zipPath, string? digest, Action<string> log)
@@ -363,13 +431,20 @@ internal sealed class UpdateService
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
     }
 
-    private sealed record ReleaseInfo(string Version, ReleaseAsset Asset)
-    {
-        public string? Digest => Asset.Digest;
-    }
+    private sealed record ReleaseInfo(string Version, ReleaseAsset Asset);
 
     private sealed record ReleaseAsset(string Name, string Url, string? Digest);
 }
+
+internal sealed record UpdateCheckResult(
+    bool Success,
+    string? ExtensionDirectory,
+    string? CurrentVersion,
+    string? LatestVersion,
+    string? AssetUrl,
+    string? Digest,
+    bool UpdateAvailable,
+    string? Error);
 
 internal sealed record UpdateResult(
     bool Success,
