@@ -90,15 +90,7 @@ The extension makes a best-effort `PHPSESSID` check before requesting a novel an
 
 ### Install from a release
 
-On Windows, download a release package and run the bundled `tranShilator-plugin/CheckUpdate.exe`. The root-level `install.cmd` also delegates to the bundled updater when it is present; otherwise it falls back to `install.ps1`.
-
-For a fresh install using the PowerShell installer, run:
-
-```powershell
-.\install.ps1
-```
-
-The installer downloads the latest `tranShilator-plugin-*.zip` release asset and installs the extension under:
+On Windows, download a release package and run the bundled `tranShilator-plugin/CheckUpdate.exe`. The updater downloads the latest release zip and installs the extension under:
 
 ```text
 %LOCALAPPDATA%\PixivNovelTranslator\tranShilator-plugin
@@ -236,17 +228,17 @@ The repository's local deployment workflow is:
 
 ```powershell
 cd ..
-python ship.py
+python tools/ship.py
 ```
 
-`ship.py` uses the server and SSH settings defined at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, builds the frontend, copies the frontend into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the Windows services.
+`tools/ship.py` uses the server and SSH settings defined at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, builds the frontend, copies the frontend into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the Windows services.
 
 Useful options:
 
 ```text
-python ship.py --skip-pull
-python ship.py --upload-only
-python ship.py --help
+python tools/ship.py --skip-pull
+python tools/ship.py --upload-only
+python tools/ship.py --help
 ```
 
 The deployment script requires the configured local SSH key and access to the target Windows server. Review its server settings before using it for another environment. The legacy `deploy.bat`, `debug.bat`, and `start-dev.bat` scripts contain machine-specific paths and are not the portable deployment interface.
@@ -285,10 +277,9 @@ Sh1Zuku_Translate/
 │   └── install_ocr.md          # Older OCR deployment notes
 ├── tranShilator-plugin/        # Chrome/Edge extension and CheckUpdate.exe
 │   └── updatechecking/         # .NET updater source project
-├── build_extension.py          # Generates extension build metadata
-├── install.cmd                 # Windows extension install/update entry point
-├── install.ps1                 # PowerShell extension installer
-└── ship.py                     # Local build, packaging, upload, and restart workflow
+└── tools/                      # Local-only tooling (git-ignored)
+    ├── build_extension.py      # Generates extension build metadata
+    └── ship.py                 # Local build, packaging, upload, and restart workflow
 ```
 
 ## Configuration
