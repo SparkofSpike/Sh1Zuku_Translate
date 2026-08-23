@@ -29,6 +29,10 @@ deploy_package/
 /bin/
 /obj/
 
+# ===== Release artifacts (local only, built by ship.py) =====
+/CheckUpdate-v*.exe
+/tranShilator-plugin-v*.zip
+
 # ===== IDE =====
 .idea/
 .vscode/
@@ -56,6 +60,7 @@ ShizukuTranslate/src/main/resources/static/
 
 # CodeWhale internal state
 .codewhale/
+/HANDOFF.md
 
 # Backup files
 *.bak
