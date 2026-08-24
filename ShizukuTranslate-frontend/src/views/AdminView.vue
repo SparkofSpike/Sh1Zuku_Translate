@@ -44,9 +44,15 @@
         <h3 class="subheading">账户用量</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>账户</th><th>总 Token</th><th>调用次数</th><th>最新使用</th><th></th></tr></thead>
+            <thead><tr>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'username' }" @click="cycleSort('username')">账户{{ sortIndicator('username') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'totalTokens' }" @click="cycleSort('totalTokens')">总 Token{{ sortIndicator('totalTokens') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'requestCount' }" @click="cycleSort('requestCount')">调用次数{{ sortIndicator('requestCount') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'latestUsedAt' }" @click="cycleSort('latestUsedAt')">最新使用{{ sortIndicator('latestUsedAt') }}</th>
+              <th></th>
+            </tr></thead>
             <tbody>
-              <tr v-for="user in usage.users" :key="user.id">
+              <tr v-for="user in sortedUsers" :key="user.id">
                 <td><strong>{{ user.username }}</strong><small>{{ user.email }}</small></td>
                 <td>{{ formatNumber(user.totalTokens) }}</td>
                 <td>{{ user.requestCount }}</td>
@@ -135,11 +141,48 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import api from '../api'
 import { renderMarkdown } from '../utils/markdown'
 
 const usage = ref({ totalTokens: 0, promptTokens: 0, completionTokens: 0, requestCount: 0, daily: [], byModel: [], users: [] })
+
+// 账户用量表格排序：不按是默认，第一次点击升序，第二次降序，第三次还原，以此类推
+const sortKey = ref(null)        // 'username' | 'totalTokens' | 'requestCount' | 'latestUsedAt' | null
+const sortDirection = ref(null)  // 'asc' | 'desc' | null（null 表示还原为默认顺序）
+
+function cycleSort(key) {
+  if (sortKey.value !== key) {
+    sortKey.value = key
+    sortDirection.value = 'asc'
+  } else if (sortDirection.value === 'asc') {
+    sortDirection.value = 'desc'
+  } else {
+    sortKey.value = null
+    sortDirection.value = null
+  }
+}
+
+function sortIndicator(key) {
+  if (sortKey.value !== key) return ''
+  return sortDirection.value === 'asc' ? ' ↑' : ' ↓'
+}
+
+const sortedUsers = computed(() => {
+  const users = usage.value.users || []
+  if (!sortKey.value || !sortDirection.value) return users
+  const dir = sortDirection.value === 'asc' ? 1 : -1
+  return [...users].sort((a, b) => {
+    const av = a[sortKey.value]
+    const bv = b[sortKey.value]
+    // 空值（如暂无使用时间）始终排在最后
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
+    return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir
+  })
+})
 const usageLoading = ref(true)
 const detailUser = ref(null)
 const detailLoading = ref(false)
@@ -247,6 +290,8 @@ h3 { font-size: 16px; font-weight: 600; }
 .model-bar-track { height: 8px; background: #eee; border-radius: 5px; overflow: hidden; }.model-bar-fill { height: 100%; background: #555; border-radius: 5px; }
 .subheading { margin: 24px 0 10px; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; font-size: 13px; } th, td { padding: 10px 8px; border-bottom: 1px solid #eee; text-align: left; white-space: nowrap; } th { color: #777; font-size: 12px; font-weight: 500; } td small { display: block; color: #999; font-size: 11px; }
+th.sortable { cursor: pointer; user-select: none; transition: color .15s; }th.sortable:hover { color: #222; }
+th.sorted { color: #222; font-weight: 600; }
 .btn-refresh, .btn-detail { background: #fff; color: #333; border-color: #bbb; }.btn-refresh:hover, .btn-detail:hover { background: #eee; }
 .markdown-editor { margin: 12px 0 12px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }.markdown-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid #eee; background: #fafafa; }.markdown-tab { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #666; font-size: 13px; }.markdown-tab:hover { background: #f0f0f0; color: #222; }.markdown-tab.active { border-bottom-color: #222; color: #222; font-weight: 600; }.markdown-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; margin: 0; border: 0; border-radius: 0; resize: vertical; }.announcement-markdown.markdown-preview { min-height: 140px; margin: 0; padding: 10px 12px; }.markdown-preview-empty { min-height: 140px; margin: 0; padding: 10px 12px; color: #999; font-size: 13px; }.section-title { margin: 0 0 12px; }.announcement-list { display: flex; flex-direction: column; }.announcement-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }.announcement-content { min-width: 0; flex: 1; }.announcement-item h4 { margin: 0; font-size: 15px; }.announcement-item time { color: #999; font-size: 12px; }.announcement-markdown { margin: 7px 0 0; color: #555; overflow-wrap: anywhere; }.announcement-markdown :deep(p), .announcement-markdown :deep(ul), .announcement-markdown :deep(ol), .announcement-markdown :deep(blockquote), .announcement-markdown :deep(pre) { margin: 0 0 7px; }.announcement-markdown :deep(p:last-child), .announcement-markdown :deep(ul:last-child), .announcement-markdown :deep(ol:last-child), .announcement-markdown :deep(blockquote:last-child), .announcement-markdown :deep(pre:last-child) { margin-bottom: 0; }.announcement-markdown :deep(ul), .announcement-markdown :deep(ol) { padding-left: 20px; }.announcement-markdown :deep(blockquote) { padding-left: 10px; border-left: 3px solid #ddd; color: #777; }.announcement-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; font-size: 12px; }.announcement-markdown :deep(pre) { padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: #f5f5f5; }.announcement-markdown :deep(pre code) { padding: 0; background: transparent; }.announcement-markdown :deep(a) { color: #444; text-decoration: underline; }
 .success { color: #2b8a3e; }.error { color: #e03131; }.detail-summary { display: flex; gap: 18px; margin: 14px 0; color: #777; font-size: 13px; }.detail-summary strong { color: #222; font-size: 20px; }.log-table { max-height: 390px; overflow-y: auto; }
