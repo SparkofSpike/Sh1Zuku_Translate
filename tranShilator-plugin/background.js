@@ -360,6 +360,9 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       customPrompt,
       thinkingType,
       controller,
+      async () => {
+        await notifyTab(tabId, { type: 'SSE_CONNECTED' });
+      },
       async (token) => {
         await notifyTab(tabId, { type: 'SSE_TOKEN', token });
       },
@@ -574,7 +577,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onToken, onDone, onError) {
+async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -620,11 +623,13 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   console.log('[PNT] STEP3 fetch backend:', url);
   // Full-novel requests can take minutes to pre-fill (huge prompt), so a
   // fixed total timeout would kill legitimate translations. Instead wait
-  // up to 5 min for the FIRST token, then clear the timer — after that
+  // up to 10 min for the FIRST token, then clear the timer — after that
   // the stream runs without an artificial cap (the backend enforces its
   // own async timeout). User cancellation still wins via AbortSignal.any
   // (Chrome/Edge 116+).
-  const firstTokenTimeoutMs = 300000;
+  // Match the backend's upstream read timeout. Long model pre-fill is slow,
+  // but should still fail eventually instead of hanging forever.
+  const firstTokenTimeoutMs = 600000;
   const firstTokenController = new AbortController();
   const signal = typeof AbortSignal.any === 'function'
     ? AbortSignal.any([controller.signal, firstTokenController.signal])
@@ -655,7 +660,7 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     }
     if (e && (e.name === 'TimeoutError'
         || (e.name === 'AbortError' && firstTokenController.signal.aborted))) {
-      throw new Error('AI 响应超时（5 分钟未收到首个 token），请重试');
+      throw new Error('AI 响应超时（10 分钟未收到首个 token），请重试');
     }
     console.error('[PNT] STEP3 FAIL backend fetch:', url, '->', e && e.message, e && e.cause ? String(e.cause) : '');
     throw new Error('翻译服务请求失败(网络): ' + (e && e.message ? e.message : 'network error'));
@@ -689,7 +694,9 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       return;
     }
 
-    if (typeof event.token === 'string') {
+    if (event.status === 'ai-connected') {
+      await onConnected();
+    } else if (typeof event.token === 'string') {
       // First token received: the pre-fill wait is over, drop the
       // timeout so a long full-novel stream is never cut short.
       if (firstTokenTimer) {

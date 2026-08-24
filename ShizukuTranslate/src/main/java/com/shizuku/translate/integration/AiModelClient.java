@@ -30,7 +30,9 @@ public class AiModelClient {
         this.objectMapper = objectMapper;
         this.requestFactory = new SimpleClientHttpRequestFactory();
         this.requestFactory.setConnectTimeout(15_000);
-        this.requestFactory.setReadTimeout(120_000);
+        // Keep this aligned with DeepSeekConfig: personal model profiles can
+        // also take several minutes before their first streamed byte.
+        this.requestFactory.setReadTimeout(600_000);
     }
 
     public DeepSeekResult chat(String systemPrompt, String userMessage, AiModelConfig config) {
@@ -55,6 +57,17 @@ public class AiModelClient {
     public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError) {
+        chatStream(systemPrompt, userMessage, config, onToken, onComplete, onError, () -> {});
+    }
+
+    /**
+     * Streams a model response and notifies once the upstream model response
+     * has connected. This is deliberately later than the backend HTTP ACK:
+     * the UI can distinguish network connection from model processing.
+     */
+    public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
+                           Consumer<String> onToken, Consumer<TokenUsage> onComplete,
+                           Consumer<String> onError, Runnable onUpstreamConnected) {
         final int maxRetries = 3;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -65,6 +78,7 @@ public class AiModelClient {
                         .headers(headers -> addAuth(headers, config))
                         .body(request)
                         .exchange((requestMessage, response) -> {
+                            onUpstreamConnected.run();
                             TokenUsage[] usage = new TokenUsage[1];
                             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                                     response.getBody(), StandardCharsets.UTF_8))) {

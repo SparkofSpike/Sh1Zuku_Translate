@@ -22,7 +22,10 @@ public class DeepSeekConfig {
         // SSE stream looks frozen; fail fast so we can retry instead.
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(15_000);
-        factory.setReadTimeout(120_000); // generous: streaming gaps can be long
+        // The model may spend several minutes in pre-fill before sending the
+        // first byte for a long novel. This is an inactivity timeout, not a
+        // total request limit; the browser still owns user cancellation.
+        factory.setReadTimeout(600_000); // 10 minutes between upstream bytes
         return RestClient.builder()
                 .baseUrl(props.getBaseUrl())
                 .requestFactory(factory)

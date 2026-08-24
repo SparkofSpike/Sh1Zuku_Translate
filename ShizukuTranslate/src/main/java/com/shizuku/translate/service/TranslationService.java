@@ -117,7 +117,7 @@ public class TranslationService {
 
     public void translateStream(String username, TranslateRequest request, boolean hideCustomPrompt,
                                 Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
-                                Consumer<String> onError) {
+                                Consumer<String> onError, Runnable onUpstreamConnected) {
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -204,7 +204,8 @@ public class TranslationService {
                     }
                     onComplete.accept(response);
                 },
-                error -> onError.accept(error)
+                error -> onError.accept(error),
+                onUpstreamConnected
         );
     }
 

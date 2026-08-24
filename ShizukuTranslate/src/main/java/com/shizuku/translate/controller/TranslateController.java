@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shizuku.translate.dto.SseDoneEvent;
 import com.shizuku.translate.dto.SseErrorEvent;
 import com.shizuku.translate.dto.SseTokenEvent;
+import com.shizuku.translate.dto.SseStatusEvent;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.service.TranslationService;
@@ -49,7 +50,10 @@ public class TranslateController {
                                       HttpServletRequest httpRequest) {
         String username = principal.getName();
         boolean pluginRequest = isPluginRequest(httpRequest);
-        SseEmitter emitter = new SseEmitter(300000L);
+        // Long model pre-fill plus generation can exceed five minutes. Keep
+        // the SSE request alive long enough for the upstream inactivity
+        // timeout; the client can still cancel it at any time.
+        SseEmitter emitter = new SseEmitter(1800000L);
 
         // Flush the response headers immediately so the client sees a
         // connected stream even before the first token arrives. Without
@@ -92,6 +96,14 @@ public class TranslateController {
                                 emitter.complete();
                             } catch (IOException e) {
                                 emitter.completeWithError(e);
+                            }
+                        },
+                        () -> {
+                            try {
+                                String json = objectMapper.writeValueAsString(new SseStatusEvent("ai-connected"));
+                                emitter.send(SseEmitter.event().data(json));
+                            } catch (IOException e) {
+                                throw new RuntimeException("Client disconnected", e);
                             }
                         }
                 );

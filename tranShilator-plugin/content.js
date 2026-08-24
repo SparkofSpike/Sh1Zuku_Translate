@@ -30,7 +30,10 @@ let state = {
   firstTokenTimer: null,   // pre-fill feedback timer
   waitTick: null,          // elapsed-time display timer
   autoStarted: false,      // translation was started by autoTranslate
-  firstTokenReceived: false // true once the first SSE token arrived
+  firstTokenReceived: false, // true once the first SSE token arrived
+  aiConnected: false,       // upstream model response has connected
+  expectedParagraphCount: 0, // number of numbered paragraphs in this request
+  missingParagraphIds: [] // ids the model did not return at completion
 };
 
 // ─── Current Page (paged novels) ─────────────────────────────
@@ -151,6 +154,26 @@ function textToParagraphs(text) {
     .split(/\n{2,}/)
     .map(p => p.trim())
     .filter(p => p.length > 0);
+}
+
+// Numbered requests must be checked against the same page boundaries used
+// by background.js. A blank result is not a successful translation: it is a
+// missing paragraph that needs to remain visible to the user.
+function expectedParagraphCount(originalContent, fullMode, currentPage) {
+  const pages = String(originalContent || '')
+    .split(/\[newpage\]/i)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+
+  if (fullMode) {
+    return pages.reduce((total, page) => total + textToParagraphs(page).length, 0);
+  }
+
+  if (currentPage > 0 && pages.length > 1) {
+    const page = pages[Math.min(currentPage - 1, pages.length - 1)] || '';
+    return textToParagraphs(page).length;
+  }
+  return textToParagraphs(originalContent || '').length;
 }
 
 function escapeHtml(str) {
@@ -378,10 +401,10 @@ function showTranslationDisplay() {
     openWindow();
     // Window was recreated (was closed with ×): repaint the content.
     if (!hadWindow && state.transBody) {
-      if (state.mode === 'paged') {
-        renderPagedStreaming();
-      } else if (state.numberedRequest) {
+      if (state.numberedRequest) {
         renderPanelFromJsonLines();
+      } else if (state.mode === 'paged') {
+        renderPagedStreaming();
       } else {
         state.transBody.textContent = state.streamingText;
       }
@@ -447,7 +470,7 @@ function updateTranslateButton(status) {
   };
 
   if (status === 'preparing') {
-    set(state.miniBtn, '网页处理中...', '#e03131');
+    set(state.miniBtn, '网络连接中...', '#e03131');
   } else if (status === 'reasoning') {
     set(state.miniBtn, 'AI 推理中...', '#1971c2');
   } else if (status === 'ai-processing') {
@@ -622,13 +645,13 @@ function appendToken(token) {
   state.streamingText += token;
 
   if (state.transBody) {
-    if (state.mode === 'paged') {
-      renderPagedStreaming();
-    } else if (state.numberedRequest) {
+    if (state.numberedRequest) {
       // JSON Lines stream landed in the panel renderer (inline mode
-      // degraded to panel, or panel mode on a numbered novel): parse and
-      // join it, otherwise the window shows raw {"id":..,"text":..} lines.
+      // degraded to panel, or a paged request): parse and join it, otherwise
+      // the window shows raw {"id":..,"text":..} lines.
       renderPanelFromJsonLines();
+    } else if (state.mode === 'paged') {
+      renderPagedStreaming();
     } else {
       state.transBody.textContent = state.streamingText;
     }
@@ -659,13 +682,19 @@ function renderPanelFromJsonLines() {
   if (!state.transBody) return;
   const entries = parseJsonLines(state.streamingText);
   if (!entries.length) {
-    state.transBody.textContent = state.streamingText;
+    const warning = state.missingParagraphIds.length > 0
+      ? `⚠ 未能解析完整的段落译文，请点击重新翻译。\n\n`
+      : '';
+    state.transBody.textContent = warning + state.streamingText;
     return;
   }
   const byId = new Map();
   entries.forEach((e) => byId.set(e.id, e.text));
   const ids = [...byId.keys()].sort((a, b) => a - b);
-  state.transBody.textContent = ids.map((id) => byId.get(id)).join('\n\n');
+  const warning = state.missingParagraphIds.length > 0
+    ? `⚠ 以下段落未返回译文：${state.missingParagraphIds.join('、')}。请点击重新翻译。\n\n`
+    : '';
+  state.transBody.textContent = warning + ids.map((id) => byId.get(id)).join('\n\n');
 }
 
 // Try to parse the accumulated stream as JSON Lines produced by the
@@ -688,8 +717,9 @@ function parseJsonLines(streamText) {
     if (line.endsWith('}')) {
       try {
         const obj = JSON.parse(line);
-        if (obj && typeof obj.id === 'number' && typeof obj.text === 'string') {
-          entries.push({ id: obj.id, text: obj.text });
+        const id = Number(obj && obj.id);
+        if (obj && Number.isInteger(id) && typeof obj.text === 'string') {
+          entries.push({ id, text: obj.text, complete: true });
           continue;
         }
       } catch (e) {
@@ -711,7 +741,7 @@ function parseJsonLines(streamText) {
       } catch (e) {
         // keep raw prefix
       }
-      entries.push({ id, text });
+      entries.push({ id, text, complete: false });
     }
   }
   return entries;
@@ -720,7 +750,7 @@ function parseJsonLines(streamText) {
 // Fill the translation divs from JSON Lines entries, mapped by id.
 function renderInlineJsonLines(entries) {
   const transEls = state.inlineTransEls || [];
-  if (!transEls.length || !entries.length) return;
+  if (!transEls.length) return;
 
   // Reset every div first so a remapped stream (e.g. after the model
   // re-emits an earlier line) does not leave stale text behind.
@@ -729,6 +759,14 @@ function renderInlineJsonLines(entries) {
   entries.forEach((entry) => {
     const el = transEls[entry.id - 1]; // ids are 1-based paragraph numbers
     if (el) el.textContent = entry.text;
+  });
+
+  // Never leave an omitted paragraph looking like an intentional blank line.
+  state.missingParagraphIds.forEach((id) => {
+    const el = transEls[id - 1];
+    if (el && !el.textContent) {
+      el.textContent = `⚠ 第 ${id} 段翻译缺失，请点击重新翻译`;
+    }
   });
 }
 
@@ -739,13 +777,39 @@ function refillInlineFromMap() {
   const transEls = state.inlineTransEls || [];
   transEls.forEach((el) => {
     if (!el || !el.dataset || !el.dataset.pid) return;
-    el.textContent = state.fullTranslations[el.dataset.pid] || '';
+    const id = Number(el.dataset.pid);
+    el.textContent = state.fullTranslations[el.dataset.pid]
+      || (state.missingParagraphIds.includes(id)
+        ? `⚠ 第 ${id} 段翻译缺失，请点击重新翻译`
+        : '');
   });
 }
 
 // Inline mode: split accumulated translation into paragraphs and fill
 // each translation div. Extra paragraphs merge into the last div instead
 // of overwriting earlier ones (fixes misaligned paragraph mapping).
+function validateNumberedStream() {
+  const entries = parseJsonLines(state.streamingText);
+  const counts = new Map();
+  entries.forEach((entry) => {
+    // A numbered paragraph with an empty text value is still missing: all
+    // source paragraphs are non-empty after request construction.
+    if (entry.complete && entry.text.trim().length > 0) {
+      counts.set(entry.id, (counts.get(entry.id) || 0) + 1);
+    }
+  });
+  const missing = [];
+  const invalid = [];
+  for (let id = 1; id <= state.expectedParagraphCount; id++) {
+    if (!counts.has(id)) missing.push(id);
+  }
+  counts.forEach((count, id) => {
+    if (id < 1 || id > state.expectedParagraphCount) invalid.push(id);
+    if (count > 1) invalid.push(`${id}（重复）`);
+  });
+  return { entries, missing, invalid };
+}
+
 function renderInlineStreaming() {
   const transEls = state.inlineTransEls || [];
   if (!transEls.length) return;
@@ -764,6 +828,14 @@ function renderInlineStreaming() {
       } else {
         renderInlineJsonLines(jsonEntries);
       }
+      return;
+    }
+    // Once completion has established that the numbered response is
+    // incomplete, do not fall back to positional splitting: that would put
+    // later paragraphs under the wrong original lines. Show explicit gaps.
+    if (state.missingParagraphIds.length) {
+      if (state.fullMode) refillInlineFromMap();
+      else renderInlineJsonLines([]);
       return;
     }
   }
@@ -853,6 +925,7 @@ async function handleTranslate() {
   // Manual invocations (button / popup) take over from autoTranslate.
   state.autoStarted = false;
   state.firstTokenReceived = false;
+  state.aiConnected = false;
   state.streamingText = '';
   state.paraTranslations = [];
   // A fresh translation is shown by default, even if the previous one
@@ -865,6 +938,8 @@ async function handleTranslate() {
   }
   state.fullTranslations = {};
   state.pageStartIds = [];
+  state.expectedParagraphCount = 0;
+  state.missingParagraphIds = [];
   // Long texts (paged Pixiv novels) can take DeepSeek a while to pre-fill;
   // if no token arrives within a few seconds, tell the user we are working
   // instead of leaving the UI looking stuck.
@@ -883,9 +958,12 @@ async function handleTranslate() {
     const secs = Math.round((Date.now() - state.waitStart) / 1000);
     const btn = state.miniBtn;
     if (btn) {
-      btn.textContent = 'AI 推理中 ' + secs + 's…';
-      btn.style.background = '#1971c2';
-      btn.style.borderColor = '#1971c2';
+      const connected = state.aiConnected || state.firstTokenReceived;
+      btn.textContent = connected
+        ? 'AI 推理中 ' + secs + 's…'
+        : '网络连接中 ' + secs + 's…';
+      btn.style.background = connected ? '#1971c2' : '#e03131';
+      btn.style.borderColor = connected ? '#1971c2' : '#e03131';
     }
   }, 1000);
 
@@ -918,7 +996,6 @@ async function handleTranslate() {
       // state until the first token arrives (DeepSeek pre-fill).
       thinkingType: settings.thinkingType
     });
-    updateTranslateButton('reasoning');
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
     if (state.translating) {
@@ -933,6 +1010,10 @@ function onNovelLoaded(data) {
   state.originalContent = data.originalContent || '';
   state.numberedRequest = !!data.numberedRequest;
   state.fullMode = !!data.fullMode;
+  state.expectedParagraphCount = state.numberedRequest
+    ? expectedParagraphCount(data.originalContent, state.fullMode, getCurrentNovelPage())
+    : 0;
+  state.missingParagraphIds = [];
   if (state.fullMode) {
     state.pageStartIds = computePageStartIds(data.originalContent);
   }
@@ -1104,6 +1185,12 @@ function waitForInlineContainer(data) {
   timer = setTimeout(tryBuild, 250);
 }
 
+function onStreamConnected() {
+  if (!state.translating) return;
+  state.aiConnected = true;
+  if (!state.firstTokenReceived) updateTranslateButton('reasoning');
+}
+
 function onStreamToken(token) {
   if (!state.translating) return; // cancelled — ignore late tokens
   // First token means the AI is really streaming — flip the button.
@@ -1121,6 +1208,23 @@ function onStreamToken(token) {
 
 function onStreamDone(data) {
   if (!state.translating) return; // cancelled — ignore
+
+  // A stream can close cleanly even when the model skipped a JSON line or
+  // emitted an id twice. Treat that as incomplete instead of telling the
+  // user "翻译完成" while silently leaving paragraphs untranslated.
+  if (state.numberedRequest && state.expectedParagraphCount > 0) {
+    const validation = validateNumberedStream();
+    state.missingParagraphIds = validation.missing;
+    if (validation.missing.length || validation.invalid.length) {
+      if (state.mode === 'inline') renderInlineStreaming();
+      else if (state.transBody) renderPanelFromJsonLines();
+      const missingText = validation.missing.length
+        ? `缺少第 ${validation.missing.slice(0, 8).join('、')}${validation.missing.length > 8 ? ' 等' : ''}段`
+        : '段落编号重复或无效';
+      finishTranslate(false, `模型返回不完整（${missingText}），请点击重新翻译`, data);
+      return;
+    }
+  }
   finishTranslate(true, null, data);
 }
 
@@ -1192,6 +1296,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'SSE_NOVEL_LOADED':
       onNovelLoaded(message.data);
+      sendResponse({ ok: true });
+      break;
+    case 'SSE_CONNECTED':
+      onStreamConnected();
       sendResponse({ ok: true });
       break;
     case 'SSE_TOKEN':
