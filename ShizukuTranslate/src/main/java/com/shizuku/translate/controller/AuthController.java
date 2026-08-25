@@ -97,8 +97,10 @@ public class AuthController {
     /** Probe a provider's model catalogue without exposing the credential to the browser. */
     @PostMapping("/model-profiles/detect")
     public ResponseEntity<?> detectModels(Principal principal, @RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(userService.detectModels(principal.getName(), body.get("provider"),
-                body.get("baseUrl"), body.get("apiKey")));
+        String rawProfileId = body.get("profileId");
+        Long profileId = rawProfileId == null || rawProfileId.isBlank() ? null : Long.valueOf(rawProfileId);
+        return ResponseEntity.ok(userService.detectModels(principal.getName(), profileId,
+                body.get("provider"), body.get("baseUrl"), body.get("apiKey")));
     }
 
     @PutMapping("/model-profiles/{id}")

@@ -243,8 +243,9 @@ async function detectModels() {
   error.value = ''
   try {
     const res = await api.post('/auth/model-profiles/detect', {
+      profileId: editingId.value ? String(editingId.value) : undefined,
       provider: form.value.provider,
-      baseUrl: form.value.provider === 'deepseek' ? '' : form.value.baseUrl,
+      baseUrl: form.value.provider === 'deepseek' && !form.value.baseUrl ? '' : form.value.baseUrl,
       apiKey: form.value.apiKey || undefined
     })
     detectedModels.value = res.data || []

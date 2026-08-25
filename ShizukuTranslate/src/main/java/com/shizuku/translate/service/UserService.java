@@ -308,7 +308,17 @@ public class UserService {
                                 .provider(values.provider).apiKey(apiKey.trim()).baseUrl(values.baseUrl).build()));
     }
 
-    public java.util.List<String> detectModels(String username, String provider, String baseUrl, String apiKey) {
+    public java.util.List<String> detectModels(String username, Long profileId, String provider, String baseUrl, String apiKey) {
+        // When editing an existing profile the browser does not resend the stored
+        // key, so fall back to the credential already saved on that profile.
+        if ((apiKey == null || apiKey.isBlank()) && profileId != null) {
+            User user = findByUsername(username);
+            AiModelProfile profile = modelProfileRepository.findByIdAndUserId(profileId, user.getId())
+                    .orElseThrow(() -> new BusinessException("模型配置不存在"));
+            if (baseUrl == null || baseUrl.isBlank()) baseUrl = profile.getBaseUrl();
+            if (provider == null || provider.isBlank()) provider = profile.getProvider();
+            apiKey = effectiveApiKey(profile);
+        }
         if (apiKey == null || apiKey.isBlank()) throw new BusinessException("请先配置 API Key");
         String normalizedProvider = provider == null || provider.isBlank() ? "deepseek" : provider.trim().toLowerCase();
         String url = baseUrl == null || baseUrl.isBlank() ? defaultBaseUrl(normalizedProvider) : baseUrl.trim();
