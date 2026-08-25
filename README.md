@@ -37,7 +37,7 @@ The extension supports:
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 
-The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
+The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
@@ -144,7 +144,7 @@ The OCR source code imports PaddlePaddle and PaddleOCR and initializes the Japan
 
 ```powershell
 cd ocr-worker
-python -m pip install paddlepaddle paddleocr flask pillow
+python -m pip install -r requirements.txt
 python ocr_server.py
 ```
 
@@ -155,7 +155,7 @@ The worker listens on `http://localhost:5557` by default and provides:
 
 Use `OCR_PORT` and `OCR_THRESHOLD` to override the default port and confidence threshold. The first PaddleOCR startup may download model files. Install a PaddlePaddle build compatible with the installed Python version if the generic package is unavailable for the platform.
 
-> Note: `ocr-worker/requirements.txt` is currently stale: it lists Flask 3.1.0 and EasyOCR 1.7.2, while `ocr_service.py` imports PaddlePaddle, PaddleOCR, and Pillow. Use the explicit installation command above, or update the requirements file before using it as the installation source.
+> `ocr-worker/requirements.txt` pins the PaddleOCR and PaddlePaddle versions used by this repository. If a platform does not provide these exact wheels, use a separately verified environment rather than silently upgrading production dependencies.
 
 ### 2. Start the backend
 
@@ -292,7 +292,12 @@ Sh1Zuku_Translate/
 | Variable | Description |
 |---|---|
 | `DEEPSEEK_API_KEY` | Server-wide DeepSeek key. Required when using the site-provided DeepSeek models or when a DeepSeek profile has no personal key. |
-| `JWT_SECRET` | JWT signing secret. A development default exists; set a strong value in production. |
+| `JWT_SECRET` | **Required in every deployment.** Use a strong random value; blank and known weak defaults are rejected, so the backend will not start without it. |
+| `JWT_ISSUER` | JWT issuer claim. Default: `shizuku-translate`. |
+| `CORS_ALLOWED_ORIGIN_PATTERNS` | Comma-separated allowed browser origins. Default: localhost frontend/backend origins. |
+| `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
+| `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
+| `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`; saturation returns a clear request-rejection error. |
 | `OCR_PORT` | OCR worker port. Default: `5557`. |
 | `OCR_THRESHOLD` | OCR confidence threshold. Default: `0.3`. |
 | `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |
@@ -358,11 +363,12 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 ## Known limitations
 
 - The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
-- The OCR worker's checked-in `requirements.txt` is older than the current PaddleOCR implementation and should be aligned before using it as the installation source.
 - The frontend package defines `dev`, `build`, and `preview` scripts but no test or typecheck script; `npm run build` is the available frontend verification command.
 - The backend exposes the H2 console at `/h2-console` in the checked-in configuration; protect or disable it before exposing the service outside a trusted environment.
 - H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
 - The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
+- The extension requests broad HTTP/HTTPS host access because the backend URL is user-configurable and may change independently of the extension release; requests are limited in code to the configured backend and Pixiv flows.
+- Upstream cancellation is cooperative: disconnecting or cancelling an SSE request interrupts the backend worker and stops reading the model response; providers that do not react immediately to a closed HTTP connection may continue processing briefly.
 - Model providers may impose their own rate limits, context limits, outages, or content policies.
 
 ## License

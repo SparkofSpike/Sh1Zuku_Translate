@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image  # noqa: F401 — required by PaddleOCR internals
@@ -34,6 +35,7 @@ class OcrService:
         self._ocr: PaddleOCR = PaddleOCR(
             lang="japan", use_textline_orientation=False
         )
+        self._ocr_lock = threading.Lock()
         print("PaddleOCR model loaded!")
 
     def process_image(
@@ -62,7 +64,8 @@ class OcrService:
             tmp_path: str = tmp.name
 
         try:
-            result: Any = self._ocr.ocr(tmp_path)
+            with self._ocr_lock:
+                result: Any = self._ocr.ocr(tmp_path)
             lines: List[Tuple[float, float, str]] = self._extract_lines(
                 result, threshold
             )

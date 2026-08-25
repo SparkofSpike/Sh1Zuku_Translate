@@ -1293,6 +1293,11 @@ function showToast(message) {
 // ─── Background Messages ────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || !message || typeof message.type !== 'string') {
+    sendResponse({ ok: false });
+    return false;
+  }
+
   switch (message.type) {
     case 'SSE_NOVEL_LOADED':
       onNovelLoaded(message.data);
