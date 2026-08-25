@@ -21,7 +21,7 @@ public class ApiKey {
     private Long id;
 
     /** Non-sensitive display prefix retained for management screens. */
-    @Column(name = "key_prefix", nullable = false, unique = true, length = 32)
+    @Column(name = "key_prefix", unique = true, length = 32)
     private String keyPrefix;
 
     /** SHA-256 digest of the complete API key; the plaintext is never persisted. */
