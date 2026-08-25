@@ -68,7 +68,7 @@ public class TranslationService {
                 image.getContentType() == null ? "image/png" : image.getContentType(), config);
         usageService.record(user, config, result.getUsage());
         TranslationRecord record = new TranslationRecord();
-        record.setUser(user); record.setSourceText(request.getSourceText()); record.setTranslatedText(result.getContent());
+        record.setUser(user); record.setSourceText(request.getSourceText() == null ? "" : request.getSourceText()); record.setTranslatedText(result.getContent());
         record.setModel(config.getModel()); record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
         record = recordRepository.save(record);
         TranslateResponse response = new TranslateResponse(); response.setId(record.getId());
@@ -78,6 +78,7 @@ public class TranslationService {
 
     @Transactional
     public TranslateResponse translate(String username, TranslateRequest request, boolean hideCustomPrompt) {
+        requireSourceText(request);
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -147,6 +148,7 @@ public class TranslationService {
                                 Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
                                 Consumer<String> onError, Runnable onUpstreamConnected,
                                 BooleanSupplier cancelled) {
+        requireSourceText(request);
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -240,6 +242,12 @@ public class TranslationService {
                 onUpstreamConnected,
                 cancelled
         );
+    }
+
+    private void requireSourceText(TranslateRequest request) {
+        if (request.getSourceText() == null || request.getSourceText().isBlank()) {
+            throw new com.shizuku.translate.exception.BusinessException("请输入要翻译的文本，或上传图片");
+        }
     }
 
     private String buildCacheKey(Long userId, AiModelConfig config, String systemPrompt, String sourceText) {

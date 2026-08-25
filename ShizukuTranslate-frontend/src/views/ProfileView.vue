@@ -31,8 +31,8 @@
           @click="selectProfile(null)"
         >
           <div class="profile-main">
-            <strong>站方 DeepSeek</strong>
-            <span class="profile-meta">使用站方 API Key · deepseek-v4-flash</span>
+            <strong>站方</strong>
+            <span class="profile-meta">使用站方 API Key · Flash / Pro / Flash Vision Exp</span>
           </div>
           <span v-if="selectedProfileId === null" class="selected-label">当前选择</span>
         </div>
@@ -57,7 +57,7 @@
         </div>
       </div>
 
-      <p v-if="!modelProfiles.length" class="empty-hint">还没有个人模型配置，当前使用站方 DeepSeek。</p>
+      <p v-if="!modelProfiles.length" class="empty-hint">还没有个人模型配置，当前使用站方。</p>
 
       <div v-if="formVisible" class="profile-form">
         <h4>{{ editingId ? '编辑模型配置' : '新增模型配置' }}</h4>
@@ -167,7 +167,7 @@ function selectProfile(id) {
     localStorage.setItem(PROFILE_SELECTION_KEY, String(id))
     localStorage.setItem('modelSelection', 'profile:' + id)
   }
-  message.value = id === null ? '已选择站方 DeepSeek' : '已选择个人模型配置'
+  message.value = id === null ? '已选择站方' : '已选择个人模型配置'
   error.value = ''
 }
 
@@ -299,7 +299,7 @@ async function clearProfileKey() {
     })
     await loadModelProfiles()
     cancelForm()
-    message.value = 'Key 已清除，将使用站方 DeepSeek'
+    message.value = 'Key 已清除，将使用站方'
   } catch (e) {
     error.value = e.response?.data?.error || '清除 Key 失败'
   }

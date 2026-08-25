@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedPresets = [];
   let savedModel = '';
   let savedModelProfileId = '';
-  const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
+  const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'];
 
   function backendPermissionOrigin(backendUrl) {
     try {
