@@ -21,7 +21,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.security.Principal;
-import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -33,11 +33,11 @@ public class TranslateController {
 
     private final TranslationService translationService;
     private final ObjectMapper objectMapper;
-    private final Executor translationStreamExecutor;
+    private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor translationStreamExecutor;
 
     public TranslateController(TranslationService translationService,
                                ObjectMapper objectMapper,
-                               @Qualifier("translationStreamExecutor") Executor translationStreamExecutor) {
+                               @Qualifier("translationStreamExecutor") org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor translationStreamExecutor) {
         this.translationService = translationService;
         this.objectMapper = objectMapper;
         this.translationStreamExecutor = translationStreamExecutor;
@@ -63,12 +63,30 @@ public class TranslateController {
         // timeout; the client can still cancel it at any time.
         SseEmitter emitter = new SseEmitter(1800000L);
         AtomicBoolean closed = new AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicReference<Future<?>> taskRef = new java.util.concurrent.atomic.AtomicReference<>();
+        Runnable cancelTask = () -> {
+            closed.set(true);
+            Future<?> task = taskRef.get();
+            if (task != null) {
+                task.cancel(true);
+            }
+        };
         emitter.onCompletion(() -> closed.set(true));
         emitter.onTimeout(() -> {
-            closed.set(true);
+            if (closed.compareAndSet(false, true)) {
+                try {
+                    emitter.send(SseEmitter.event().data(writeJson(new SseErrorEvent("Translation timed out"))));
+                } catch (IOException | IllegalStateException e) {
+                    log.debug("Unable to send timeout event because the client disconnected", e);
+                }
+            }
+            Future<?> task = taskRef.get();
+            if (task != null) {
+                task.cancel(true);
+            }
             emitter.complete();
         });
-        emitter.onError(error -> closed.set(true));
+        emitter.onError(error -> cancelTask.run());
 
         // Flush the response headers immediately so the client sees a
         // connected stream even before the first token arrives. Without
@@ -83,8 +101,8 @@ public class TranslateController {
         }
 
         try {
-            translationStreamExecutor.execute(() -> {
-            try {
+            Future<?> task = translationStreamExecutor.submit(() -> {
+                try {
                 translationService.translateStream(username, request, pluginRequest,
                         token -> {
                             String json = writeJson(new SseTokenEvent(token));
@@ -119,8 +137,9 @@ public class TranslateController {
                     log.error("Streaming translation failed", e);
                     emitter.completeWithError(e);
                 }
-            }
-        });
+                }
+            });
+            taskRef.set(task);
         } catch (RejectedExecutionException e) {
             log.warn("Streaming executor rejected request", e);
             closed.set(true);

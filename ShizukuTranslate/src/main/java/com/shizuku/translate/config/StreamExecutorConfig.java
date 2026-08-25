@@ -12,7 +12,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class StreamExecutorConfig {
 
     @Bean(name = "translationStreamExecutor")
-    public Executor translationStreamExecutor(
+    public ThreadPoolTaskExecutor translationStreamExecutor(
             @Value("${app.stream.core-pool-size}") int corePoolSize,
             @Value("${app.stream.max-pool-size}") int maxPoolSize,
             @Value("${app.stream.queue-capacity}") int queueCapacity) {
