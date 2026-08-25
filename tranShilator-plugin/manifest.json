@@ -13,8 +13,8 @@
   ],
   "host_permissions": [
     "https://www.pixiv.net/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

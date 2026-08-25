@@ -37,7 +37,7 @@ The extension supports:
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 
-The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
+The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
@@ -367,6 +367,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 - The backend exposes the H2 console at `/h2-console` in the checked-in configuration; protect or disable it before exposing the service outside a trusted environment.
 - H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
 - The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
+- The extension requests broad HTTP/HTTPS host access because the backend URL is user-configurable and may change independently of the extension release; requests are limited in code to the configured backend and Pixiv flows.
 - Upstream cancellation is cooperative: disconnecting or cancelling an SSE request interrupts the backend worker and stops reading the model response; providers that do not react immediately to a closed HTTP connection may continue processing briefly.
 - Model providers may impose their own rate limits, context limits, outages, or content policies.
 
