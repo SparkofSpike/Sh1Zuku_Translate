@@ -46,7 +46,7 @@
         >
           <div class="profile-main">
             <strong>{{ item.name }}</strong>
-            <span class="profile-meta">{{ providerLabel(item.provider) }} · {{ item.model }}</span>
+            <span class="profile-meta">{{ providerLabel(item.provider) }}/{{ item.model }}</span>
             <span class="profile-key">{{ item.hasApiKey ? 'API Key：' + item.apiKeyPreview : 'API Key：使用站方 Key' }}</span>
           </div>
           <div class="profile-actions">
@@ -72,7 +72,14 @@
         </select>
 
         <label class="field-label">模型名称</label>
-        <input v-model.trim="form.model" type="text" />
+        <div class="model-input-row">
+          <input v-model.trim="form.model" type="text" placeholder="例如 DeepSeek-V4-Flash" />
+          <button class="btn-sm" type="button" @click="detectModels" :disabled="detecting">{{ detecting ? '检测中...' : '检测模型' }}</button>
+        </div>
+        <div v-if="detectedModels.length" class="detected-models">
+          <button v-for="model in detectedModels" :key="model" type="button" class="model-chip" @click="form.model = model">{{ model }}</button>
+        </div>
+        <p class="field-hint">同一 API Key 可保存多条模型配置；检测失败时仍可手动填写。</p>
 
         <template v-if="form.provider !== 'deepseek'">
           <label class="field-label">Base URL</label>
@@ -134,6 +141,8 @@ const usage = ref({ promptTokens: 0, completionTokens: 0, totalTokens: 0, reques
 const message = ref('')
 const error = ref('')
 const saving = ref(false)
+const detecting = ref(false)
+const detectedModels = ref([])
 const newKey = ref('')
 const keys = ref([])
 
@@ -222,6 +231,28 @@ async function loadModelProfiles() {
     }
   } catch (e) {
     error.value = e.response?.data?.error || '加载模型配置失败'
+  }
+}
+
+async function detectModels() {
+  if (!form.value.apiKey && !editingProfile.value?.hasApiKey) {
+    error.value = '请先填写 API Key 后再检测模型'
+    return
+  }
+  detecting.value = true
+  error.value = ''
+  try {
+    const res = await api.post('/auth/model-profiles/detect', {
+      provider: form.value.provider,
+      baseUrl: form.value.provider === 'deepseek' ? '' : form.value.baseUrl,
+      apiKey: form.value.apiKey || undefined
+    })
+    detectedModels.value = res.data || []
+    if (!detectedModels.value.length) message.value = '供应商未返回模型列表，请手动填写'
+  } catch (e) {
+    error.value = e.response?.data?.error || '模型检测失败，可手动填写模型名称'
+  } finally {
+    detecting.value = false
   }
 }
 
@@ -369,6 +400,10 @@ onMounted(() => {
 .profile-form h4 { margin: 0 0 8px; }
 .field-label { display: block; margin: 12px 0 6px; font-size: 14px; font-weight: 600; }
 .base-url-input { min-width: 420px; }
+.model-input-row { display: flex; gap: 8px; align-items: center; }
+.model-input-row input { flex: 1; }
+.detected-models { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.model-chip { padding: 4px 8px; border: 1px solid #ccc; border-radius: 999px; background: white; cursor: pointer; font-size: 12px; }
 .usage-highlight { display: flex; flex-direction: column; gap: 2px; margin-top: 20px; padding: 16px; background: #f5f5f5; border: 1px solid #e6e6e6; border-radius: 8px; }
 .usage-highlight strong { font-size: 30px; letter-spacing: -.5px; }
 .usage-label, .usage-meta, .muted { color: #777; font-size: 13px; }

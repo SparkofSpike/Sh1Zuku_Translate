@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -41,6 +42,13 @@ public class TranslateController {
         this.translationService = translationService;
         this.objectMapper = objectMapper;
         this.translationStreamExecutor = translationStreamExecutor;
+    }
+
+    @PostMapping("/translate/image")
+    public ResponseEntity<TranslateResponse> translateImage(@RequestPart("image") MultipartFile image,
+                                                              @RequestPart("request") @Valid TranslateRequest request,
+                                                              Principal principal, HttpServletRequest httpRequest) throws IOException {
+        return ResponseEntity.ok(translationService.translateImage(principal.getName(), request, image, isPluginRequest(httpRequest)));
     }
 
     @PostMapping("/translate")

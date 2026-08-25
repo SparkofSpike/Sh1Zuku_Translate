@@ -12,14 +12,14 @@
     <input
       ref="fileInput"
       type="file"
-      accept="image/*"
+      accept="image/*,.txt,.md,text/plain,text/markdown"
       style="display:none"
       @change="onFileSelected"
     />
     <div class="drop-zone-hint">
       <p style="font-size:40px; margin:0; font-weight:200; color:#aaa;">+</p>
-      <p>拖拽图片到此处，或 <a @click="clickFileInput">点击选择文件</a></p>
-      <p style="font-size:13px; color:#999;">支持竖排日文小说截图，Ctrl+V 粘贴也可</p>
+      <p>拖拽图片或文档到此处，或 <a @click="clickFileInput">点击选择文件</a></p>
+      <p style="font-size:13px; color:#999;">支持图片、TXT、MD；图片也可 Ctrl+V 粘贴</p>
     </div>
   </div>
 </template>
@@ -41,15 +41,19 @@ function clickFileInput() {
 function onFileSelected(e: Event) {
   const target = e.target as HTMLInputElement
   const file = target.files?.[0]
-  if (file) emit('file-selected', file)
+  if (file && (file.type.startsWith('image/') || isTextFile(file))) emit('file-selected', file)
 }
 
 function onDrop(e: DragEvent) {
   dragging.value = false
   const file = e.dataTransfer?.files?.[0]
-  if (file && file.type.startsWith('image/')) {
+  if (file && (file.type.startsWith('image/') || isTextFile(file))) {
     emit('file-selected', file)
   }
+}
+
+function isTextFile(file: File) {
+  return file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.md')
 }
 
 function onPaste(e: ClipboardEvent) {

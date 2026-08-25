@@ -24,6 +24,13 @@ export function ocrImage(file: File, polish: boolean = true, threshold: number =
   })
 }
 
+export function translateImage(file: File, request: TranslateRequest) {
+  const formData = new FormData()
+  formData.append('image', file)
+  formData.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
+  return api.post<TranslateResponse>('/translate/image', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
 export function checkOcrHealth() {
   return api.get('/ocr/health')
 }

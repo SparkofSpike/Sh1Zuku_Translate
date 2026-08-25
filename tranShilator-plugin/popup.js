@@ -112,12 +112,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderModelOptions(profiles) {
     const profileList = Array.isArray(profiles) ? profiles : [];
     const models = [
-      ...defaultModels.map(model => ({ key: 'site:' + model, profileId: '0', model, label: '站方 DeepSeek · ' + model })),
+      ...defaultModels.map(model => ({ key: 'site:' + model, profileId: '0', model, label: '站方/DeepSeek/' + model })),
       ...profileList.map(profile => ({
         key: 'profile:' + String(profile.id),
         profileId: String(profile.id),
         model: profile.model,
-        label: profile.name + ' · ' + profile.model
+        label: profile.name + '/' + profile.provider + '/' + profile.model
       }))
     ];
     modelSelect.innerHTML = '';

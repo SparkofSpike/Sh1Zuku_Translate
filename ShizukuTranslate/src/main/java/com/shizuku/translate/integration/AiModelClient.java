@@ -14,6 +14,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -34,6 +35,24 @@ public class AiModelClient {
         // Keep this aligned with DeepSeekConfig: personal model profiles can
         // also take several minutes before their first streamed byte.
         this.requestFactory.setReadTimeout(600_000);
+    }
+
+    public DeepSeekResult chatWithImage(String systemPrompt, String userMessage, byte[] image, String mediaType, AiModelConfig config) {
+        if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
+        RestClient client = clientFor(config);
+        Map<String, Object> imagePart = Map.of("type", "image_url", "image_url", Map.of(
+                "url", "data:" + mediaType + ";base64," + Base64.getEncoder().encodeToString(image)));
+        Map<String, Object> textPart = Map.of("type", "text", "text", userMessage == null ? "" : userMessage);
+        Map<String, Object> request = new HashMap<>();
+        request.put("model", config.getModel());
+        request.put("temperature", 0.3);
+        request.put("max_tokens", 100000);
+        request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", List.of(textPart, imagePart))));
+        Map<String, Object> response = client.post().uri("/chat/completions")
+                .headers(headers -> addAuth(headers, config)).body(request).retrieve().body(Map.class);
+        if (response == null) throw new RuntimeException("模型返回为空");
+        return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config));
     }
 
     public DeepSeekResult chat(String systemPrompt, String userMessage, AiModelConfig config) {
@@ -305,6 +324,7 @@ public class AiModelClient {
         public String getModel() { return model; }
         public String getThinkingType() { return thinkingType; }
         public boolean isAnthropic() { return "anthropic".equals(provider); }
+        public boolean isVisual() { return "deepseek".equals(provider) && "deepseek-v4-flash-vision-exp".equalsIgnoreCase(model); }
     }
 
     public static class DeepSeekResult {

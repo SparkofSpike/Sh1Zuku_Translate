@@ -44,6 +44,8 @@ public class ApiKey {
     private LocalDateTime expiresAt;
     private boolean active;
 
+    public User getUser() { return user; }
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
