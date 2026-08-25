@@ -4,8 +4,6 @@
     <div class="card translation-card">
       <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
 
-    <ImageUploader @file-selected="handleAttachment" />
-
     <OcrPreview
       v-if="ocrPreview"
       :preview="ocrPreview"
@@ -20,12 +18,29 @@
 
     <p v-if="ocrError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ ocrError }}</p>
 
-    <textarea
-      v-model="sourceText"
-      placeholder="粘贴原文，或通过上方按钮上传 TXT、MD 或图片..."
-      rows="10"
-      style="margin-top:12px;"
-    ></textarea>
+    <div
+      class="source-wrap"
+      :class="{ 'source-wrap--active': dragActive }"
+      @dragenter.prevent="onDragEnter"
+      @dragover.prevent
+      @dragleave.prevent="onDragLeave"
+      @drop.prevent="onDropFile"
+    >
+      <textarea
+        v-model="sourceText"
+        placeholder="粘贴原文，或拖入 TXT / MD / 图片，也可点击右下角按钮上传..."
+        rows="10"
+        @paste="onTextareaPaste"
+      ></textarea>
+      <button class="upload-btn" type="button" title="上传图片 / TXT / MD" @click="fileInput?.click()">📎 上传</button>
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*,.txt,.md,text/plain,text/markdown"
+        style="display:none"
+        @change="onPickFile"
+      />
+    </div>
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:16px;">
       <select v-model="selectedModelKey" @change="handleModelChange" style="width:auto; min-width:240px;">
@@ -90,7 +105,6 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateImage, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
-import ImageUploader from '../components/ImageUploader.vue'
 import OcrPreview from '../components/OcrPreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
@@ -102,8 +116,9 @@ const model = ref('deepseek-v4-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
 const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-v4-flash'))
 const modelOptions = ref([
-  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/DeepSeek/deepseek-v4-flash' },
-  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/DeepSeek/deepseek-v4-pro' }
+  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
+  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
+  { key: 'site:deepseek-v4-flash-vision-exp', id: null as number | null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp（视觉）' }
 ])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
@@ -134,6 +149,11 @@ const pendingOcrFile = ref<File | null>(null)
 const pendingImageFile = ref<File | null>(null)
 const imageProcessingMode = ref<'model' | 'ocr'>('model')
 
+// Inline upload (button + drag & drop)
+const fileInput = ref<HTMLInputElement | null>(null)
+const dragActive = ref(false)
+let dragDepth = 0
+
 interface ModelProfileOption {
   id: number
   name: string
@@ -151,8 +171,9 @@ onMounted(async () => {
     const res = await api.get('/auth/model-profiles')
     const profiles = res.data || []
     modelOptions.value = [
-      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
-      { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' },
+      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
+      { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
+      { key: 'site:deepseek-v4-flash-vision-exp', id: null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp（视觉）' },
       ...profiles.map((item: ModelProfileOption & { provider: string }) => ({
         key: `profile:${item.id}`,
         id: item.id,
@@ -211,6 +232,45 @@ function handleModelChange() {
   localStorage.setItem('modelSelection', selected.key)
   if (selected.id === null) localStorage.setItem('modelProfileId', '0')
   else localStorage.setItem('modelProfileId', String(selected.id))
+}
+
+function onPickFile(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (file) handleAttachment(file)
+  target.value = ''
+}
+
+function onDragEnter() {
+  dragDepth++
+  dragActive.value = true
+}
+
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragActive.value = false
+}
+
+function onDropFile(e: DragEvent) {
+  dragDepth = 0
+  dragActive.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) handleAttachment(file)
+}
+
+function onTextareaPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) {
+        e.preventDefault()
+        handleAttachment(file)
+        return
+      }
+    }
+  }
 }
 
 function handleAttachment(file: File) {
@@ -390,6 +450,34 @@ async function translate() {
 .announcement-right {
   grid-column: 2;
   grid-row: 1;
+}
+
+.source-wrap {
+  position: relative;
+  margin-top: 12px;
+}
+
+.source-wrap--active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px dashed #4a9eff;
+  border-radius: 8px;
+  background: rgba(74, 158, 255, 0.06);
+  pointer-events: none;
+}
+
+.upload-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 10px;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.upload-btn:hover {
+  opacity: 1;
 }
 
 textarea {

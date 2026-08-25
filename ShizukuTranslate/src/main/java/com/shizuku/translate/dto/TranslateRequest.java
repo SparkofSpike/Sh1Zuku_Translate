@@ -1,12 +1,12 @@
 package com.shizuku.translate.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
 public class TranslateRequest {
-    @NotBlank @Size(max = 16777215)
+    /** Optional for image translation; regular translation paths validate it explicitly. */
+    @Size(max = 16777215)
     private String sourceText;
     /** Optional: when omitted, use the model configured in the user's profile. */
     private String model;

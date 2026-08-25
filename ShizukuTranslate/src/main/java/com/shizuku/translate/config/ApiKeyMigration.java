@@ -30,6 +30,7 @@ public class ApiKeyMigration implements ApplicationRunner {
         ensureColumn("KEY_PREFIX", "VARCHAR(32)");
         ensureColumn("KEY_HASH", "VARCHAR(64)");
         ensureColumn("KEY_VALUE", "VARCHAR(64)");
+        ensureLegacyKeyColumnNullable();
         migrateLegacyRows();
     }
 
@@ -48,6 +49,16 @@ public class ApiKeyMigration implements ApplicationRunner {
                 Integer.class, column);
         if (count != null && count == 0) {
             jdbcTemplate.execute("ALTER TABLE API_KEYS ADD " + column + " " + definition);
+        }
+    }
+
+    private void ensureLegacyKeyColumnNullable() {
+        String nullable = jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS " +
+                        "WHERE TABLE_SCHEMA = SCHEMA() AND TABLE_NAME = 'API_KEYS' AND COLUMN_NAME = 'KEY_VALUE'",
+                String.class);
+        if ("NO".equalsIgnoreCase(nullable)) {
+            jdbcTemplate.execute("ALTER TABLE API_KEYS ALTER COLUMN KEY_VALUE VARCHAR(64) NULL");
         }
     }
 

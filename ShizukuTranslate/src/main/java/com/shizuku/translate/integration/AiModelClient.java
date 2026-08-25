@@ -40,8 +40,21 @@ public class AiModelClient {
     public DeepSeekResult chatWithImage(String systemPrompt, String userMessage, byte[] image, String mediaType, AiModelConfig config) {
         if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
         RestClient client = clientFor(config);
+        Map<String, Object> request = buildVisionRequest(systemPrompt, userMessage, image, mediaType, config);
+        Map<String, Object> response = client.post().uri("/chat/completions")
+                .headers(headers -> addAuth(headers, config)).body(request).retrieve().body(Map.class);
+        if (response == null) throw new RuntimeException("模型返回为空");
+        return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config));
+    }
+
+    /** Builds the OpenAI-compatible multimodal body used by DeepSeek Vision. */
+    static Map<String, Object> buildVisionRequest(String systemPrompt, String userMessage,
+                                                   byte[] image, String mediaType, AiModelConfig config) {
+        if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
+        if (image == null || image.length == 0) throw new IllegalArgumentException("图片不能为空");
+        String detectedMediaType = detectImageMediaType(image);
         Map<String, Object> imagePart = Map.of("type", "image_url", "image_url", Map.of(
-                "url", "data:" + mediaType + ";base64," + Base64.getEncoder().encodeToString(image)));
+                "url", "data:" + detectedMediaType + ";base64," + Base64.getEncoder().encodeToString(image)));
         Map<String, Object> textPart = Map.of("type", "text", "text", userMessage == null ? "" : userMessage);
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
@@ -49,10 +62,35 @@ public class AiModelClient {
         request.put("max_tokens", 100000);
         request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", List.of(textPart, imagePart))));
-        Map<String, Object> response = client.post().uri("/chat/completions")
-                .headers(headers -> addAuth(headers, config)).body(request).retrieve().body(Map.class);
-        if (response == null) throw new RuntimeException("模型返回为空");
-        return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config));
+        if ("enabled".equalsIgnoreCase(config.getThinkingType())) {
+            request.put("thinking", Map.of("type", "enabled"));
+        }
+        return request;
+    }
+
+    private static String detectImageMediaType(byte[] image) {
+        if (image.length >= 8
+                && (image[0] & 0xff) == 0x89 && image[1] == 0x50 && image[2] == 0x4e
+                && image[3] == 0x47 && image[4] == 0x0d && image[5] == 0x0a
+                && image[6] == 0x1a && image[7] == 0x0a) {
+            return "image/png";
+        }
+        if (image.length >= 3
+                && (image[0] & 0xff) == 0xff && (image[1] & 0xff) == 0xd8
+                && (image[2] & 0xff) == 0xff) {
+            return "image/jpeg";
+        }
+        if (image.length >= 6
+                && ((image[0] == 'G' && image[1] == 'I' && image[2] == 'F')
+                && (image[3] == '8' && (image[4] == '7' || image[4] == '9') && image[5] == 'a'))) {
+            return "image/gif";
+        }
+        if (image.length >= 12
+                && image[0] == 'R' && image[1] == 'I' && image[2] == 'F' && image[3] == 'F'
+                && image[8] == 'W' && image[9] == 'E' && image[10] == 'B' && image[11] == 'P') {
+            return "image/webp";
+        }
+        throw new IllegalArgumentException("视觉模型仅支持 JPEG、PNG、GIF 和 WebP 图片");
     }
 
     public DeepSeekResult chat(String systemPrompt, String userMessage, AiModelConfig config) {

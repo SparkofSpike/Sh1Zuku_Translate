@@ -11,7 +11,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific terminology, plus an optional custom prompt.
-- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload an image and choose **model processing** (visual model only) or **OCR processing** through the PaddleOCR worker. Word/PDF files are not supported yet.
+- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload an image and choose **model processing** with `deepseek-v4-flash-vision-exp` or **OCR processing** through the PaddleOCR worker. Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
@@ -194,7 +194,7 @@ The web application's profile page supports multiple saved model profiles and re
 - A reference to a personal API key (legacy inline keys are migrated lazily).
 - A base URL for compatible providers.
 
-One API key may be used by multiple profiles. The authenticated endpoint `POST /auth/model-profiles/detect` proxies the provider's `/models` endpoint; model detection is optional and manual model entry remains supported. Model selectors use slash-separated labels such as `站方/DeepSeek/deepseek-v4-flash` and `我的配置/openai/gpt-5.6-sol`.
+One API key may be used by multiple profiles. The authenticated endpoint `POST /auth/model-profiles/detect` proxies the provider's `/models` endpoint; model detection is optional and manual model entry remains supported. Model selectors use slash-separated labels such as `站方/DeepSeek/deepseek-v4-flash`, `站方/DeepSeek/deepseek-v4-pro`, `站方/DeepSeek/deepseek-v4-flash-vision-exp（视觉）`, and `我的配置/openai/gpt-5.6-sol`.
 
 The defaults are:
 

@@ -67,6 +67,7 @@ ShizukuTranslate/src/main/resources/static/
 
 # CodeWhale project instructions (local only)
 AGENTS.md
+MEMORY_DRAFT.md
 
 # Local-only tooling & changelog (not for GitHub)
 /tools/
