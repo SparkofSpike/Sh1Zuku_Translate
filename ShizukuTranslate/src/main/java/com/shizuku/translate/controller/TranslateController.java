@@ -10,6 +10,7 @@ import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.service.TranslationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -20,6 +21,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.security.Principal;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -29,10 +33,14 @@ public class TranslateController {
 
     private final TranslationService translationService;
     private final ObjectMapper objectMapper;
+    private final Executor translationStreamExecutor;
 
-    public TranslateController(TranslationService translationService, ObjectMapper objectMapper) {
+    public TranslateController(TranslationService translationService,
+                               ObjectMapper objectMapper,
+                               @Qualifier("translationStreamExecutor") Executor translationStreamExecutor) {
         this.translationService = translationService;
         this.objectMapper = objectMapper;
+        this.translationStreamExecutor = translationStreamExecutor;
     }
 
     @PostMapping("/translate")
@@ -54,67 +62,102 @@ public class TranslateController {
         // the SSE request alive long enough for the upstream inactivity
         // timeout; the client can still cancel it at any time.
         SseEmitter emitter = new SseEmitter(1800000L);
+        AtomicBoolean closed = new AtomicBoolean(false);
+        emitter.onCompletion(() -> closed.set(true));
+        emitter.onTimeout(() -> {
+            closed.set(true);
+            emitter.complete();
+        });
+        emitter.onError(error -> closed.set(true));
 
         // Flush the response headers immediately so the client sees a
         // connected stream even before the first token arrives. Without
         // this, the browser's fetch() stays pending while DeepSeek is
         // still pre-filling long texts (which can take minutes), making
         // the translation look "stuck".
-        try {
-            emitter.send(SseEmitter.event().comment("connected"));
-        } catch (IOException e) {
+        if (!sendEvent(emitter, closed, SseEmitter.event().comment("connected"))) {
+            IOException e = new IOException("Client disconnected before stream started");
             log.warn("Client disconnected before stream started", e);
             emitter.completeWithError(e);
             return emitter;
         }
 
-        new Thread(() -> {
+        try {
+            translationStreamExecutor.execute(() -> {
             try {
                 translationService.translateStream(username, request, pluginRequest,
                         token -> {
-                            try {
-                                String json = objectMapper.writeValueAsString(new SseTokenEvent(token));
-                                emitter.send(SseEmitter.event().data(json));
-                            } catch (IOException e) {
-                                throw new RuntimeException("Client disconnected", e);
-                            }
+                            String json = writeJson(new SseTokenEvent(token));
+                            sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
                         },
                         response -> {
-                            try {
-                                String json = objectMapper.writeValueAsString(
-                                        new SseDoneEvent(response.getId(), response.getTranslatedText(), response.getTokenUsage()));
-                                emitter.send(SseEmitter.event().data(json));
-                                emitter.complete();
-                            } catch (IOException e) {
-                                emitter.completeWithError(e);
+                            if (!closed.get()) {
+                                String json = writeJson(new SseDoneEvent(response.getId(), response.getTranslatedText(), response.getTokenUsage()));
+                                if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
+                                    emitter.complete();
+                                }
                             }
                         },
                         error -> {
-                            try {
-                                String json = objectMapper.writeValueAsString(new SseErrorEvent(error));
-                                emitter.send(SseEmitter.event().data(json));
-                                emitter.complete();
-                            } catch (IOException e) {
-                                emitter.completeWithError(e);
+                            if (!closed.get()) {
+                                String json = writeJson(new SseErrorEvent(error));
+                                if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
+                                    emitter.complete();
+                                }
                             }
                         },
                         () -> {
-                            try {
-                                String json = objectMapper.writeValueAsString(new SseStatusEvent("ai-connected"));
-                                emitter.send(SseEmitter.event().data(json));
-                            } catch (IOException e) {
-                                throw new RuntimeException("Client disconnected", e);
-                            }
+                            String json = writeJson(new SseStatusEvent("ai-connected"));
+                            sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
                         }
                 );
+            } catch (ClientDisconnectedException e) {
+                log.info("Streaming translation cancelled by client");
+                closed.set(true);
             } catch (Exception e) {
-                log.error("Streaming translation failed", e);
-                emitter.completeWithError(e);
+                if (!closed.get()) {
+                    log.error("Streaming translation failed", e);
+                    emitter.completeWithError(e);
+                }
             }
-        }).start();
+        });
+        } catch (RejectedExecutionException e) {
+            log.warn("Streaming executor rejected request", e);
+            closed.set(true);
+            emitter.completeWithError(new IllegalStateException("Too many active translation streams"));
+        }
 
         return emitter;
     }
+
+    private String writeJson(Object event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to serialize SSE event", e);
+        }
+    }
+
+    private void sendOrDisconnect(SseEmitter emitter, AtomicBoolean closed, SseEmitter.SseEventBuilder event) {
+        if (!sendEvent(emitter, closed, event)) {
+            throw new ClientDisconnectedException();
+        }
+    }
+
+    private boolean sendEvent(SseEmitter emitter, AtomicBoolean closed, SseEmitter.SseEventBuilder event) {
+        if (closed.get()) {
+            return false;
+        }
+        try {
+            emitter.send(event);
+            return true;
+        } catch (IOException | IllegalStateException e) {
+            closed.set(true);
+            return false;
+        }
+    }
+
+    private static class ClientDisconnectedException extends RuntimeException {}
 
     private boolean isPluginRequest(HttpServletRequest request) {
         return StringUtils.hasText(request.getHeader("X-API-Key"))

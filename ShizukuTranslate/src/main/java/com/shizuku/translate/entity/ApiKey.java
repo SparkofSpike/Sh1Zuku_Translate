@@ -23,6 +23,9 @@ public class ApiKey {
     @Column(nullable = false, unique = true, length = 64)
     private String keyValue;
 
+    @Column(unique = true, length = 64)
+    private String keyHash;
+
     @Column(nullable = false, length = 50)
     private String name;
 

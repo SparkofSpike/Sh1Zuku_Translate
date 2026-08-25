@@ -220,6 +220,11 @@ function keepaliveStop() {
 // ─── Message Handler ─────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || !message || typeof message.type !== 'string') {
+    sendResponse({ success: false, error: '非法消息' });
+    return false;
+  }
+
   switch (message.type) {
     case 'TRANSLATE_NOVEL_STREAM': {
       // Acknowledge immediately; the streaming work runs detached and
@@ -295,6 +300,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
 async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = 'deepseek-v4-flash', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode) {
+  const safeNovelId = String(novelId || '').match(/^\d+$/) ? String(novelId) : '';
+  if (!safeNovelId) {
+    throw new Error('无效的小说 ID');
+  }
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -308,8 +317,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
 
   try {
     // Step 1: fetch novel from Pixiv API
-    console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + novelId);
-    const novel = await fetchNovelFromPixiv(novelId, controller.signal);
+    console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + safeNovelId);
+    const novel = await fetchNovelFromPixiv(safeNovelId, controller.signal);
     console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
     // All inline modes (single-page, paged, full) number their paragraphs

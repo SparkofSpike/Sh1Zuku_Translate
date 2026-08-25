@@ -91,10 +91,12 @@ export function translateStream(
     buffer += decoder.decode()
     if (buffer) processLine(buffer)
     if (!doneReceived) onError('翻译流意外中断，请重试')
-  }).catch(err => {
+  }).catch((err: unknown) => {
     // Abort is the expected cancellation path from the web UI, not an
     // error that should overwrite the user's cleared state.
-    if (!doneReceived && !controller.signal.aborted) onError(err.message)
+    if (!doneReceived && !controller.signal.aborted) {
+      onError(err instanceof Error ? err.message : 'Stream request failed')
+    }
   })
 
   return controller

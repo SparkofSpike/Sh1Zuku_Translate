@@ -27,6 +27,10 @@ public class OcrController {
             return ResponseEntity.badRequest()
                     .body(OcrResponse.error("请上传有效的图片文件"));
         }
+        if (threshold < 0 || threshold > 1) {
+            return ResponseEntity.badRequest()
+                    .body(OcrResponse.error("OCR 置信度阈值必须在 0 到 1 之间"));
+        }
 
         // 校验文件类型
         String contentType = file.getContentType();

@@ -1,7 +1,5 @@
 package com.shizuku.translate.security;
 
-import com.shizuku.translate.entity.ApiKey;
-import com.shizuku.translate.repository.ApiKeyRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +10,9 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.shizuku.translate.repository.ApiKeyRepository;
+import com.shizuku.translate.service.ApiKeyService;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -37,7 +38,10 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
         String apiKeyValue = extractApiKey(request);
         if (StringUtils.hasText(apiKeyValue)) {
-            apiKeyRepository.findByKeyValueAndActiveTrue(apiKeyValue).ifPresent(key -> {
+            String keyHash = ApiKeyService.hashApiKey(apiKeyValue.trim());
+            apiKeyRepository.findByKeyHashAndActiveTrue(keyHash)
+                    .or(() -> apiKeyRepository.findByKeyValueAndActiveTrue(apiKeyValue.trim()))
+                    .ifPresent(key -> {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                                 key.getUser().getUsername(), null, Collections.emptyList());

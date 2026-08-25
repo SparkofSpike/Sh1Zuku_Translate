@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
@@ -127,6 +127,12 @@ const ocrPolish = ref(false)
 const ocrThreshold = ref(0.3)
 const pendingOcrFile = ref<File | null>(null)
 
+interface ModelProfileOption {
+  id: number
+  name: string
+  model: string
+}
+
 onMounted(async () => {
   try {
     const res = await api.get('/presets')
@@ -140,7 +146,7 @@ onMounted(async () => {
     modelOptions.value = [
       { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
       { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' },
-      ...profiles.map((item: any) => ({
+      ...profiles.map((item: ModelProfileOption) => ({
         key: `profile:${item.id}`,
         id: item.id,
         model: item.model,
@@ -178,6 +184,10 @@ onMounted(async () => {
   } catch (e) {
     console.error('无法加载公告列表', e)
   }
+})
+
+onUnmounted(() => {
+  cancel()
 })
 
 function readSelectedProfileId(): number | null {
@@ -284,9 +294,9 @@ async function translate() {
     streamingResult.value = null
     result.value = null
 
-    const source = axios.CancelToken.source()
+    const controller = new AbortController()
     cancelFn = () => {
-      source.cancel('用户取消')
+      controller.abort()
       status.value = 'idle'
       cancelFn = null
     }
@@ -303,11 +313,12 @@ async function translate() {
         modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined,
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
-      }, { cancelToken: source.token })
+      }, { signal: controller.signal })
       result.value = res.data
-    } catch (e: any) {
-      if (axios.isCancel(e)) return
-      error.value = e.response?.data?.error || '翻译失败'
+    } catch (e: unknown) {
+      if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
+      const err = e as { response?: { data?: { error?: string } } }
+      error.value = err.response?.data?.error || '翻译失败'
     } finally {
       status.value = 'idle'
       cancelFn = null

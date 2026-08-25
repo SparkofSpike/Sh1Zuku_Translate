@@ -5,13 +5,31 @@ This module is intentionally thin — all OCR logic lives in
 """
 
 from flask import Flask, request, jsonify
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from config import Config
 from ocr_service import OcrService
 
 config: Config = Config()
 app: Flask = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = config.max_content_length
 ocr_service: OcrService = OcrService(config)
+
+
+@app.errorhandler(BadRequest)
+def bad_request(error):
+    return jsonify({"error": "BAD_REQUEST", "message": str(error.description)}), 400
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def request_too_large(_error):
+    return jsonify({"error": "PAYLOAD_TOO_LARGE", "message": "Image upload is too large"}), 413
+
+
+@app.errorhandler(Exception)
+def unhandled_error(error):
+    app.logger.exception("Unhandled OCR worker error", exc_info=error)
+    return jsonify({"error": "OCR_INTERNAL_ERROR", "message": "OCR worker failed"}), 500
 
 
 @app.route("/ocr", methods=["POST"])
@@ -29,18 +47,21 @@ def ocr_image():
     try:
         threshold: float = float(request.form.get("threshold", config.threshold))
     except (ValueError, TypeError):
-        threshold = 0.5  # conservative fallback on parse failure
+        return jsonify({"error": "BAD_REQUEST", "message": "threshold must be a number"}), 400
+
+    if threshold < 0 or threshold > 1:
+        return jsonify({"error": "BAD_REQUEST", "message": "threshold must be between 0 and 1"}), 400
 
     if "image" not in request.files:
-        return jsonify({"error": "Image file required"}), 400
+        return jsonify({"error": "BAD_REQUEST", "message": "Image file required"}), 400
 
     file = request.files["image"]
     if file.filename == "":
-        return jsonify({"error": "File name is empty"}), 400
+        return jsonify({"error": "BAD_REQUEST", "message": "File name is empty"}), 400
 
     result = ocr_service.process_image(file, threshold)
     if "error" in result:
-        return jsonify(result), 500
+        return jsonify({"error": "OCR_FAILED", "message": result["error"]}), 500
     return jsonify(result)
 
 

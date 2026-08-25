@@ -35,6 +35,33 @@ document.addEventListener('DOMContentLoaded', () => {
   let savedModelProfileId = '';
   const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 
+  function backendPermissionOrigin(backendUrl) {
+    try {
+      const url = new URL(backendUrl);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return null;
+      return url.origin + '/*';
+    } catch {
+      return null;
+    }
+  }
+
+  async function ensureBackendHostPermission(backendUrl, showPrompt) {
+    const origin = backendPermissionOrigin(backendUrl);
+    if (!origin) return true;
+
+    const permissions = { origins: [origin] };
+    const alreadyGranted = await chrome.permissions.contains(permissions);
+    if (alreadyGranted) return true;
+    if (!showPrompt) return false;
+
+    const granted = await chrome.permissions.request(permissions);
+    if (!granted) {
+      showStatus('请允许插件访问后端地址后再试', 'err');
+    }
+    return granted;
+  }
+
   // ─── Check current tab on open ──────────────────────────
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
@@ -217,7 +244,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  saveBtn.addEventListener('click', () => saveSettings(true));
+  saveBtn.addEventListener('click', async () => {
+    if (await ensureBackendHostPermission(backendUrlInput.value.trim(), true)) {
+      saveSettings(true);
+    }
+  });
 
   // ─── Submit error log ─────────────────────────────────────
   // Send the most recent recorded extension errors to the server's log
@@ -351,6 +382,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // retranslates.
 
   async function startTranslate() {
+    if (!await ensureBackendHostPermission(backendUrlInput.value.trim(), true)) {
+      return;
+    }
     await saveSettings(false);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

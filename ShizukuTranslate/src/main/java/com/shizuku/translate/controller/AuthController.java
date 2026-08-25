@@ -151,10 +151,11 @@ public class AuthController {
     public ResponseEntity<?> createApiKey(Principal principal, @RequestBody Map<String, String> body) {
         String username = principal.getName();
         String name = body.getOrDefault("name", "unnamed");
-        var key = apiKeyService.createApiKey(username, name);
+        var created = apiKeyService.createApiKey(username, name);
+        var key = created.entity();
         var resp = new java.util.LinkedHashMap<String, Object>();
         resp.put("id", key.getId());
-        resp.put("keyValue", key.getKeyValue());
+        resp.put("keyValue", created.rawKey());
         resp.put("name", key.getName());
         resp.put("createdAt", key.getCreatedAt() != null ? key.getCreatedAt().toString() : null);
         resp.put("expiresAt", null);
@@ -173,7 +174,7 @@ public class AuthController {
                     m.put("createdAt", k.getCreatedAt() != null ? k.getCreatedAt().toString() : null);
                     m.put("expiresAt", k.getExpiresAt() != null ? k.getExpiresAt().toString() : null);
                     m.put("active", k.isActive());
-                    m.put("keyPrefix", k.getKeyValue().substring(0, Math.min(12, k.getKeyValue().length())) + "...");
+                    m.put("keyPrefix", ApiKeyService.maskPrefix(k.getKeyValue()));
                     return m;
                 })
                 .toList();

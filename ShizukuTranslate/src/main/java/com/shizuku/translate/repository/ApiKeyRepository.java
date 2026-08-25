@@ -8,6 +8,8 @@ import java.util.Optional;
 
 public interface ApiKeyRepository extends JpaRepository<ApiKey, Long> {
 
+    Optional<ApiKey> findByKeyHashAndActiveTrue(String keyHash);
+
     Optional<ApiKey> findByKeyValueAndActiveTrue(String keyValue);
 
     List<ApiKey> findByUserIdOrderByCreatedAtDesc(Long userId);

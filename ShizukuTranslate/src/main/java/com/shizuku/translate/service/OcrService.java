@@ -58,7 +58,8 @@ public class OcrService {
                 return OcrResponse.error("OCR service no response");
             }
             if (response.containsKey("error")) {
-                return OcrResponse.error((String) response.get("error"));
+                Object message = response.get("message");
+                return OcrResponse.error(message == null ? (String) response.get("error") : String.valueOf(message));
             }
 
             String rawText = (String) response.get("text");
