@@ -144,7 +144,7 @@ The OCR source code imports PaddlePaddle and PaddleOCR and initializes the Japan
 
 ```powershell
 cd ocr-worker
-python -m pip install paddlepaddle paddleocr flask pillow
+python -m pip install -r requirements.txt
 python ocr_server.py
 ```
 
@@ -155,7 +155,7 @@ The worker listens on `http://localhost:5557` by default and provides:
 
 Use `OCR_PORT` and `OCR_THRESHOLD` to override the default port and confidence threshold. The first PaddleOCR startup may download model files. Install a PaddlePaddle build compatible with the installed Python version if the generic package is unavailable for the platform.
 
-> Note: `ocr-worker/requirements.txt` is currently stale: it lists Flask 3.1.0 and EasyOCR 1.7.2, while `ocr_service.py` imports PaddlePaddle, PaddleOCR, and Pillow. Use the explicit installation command above, or update the requirements file before using it as the installation source.
+> `ocr-worker/requirements.txt` pins the PaddleOCR and PaddlePaddle versions used by this repository. If a platform does not provide these exact wheels, use a separately verified environment rather than silently upgrading production dependencies.
 
 ### 2. Start the backend
 
@@ -290,7 +290,12 @@ Sh1Zuku_Translate/
 | Variable | Description |
 |---|---|
 | `DEEPSEEK_API_KEY` | Server-wide DeepSeek key. Required when using the site-provided DeepSeek models or when a DeepSeek profile has no personal key. |
-| `JWT_SECRET` | JWT signing secret. A development default exists; set a strong value in production. |
+| `JWT_SECRET` | Required JWT signing secret. Use a strong random value; blank and known weak defaults are rejected. |
+| `JWT_ISSUER` | JWT issuer claim. Default: `shizuku-translate`. |
+| `CORS_ALLOWED_ORIGIN_PATTERNS` | Comma-separated allowed browser origins. Default: localhost frontend/backend origins. |
+| `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
+| `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
+| `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`. |
 | `OCR_PORT` | OCR worker port. Default: `5557`. |
 | `OCR_THRESHOLD` | OCR confidence threshold. Default: `0.3`. |
 | `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |

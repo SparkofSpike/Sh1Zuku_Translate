@@ -36,6 +36,7 @@ ocr:
 
 app:
   jwt:
+    # No production fallback: JwtTokenProvider rejects blank or known weak secrets.
     secret: ${JWT_SECRET:}
     issuer: ${JWT_ISSUER:shizuku-translate}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
