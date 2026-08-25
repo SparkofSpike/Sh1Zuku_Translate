@@ -2,9 +2,9 @@
   <div class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
     <div class="card translation-card">
-      <h2 style="margin-top:0; font-weight:600;">图片处理</h2>
+      <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
 
-    <ImageUploader @file-selected="handleImageFile" />
+    <ImageUploader @file-selected="handleAttachment" />
 
     <OcrPreview
       v-if="ocrPreview"
@@ -20,11 +20,9 @@
 
     <p v-if="ocrError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ ocrError }}</p>
 
-    <h2 style="margin-top:24px; font-weight:600;">小说翻译</h2>
-
     <textarea
       v-model="sourceText"
-      placeholder="粘贴原文，或通过上方图片上传识别文字..."
+      placeholder="粘贴原文，或通过上方按钮上传 TXT、MD 或图片..."
       rows="10"
       style="margin-top:12px;"
     ></textarea>
@@ -36,6 +34,13 @@
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
         流式输出
+      </label>
+      <label v-if="pendingImageFile" style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
+        图片处理：
+        <select v-model="imageProcessingMode" style="width:auto;">
+          <option value="model">模型处理</option>
+          <option value="ocr">OCR处理</option>
+        </select>
       </label>
     </div>
 
@@ -83,7 +88,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
-import api, { ocrImage, translateStream } from '../api'
+import api, { ocrImage, translateImage, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
 import ImageUploader from '../components/ImageUploader.vue'
 import OcrPreview from '../components/OcrPreview.vue'
@@ -126,6 +131,8 @@ const ocrError = ref('')
 const ocrPolish = ref(false)
 const ocrThreshold = ref(0.3)
 const pendingOcrFile = ref<File | null>(null)
+const pendingImageFile = ref<File | null>(null)
+const imageProcessingMode = ref<'model' | 'ocr'>('model')
 
 onMounted(async () => {
   try {
@@ -196,6 +203,16 @@ function handleModelChange() {
   else localStorage.setItem('modelProfileId', String(selected.id))
 }
 
+function handleAttachment(file: File) {
+  if (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.md')) {
+    const reader = new FileReader()
+    reader.onload = () => { sourceText.value = String(reader.result || '') }
+    reader.readAsText(file)
+    return
+  }
+  handleImageFile(file)
+}
+
 function handleImageFile(file: File) {
   ocrError.value = ''
   const reader = new FileReader()
@@ -204,11 +221,13 @@ function handleImageFile(file: File) {
   }
   reader.readAsDataURL(file)
   pendingOcrFile.value = file
+  pendingImageFile.value = file
 }
 
 function clearOcr() {
   ocrPreview.value = null
   pendingOcrFile.value = null
+  pendingImageFile.value = null
   ocrError.value = ''
 }
 
@@ -240,7 +259,25 @@ function cancel() {
 }
 
 async function translate() {
-  if (!sourceText.value.trim()) return
+  if (!sourceText.value.trim() && !pendingImageFile.value) return
+  if (pendingImageFile.value && imageProcessingMode.value === 'model') {
+    try {
+      const request = { sourceText: sourceText.value, model: model.value, modelProfileId: modelProfileId.value,
+        customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined }
+      const response = await translateImage(pendingImageFile.value, request)
+      result.value = response.data
+      useStreaming.value = false
+      clearOcr()
+      return
+    } catch (e: any) {
+      error.value = e.response?.data?.error || e.message || '图片模型处理失败'
+      return
+    }
+  }
+  if (pendingImageFile.value && imageProcessingMode.value === 'ocr') {
+    await doOcr()
+    if (!sourceText.value.trim()) return
+  }
   status.value = 'preparing'
   error.value = ''
 

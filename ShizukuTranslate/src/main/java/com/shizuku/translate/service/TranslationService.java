@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 
 import java.nio.charset.StandardCharsets;
+import org.springframework.web.multipart.MultipartFile;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
@@ -53,6 +54,25 @@ public class TranslationService {
         this.userService = userService;
         this.promptTemplateService = promptTemplateService;
         this.usageService = usageService;
+    }
+
+    @Transactional
+    public TranslateResponse translateImage(String username, TranslateRequest request, MultipartFile image, boolean hideCustomPrompt) throws java.io.IOException {
+        User user = userService.findByUsername(username);
+        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
+        if (!config.isVisual()) throw new com.shizuku.translate.exception.BusinessException("只有视觉模型才能使用模型处理");
+        String systemPrompt = promptTemplateService.buildSystemPrompt(PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
+                request.getPresets(), request.getCustomPrompt());
+        DeepSeekResult result = aiModelClient.chatWithImage(systemPrompt, request.getSourceText(), image.getBytes(),
+                image.getContentType() == null ? "image/png" : image.getContentType(), config);
+        usageService.record(user, config, result.getUsage());
+        TranslationRecord record = new TranslationRecord();
+        record.setUser(user); record.setSourceText(request.getSourceText()); record.setTranslatedText(result.getContent());
+        record.setModel(config.getModel()); record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
+        record = recordRepository.save(record);
+        TranslateResponse response = new TranslateResponse(); response.setId(record.getId());
+        response.setTranslatedText(result.getContent()); response.setModel(config.getModel()); response.setCreatedAt(record.getCreatedAt());
+        response.setTokenUsage(result.getUsage()); return response;
     }
 
     @Transactional

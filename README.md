@@ -11,7 +11,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific terminology, plus an optional custom prompt.
-- **OCR translation** from uploaded, dragged, or pasted images through the PaddleOCR worker.
+- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload an image and choose **model processing** (visual model only) or **OCR processing** through the PaddleOCR worker. Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
@@ -302,6 +302,7 @@ Other runtime defaults in `application.yml`:
 - Backend HTTP port: `5566`.
 - DeepSeek base URL: `https://api.deepseek.com/v1`.
 - Default DeepSeek model: `deepseek-v4-flash`.
+- Vision model: `deepseek-v4-flash-vision-exp`; only this visual-capable model can use image model processing. Image OCR processing remains available through the OCR worker.
 - DeepSeek thinking mode: disabled by default; requests may override it.
 - OCR worker URL: `http://localhost:5557`.
 - H2 file database: `./data/translatordb`.
@@ -341,6 +342,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /translations` | Authenticated | List the current user's translation history. |
 | `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
 | `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
+| `POST /translate/image` | Authenticated | Translate an uploaded image with the visual model-processing mode. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order. |
