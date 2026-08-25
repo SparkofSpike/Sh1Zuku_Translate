@@ -45,6 +45,7 @@ public class ApiKeyService {
         return new CreatedApiKey(apiKeyRepository.save(apiKey), rawKey);
     }
 
+    @Transactional
     public Optional<ApiKey> authenticate(String rawKey) {
         if (rawKey == null || rawKey.isBlank()) {
             return Optional.empty();
@@ -54,8 +55,6 @@ public class ApiKeyService {
         if (hashed.isPresent()) {
             return hashed;
         }
-        // Legacy rows stored the complete key in keyValue. Keep this fallback
-        // only for existing deployments; newly created rows have no plaintext.
         Optional<ApiKey> legacy = apiKeyRepository.findByLegacyKeyValueAndActiveTrue(trimmed);
         if (legacy.isPresent()) {
             migrateLegacyKey(legacy.get(), trimmed);
@@ -91,8 +90,7 @@ public class ApiKeyService {
         apiKeyRepository.save(apiKey);
     }
 
-    @Transactional
-    protected void migrateLegacyKey(ApiKey apiKey, String rawKey) {
+    private void migrateLegacyKey(ApiKey apiKey, String rawKey) {
         if (apiKey.getKeyHash() == null || apiKey.getKeyHash().isBlank()) {
             apiKey.setKeyHash(hashApiKey(rawKey));
         }

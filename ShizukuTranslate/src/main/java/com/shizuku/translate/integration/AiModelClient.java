@@ -113,8 +113,8 @@ public class AiModelClient {
                             if (cancelled.getAsBoolean() || currentThread.isInterrupted()) {
                                 throw new CancellationException("Model request cancelled");
                             }
-                            onUpstreamConnected.run();
                             TokenUsage[] usage = new TokenUsage[1];
+                            boolean[] upstreamNotified = new boolean[1];
                             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                                     response.getBody(), StandardCharsets.UTF_8))) {
                                 String line;
@@ -134,6 +134,10 @@ public class AiModelClient {
                                                     ? anthropicStreamToken(chunk, eventType)
                                                     : openAiStreamToken(chunk);
                                             if (token != null && !token.isEmpty()) {
+                                                if (!upstreamNotified[0]) {
+                                                    upstreamNotified[0] = true;
+                                                    onUpstreamConnected.run();
+                                                }
                                                 onToken.accept(token);
                                             }
                                             TokenUsage parsed = parseStreamUsage(chunk, config);
@@ -148,6 +152,10 @@ public class AiModelClient {
                                 }
                             }
                             if (!cancelled.getAsBoolean() && !currentThread.isInterrupted()) {
+                                if (!upstreamNotified[0]) {
+                                    upstreamNotified[0] = true;
+                                    onUpstreamConnected.run();
+                                }
                                 onComplete.accept(usage[0]);
                             }
                             return null;
