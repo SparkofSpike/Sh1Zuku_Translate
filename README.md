@@ -20,7 +20,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.2.0`.
+The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.3.1` (build metadata in `version.js` is `1.3.1+4049dd7`).
 
 The extension supports:
 
@@ -68,7 +68,7 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 | Layer | Technology |
 |---|---|
 | Web frontend | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios |
-| Backend | Java 21, Spring Boot 3.2.0, Spring Data JPA, H2, Spring Security, JWT |
+| Backend | Java 21 source/target, Spring Boot 3.2.0, Spring Data JPA, H2, Spring Security, JWT |
 | OCR worker | Python, Flask, PaddleOCR with the Japanese model |
 | AI integration | DeepSeek API, OpenAI-compatible chat completions, Anthropic Messages API |
 | Browser extension | Chrome/Edge Manifest V3, vanilla JavaScript, SSE |
@@ -155,7 +155,7 @@ The worker listens on `http://localhost:5557` by default and provides:
 
 Use `OCR_PORT` and `OCR_THRESHOLD` to override the default port and confidence threshold. The first PaddleOCR startup may download model files. Install a PaddlePaddle build compatible with the installed Python version if the generic package is unavailable for the platform.
 
-> Note: `ocr-worker/requirements.txt` currently contains the older Flask/EasyOCR dependency list, while the current worker source uses PaddleOCR. The explicit installation command above reflects the code that is executed today.
+> Note: `ocr-worker/requirements.txt` is currently stale: it lists Flask 3.1.0 and EasyOCR 1.7.2, while `ocr_service.py` imports PaddlePaddle, PaddleOCR, and Pillow. Use the explicit installation command above, or update the requirements file before using it as the installation source.
 
 ### 2. Start the backend
 
@@ -231,7 +231,7 @@ cd ..
 python tools/ship.py
 ```
 
-`tools/ship.py` uses the server and SSH settings defined at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, builds the frontend, copies the frontend into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the Windows services.
+`tools/ship.py` uses the server, SSH, and Windows paths hard-coded at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, installs frontend dependencies with `npm ci`, builds the frontend, copies the generated assets into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the remote backend task. The script also packages `.github/workflows/deploy.ps1` when present.
 
 Useful options:
 
@@ -241,7 +241,7 @@ python tools/ship.py --upload-only
 python tools/ship.py --help
 ```
 
-The deployment script requires the configured local SSH key and access to the target Windows server. Review its server settings before using it for another environment. The legacy `deploy.bat`, `debug.bat`, and `start-dev.bat` scripts contain machine-specific paths and are not the portable deployment interface.
+`--upload-only` expects an existing `deploy_package/` and still performs remote upload/restart. The deployment script requires the configured local SSH key and access to the target Windows server; review its server settings before using it for another environment. The workflow has remote side effects and is not a portable local-only build command.
 
 ## Project structure
 
@@ -274,7 +274,8 @@ Sh1Zuku_Translate/
 │   ├── config.py               # Environment-based port and threshold settings
 │   ├── ocr_server.py           # Flask entry point
 │   ├── ocr_service.py          # PaddleOCR wrapper and line merging
-│   └── install_ocr.md          # Older OCR deployment notes
+│   ├── requirements.txt        # Currently stale Flask/EasyOCR dependency list
+│   └── install_ocr.md           # OCR deployment notes
 ├── tranShilator-plugin/        # Chrome/Edge extension and CheckUpdate.exe
 │   └── updatechecking/         # .NET updater source project
 └── tools/                      # Local-only tooling (git-ignored)
@@ -353,6 +354,8 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 
 - The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
 - The OCR worker's checked-in `requirements.txt` is older than the current PaddleOCR implementation and should be aligned before using it as the installation source.
+- The frontend package defines `dev`, `build`, and `preview` scripts but no test or typecheck script; `npm run build` is the available frontend verification command.
+- The backend exposes the H2 console at `/h2-console` in the checked-in configuration; protect or disable it before exposing the service outside a trusted environment.
 - H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
 - The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
 - Model providers may impose their own rate limits, context limits, outages, or content policies.
