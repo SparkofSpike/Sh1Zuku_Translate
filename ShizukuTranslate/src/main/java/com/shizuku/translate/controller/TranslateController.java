@@ -79,20 +79,26 @@ public class TranslateController {
                 task.cancel(true);
             }
         };
-        emitter.onCompletion(() -> closed.set(true));
+        emitter.onCompletion(cancelTask);
         emitter.onTimeout(() -> {
             if (closed.compareAndSet(false, true)) {
+                Future<?> task = taskRef.get();
+                if (task != null) {
+                    task.cancel(true);
+                }
+                // A timeout callback may race with container completion. Send
+                // the terminal event before completing, and treat a failed
+                // send as a disconnect rather than hiding the timeout.
                 try {
-                    emitter.send(SseEmitter.event().data(writeJson(new SseErrorEvent("Translation timed out"))));
+                    emitter.send(SseEmitter.event()
+                            .name("error")
+                            .data(writeJson(new SseErrorEvent("Translation timed out"))));
                 } catch (IOException | IllegalStateException e) {
                     log.debug("Unable to send timeout event because the client disconnected", e);
+                } finally {
+                    emitter.complete();
                 }
             }
-            Future<?> task = taskRef.get();
-            if (task != null) {
-                task.cancel(true);
-            }
-            emitter.complete();
         });
         emitter.onError(error -> cancelTask.run());
 

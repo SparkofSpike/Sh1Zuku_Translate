@@ -110,6 +110,9 @@ public class AiModelClient {
                         .headers(headers -> addAuth(headers, config))
                         .body(request)
                         .exchange((requestMessage, response) -> {
+                            if (cancelled.getAsBoolean() || currentThread.isInterrupted()) {
+                                throw new CancellationException("Model request cancelled");
+                            }
                             onUpstreamConnected.run();
                             TokenUsage[] usage = new TokenUsage[1];
                             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
