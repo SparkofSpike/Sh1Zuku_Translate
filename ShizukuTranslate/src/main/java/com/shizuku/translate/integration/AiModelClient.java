@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 
 @Component
@@ -57,7 +58,7 @@ public class AiModelClient {
     public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError) {
-        chatStream(systemPrompt, userMessage, config, onToken, onComplete, onError, () -> {});
+        chatStream(systemPrompt, userMessage, config, onToken, onComplete, onError, () -> {}, () -> false);
     }
 
     /**
@@ -68,9 +69,21 @@ public class AiModelClient {
     public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError, Runnable onUpstreamConnected) {
+        chatStream(systemPrompt, userMessage, config, onToken, onComplete, onError,
+                onUpstreamConnected, () -> Thread.currentThread().isInterrupted());
+    }
+
+    public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
+                           Consumer<String> onToken, Consumer<TokenUsage> onComplete,
+                           Consumer<String> onError, Runnable onUpstreamConnected,
+                           java.util.function.BooleanSupplier cancelled) {
         final int maxRetries = 3;
+        Thread currentThread = Thread.currentThread();
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
+                if (cancelled.getAsBoolean()) {
+                    throw new CancellationException("Model request cancelled");
+                }
                 RestClient client = clientFor(config);
                 Map<String, Object> request = requestBody(systemPrompt, userMessage, config, true);
                 client.post()
@@ -84,7 +97,8 @@ public class AiModelClient {
                                     response.getBody(), StandardCharsets.UTF_8))) {
                                 String line;
                                 String eventType = "";
-                                while ((line = reader.readLine()) != null) {
+                                while (!cancelled.getAsBoolean() && !currentThread.isInterrupted()
+                                        && (line = reader.readLine()) != null) {
                                     if (line.startsWith("event:")) {
                                         eventType = line.substring(6).trim();
                                     } else if (line.startsWith("data:")) {
@@ -111,9 +125,14 @@ public class AiModelClient {
                                     }
                                 }
                             }
-                            onComplete.accept(usage[0]);
+                            if (!cancelled.getAsBoolean() && !currentThread.isInterrupted()) {
+                                onComplete.accept(usage[0]);
+                            }
                             return null;
                         });
+                return;
+            } catch (CancellationException e) {
+                log.info("模型流式请求已取消");
                 return;
             } catch (HttpServerErrorException e) {
                 if (e.getStatusCode().value() == 503 && attempt < maxRetries) {
@@ -130,6 +149,10 @@ public class AiModelClient {
                 onError.accept("模型服务请求失败 (" + e.getStatusCode().value() + ")");
                 return;
             } catch (Exception e) {
+                if (cancelled.getAsBoolean() || currentThread.isInterrupted()) {
+                    log.info("模型流式请求已取消");
+                    return;
+                }
                 log.error("模型流式请求失败", e);
                 onError.accept(e.getMessage() == null ? "模型请求失败" : e.getMessage());
                 return;

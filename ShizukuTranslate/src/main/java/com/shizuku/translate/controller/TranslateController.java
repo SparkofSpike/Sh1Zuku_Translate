@@ -127,7 +127,8 @@ public class TranslateController {
                         () -> {
                             String json = writeJson(new SseStatusEvent("ai-connected"));
                             sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
-                        }
+                        },
+                        closed::get
                 );
             } catch (ClientDisconnectedException e) {
                 log.info("Streaming translation cancelled by client");

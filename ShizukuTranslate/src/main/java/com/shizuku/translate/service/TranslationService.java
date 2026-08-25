@@ -27,6 +27,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 @Service
@@ -118,6 +119,14 @@ public class TranslationService {
     public void translateStream(String username, TranslateRequest request, boolean hideCustomPrompt,
                                 Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
                                 Consumer<String> onError, Runnable onUpstreamConnected) {
+        translateStream(username, request, hideCustomPrompt, onToken, onComplete, onError,
+                onUpstreamConnected, () -> Thread.currentThread().isInterrupted());
+    }
+
+    public void translateStream(String username, TranslateRequest request, boolean hideCustomPrompt,
+                                Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
+                                Consumer<String> onError, Runnable onUpstreamConnected,
+                                BooleanSupplier cancelled) {
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -128,6 +137,9 @@ public class TranslationService {
 
         AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
         String cacheKey = buildCacheKey(user.getId(), config, systemPrompt, request.getSourceText());
+        if (cancelled.getAsBoolean()) {
+            return;
+        }
         TranslationCache cached = cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
         if (cached != null) {
             log.info("Translation cache hit for user {}, key {}", user.getId(), cacheKey.substring(0, 12));
@@ -205,7 +217,8 @@ public class TranslationService {
                     onComplete.accept(response);
                 },
                 error -> onError.accept(error),
-                onUpstreamConnected
+                onUpstreamConnected,
+                cancelled
         );
     }
 
