@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import com.shizuku.translate.repository.ApiKeyRepository;
 import com.shizuku.translate.service.ApiKeyService;
 
 import java.io.IOException;
@@ -20,10 +19,10 @@ import java.util.Collections;
 @Component
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
-    private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyService apiKeyService;
 
-    public ApiKeyAuthenticationFilter(ApiKeyRepository apiKeyRepository) {
-        this.apiKeyRepository = apiKeyRepository;
+    public ApiKeyAuthenticationFilter(ApiKeyService apiKeyService) {
+        this.apiKeyService = apiKeyService;
     }
 
     @Override
@@ -38,10 +37,8 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
         String apiKeyValue = extractApiKey(request);
         if (StringUtils.hasText(apiKeyValue)) {
-            String keyHash = ApiKeyService.hashApiKey(apiKeyValue.trim());
-            apiKeyRepository.findByKeyHashAndActiveTrue(keyHash)
-                    .or(() -> apiKeyRepository.findByLegacyKeyValueAndActiveTrue(apiKeyValue.trim()))
-                    .ifPresent(key -> {
+            String trimmedKey = apiKeyValue.trim();
+            apiKeyService.authenticate(trimmedKey).ifPresent(key -> {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                                 key.getUser().getUsername(), null, Collections.emptyList());

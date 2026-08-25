@@ -292,12 +292,12 @@ Sh1Zuku_Translate/
 | Variable | Description |
 |---|---|
 | `DEEPSEEK_API_KEY` | Server-wide DeepSeek key. Required when using the site-provided DeepSeek models or when a DeepSeek profile has no personal key. |
-| `JWT_SECRET` | Required JWT signing secret. Use a strong random value; blank and known weak defaults are rejected. |
+| `JWT_SECRET` | **Required in every deployment.** Use a strong random value; blank and known weak defaults are rejected, so the backend will not start without it. |
 | `JWT_ISSUER` | JWT issuer claim. Default: `shizuku-translate`. |
 | `CORS_ALLOWED_ORIGIN_PATTERNS` | Comma-separated allowed browser origins. Default: localhost frontend/backend origins. |
 | `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
 | `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
-| `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`. |
+| `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`; saturation returns a clear request-rejection error. |
 | `OCR_PORT` | OCR worker port. Default: `5557`. |
 | `OCR_THRESHOLD` | OCR confidence threshold. Default: `0.3`. |
 | `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |
@@ -363,11 +363,11 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 ## Known limitations
 
 - The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
-- The OCR worker's checked-in `requirements.txt` is older than the current PaddleOCR implementation and should be aligned before using it as the installation source.
 - The frontend package defines `dev`, `build`, and `preview` scripts but no test or typecheck script; `npm run build` is the available frontend verification command.
 - The backend exposes the H2 console at `/h2-console` in the checked-in configuration; protect or disable it before exposing the service outside a trusted environment.
 - H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
 - The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
+- Upstream cancellation is cooperative: disconnecting or cancelling an SSE request interrupts the backend worker and stops reading the model response; providers that do not react immediately to a closed HTTP connection may continue processing briefly.
 - Model providers may impose their own rate limits, context limits, outages, or content policies.
 
 ## License
