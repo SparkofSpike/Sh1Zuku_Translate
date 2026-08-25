@@ -34,7 +34,7 @@ public class ApiKeyService {
         String rawKey = generateApiKey();
 
         ApiKey apiKey = ApiKey.builder()
-                .keyValue(maskPrefix(rawKey))
+                .keyPrefix(maskPrefix(rawKey))
                 .keyHash(hashApiKey(rawKey))
                 .name(name != null && !name.isBlank() ? name : "unnamed")
                 .user(user)
@@ -54,7 +54,13 @@ public class ApiKeyService {
         if (hashed.isPresent()) {
             return hashed;
         }
-        return apiKeyRepository.findByKeyValueAndActiveTrue(trimmed);
+        // Legacy rows stored the complete key in keyValue. Keep this fallback
+        // only for existing deployments; newly created rows have no plaintext.
+        Optional<ApiKey> legacy = apiKeyRepository.findByLegacyKeyValueAndActiveTrue(trimmed);
+        if (legacy.isPresent()) {
+            migrateLegacyKey(legacy.get(), trimmed);
+        }
+        return legacy;
     }
 
     public List<ApiKey> listApiKeys(String username) {
@@ -82,6 +88,18 @@ public class ApiKeyService {
             throw new RuntimeException("API key does not belong to user");
         }
         apiKey.setActive(false);
+        apiKeyRepository.save(apiKey);
+    }
+
+    @Transactional
+    protected void migrateLegacyKey(ApiKey apiKey, String rawKey) {
+        if (apiKey.getKeyHash() == null || apiKey.getKeyHash().isBlank()) {
+            apiKey.setKeyHash(hashApiKey(rawKey));
+        }
+        if (apiKey.getKeyPrefix() == null || apiKey.getKeyPrefix().isBlank()) {
+            apiKey.setKeyPrefix(maskPrefix(rawKey));
+        }
+        apiKey.setLegacyKeyValue(null);
         apiKeyRepository.save(apiKey);
     }
 

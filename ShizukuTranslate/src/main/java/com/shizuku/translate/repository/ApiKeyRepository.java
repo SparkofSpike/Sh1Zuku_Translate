@@ -10,7 +10,8 @@ public interface ApiKeyRepository extends JpaRepository<ApiKey, Long> {
 
     Optional<ApiKey> findByKeyHashAndActiveTrue(String keyHash);
 
-    Optional<ApiKey> findByKeyValueAndActiveTrue(String keyValue);
+    /** Compatibility lookup for legacy rows only; new rows leave this column null after migration. */
+    Optional<ApiKey> findByLegacyKeyValueAndActiveTrue(String legacyKeyValue);
 
     List<ApiKey> findByUserIdOrderByCreatedAtDesc(Long userId);
 }

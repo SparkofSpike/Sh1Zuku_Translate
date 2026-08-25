@@ -20,11 +20,18 @@ public class ApiKey {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 64)
-    private String keyValue;
+    /** Non-sensitive display prefix retained for management screens. */
+    @Column(name = "key_prefix", nullable = false, unique = true, length = 32)
+    private String keyPrefix;
 
-    @Column(unique = true, length = 64)
+    /** SHA-256 digest of the complete API key; the plaintext is never persisted. */
+    @Column(name = "key_hash", unique = true, length = 64)
     private String keyHash;
+
+    /** Deprecated plaintext column retained only while legacy rows are migrated. */
+    @Deprecated
+    @Column(name = "key_value", length = 64)
+    private String legacyKeyValue;
 
     @Column(nullable = false, length = 50)
     private String name;

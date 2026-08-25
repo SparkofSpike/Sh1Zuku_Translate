@@ -40,7 +40,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         if (StringUtils.hasText(apiKeyValue)) {
             String keyHash = ApiKeyService.hashApiKey(apiKeyValue.trim());
             apiKeyRepository.findByKeyHashAndActiveTrue(keyHash)
-                    .or(() -> apiKeyRepository.findByKeyValueAndActiveTrue(apiKeyValue.trim()))
+                    .or(() -> apiKeyRepository.findByLegacyKeyValueAndActiveTrue(apiKeyValue.trim()))
                     .ifPresent(key -> {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(

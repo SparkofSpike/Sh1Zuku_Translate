@@ -174,7 +174,7 @@ public class AuthController {
                     m.put("createdAt", k.getCreatedAt() != null ? k.getCreatedAt().toString() : null);
                     m.put("expiresAt", k.getExpiresAt() != null ? k.getExpiresAt().toString() : null);
                     m.put("active", k.isActive());
-                    m.put("keyPrefix", ApiKeyService.maskPrefix(k.getKeyValue()));
+                    m.put("keyPrefix", k.getKeyPrefix());
                     return m;
                 })
                 .toList();
