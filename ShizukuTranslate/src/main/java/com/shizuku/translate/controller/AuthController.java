@@ -94,6 +94,13 @@ public class AuthController {
         return ResponseEntity.ok(modelProfileResponse(profile, false));
     }
 
+    /** Probe a provider's model catalogue without exposing the credential to the browser. */
+    @PostMapping("/model-profiles/detect")
+    public ResponseEntity<?> detectModels(Principal principal, @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(userService.detectModels(principal.getName(), body.get("provider"),
+                body.get("baseUrl"), body.get("apiKey")));
+    }
+
     @PutMapping("/model-profiles/{id}")
     public ResponseEntity<?> updateModelProfile(@PathVariable Long id, Principal principal,
                                                  @RequestBody Map<String, String> body) {
@@ -117,8 +124,10 @@ public class AuthController {
         data.put("provider", profile.getProvider());
         data.put("baseUrl", profile.getBaseUrl() == null ? "" : profile.getBaseUrl());
         data.put("model", profile.getModel());
-        data.put("hasApiKey", profile.getApiKey() != null && !profile.getApiKey().isBlank());
-        data.put("apiKeyPreview", pluginRequest ? "" : UserService.maskApiKey(profile.getApiKey()));
+        String profileKey = profile.getPersonalModelApiKey() != null
+                ? profile.getPersonalModelApiKey().getApiKey() : profile.getApiKey();
+        data.put("hasApiKey", profileKey != null && !profileKey.isBlank());
+        data.put("apiKeyPreview", pluginRequest ? "" : UserService.maskApiKey(profileKey));
         return data;
     }
 

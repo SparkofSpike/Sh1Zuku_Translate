@@ -4,6 +4,7 @@ import com.shizuku.translate.config.DeepSeekConfig;
 import com.shizuku.translate.dto.LoginRequest;
 import com.shizuku.translate.dto.RegisterRequest;
 import com.shizuku.translate.entity.AiModelProfile;
+import com.shizuku.translate.entity.PersonalModelApiKey;
 import com.shizuku.translate.exception.BusinessException;
 import com.shizuku.translate.integration.AiModelClient.AiModelConfig;
 import com.shizuku.translate.entity.User;
@@ -25,17 +26,20 @@ public class UserService {
     private static final String LEGACY_PROFILE_NAME = "旧模型配置";
 
     private final AiModelProfileRepository modelProfileRepository;
+    private final com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository;
 
     public UserService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider,
                        DeepSeekConfig.DeepSeekProperties deepSeekProperties,
-                       AiModelProfileRepository modelProfileRepository) {
+                       AiModelProfileRepository modelProfileRepository,
+                       com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.deepSeekProperties = deepSeekProperties;
         this.modelProfileRepository = modelProfileRepository;
+        this.personalModelApiKeyRepository = personalModelApiKeyRepository;
     }
 
     public void register(RegisterRequest request) {
@@ -112,14 +116,10 @@ public class UserService {
                                              String baseUrl, String model, String apiKey) {
         User user = findByUsername(username);
         ModelProfileValues values = normalizeModelProfile(name, provider, baseUrl, model, apiKey);
+        PersonalModelApiKey credential = credentialFor(user, values, apiKey);
         AiModelProfile profile = AiModelProfile.builder()
-                .user(user)
-                .name(values.name)
-                .provider(values.provider)
-                .baseUrl(values.baseUrl)
-                .model(values.model)
-                .apiKey(values.apiKey)
-                .build();
+                .user(user).name(values.name).provider(values.provider).baseUrl(values.baseUrl)
+                .model(values.model).apiKey(null).personalModelApiKey(credential).build();
         return modelProfileRepository.save(profile);
     }
 
@@ -129,14 +129,16 @@ public class UserService {
         User user = findByUsername(username);
         AiModelProfile profile = modelProfileRepository.findByIdAndUserId(profileId, user.getId())
                 .orElseThrow(() -> new RuntimeException("Model profile not found"));
-        String preservedKey = clearApiKey ? null : profile.getApiKey();
+        String preservedKey = clearApiKey ? null : effectiveApiKey(profile);
         ModelProfileValues values = normalizeModelProfile(name, provider, baseUrl, model,
                 apiKey == null || apiKey.isBlank() ? preservedKey : apiKey);
         profile.setName(values.name);
         profile.setProvider(values.provider);
         profile.setBaseUrl(values.baseUrl);
         profile.setModel(values.model);
-        profile.setApiKey(values.apiKey);
+        profile.setApiKey(null);
+        profile.setPersonalModelApiKey(clearApiKey && (apiKey == null || apiKey.isBlank())
+                ? null : credentialFor(user, values, apiKey == null || apiKey.isBlank() ? preservedKey : apiKey));
         return modelProfileRepository.save(profile);
     }
 
@@ -254,8 +256,9 @@ public class UserService {
             AiModelProfile profile = modelProfileRepository.findByIdAndUserId(modelProfileId, user.getId())
                     .orElseThrow(() -> new BusinessException("模型配置不存在或不属于当前用户"));
             String provider = profile.getProvider().toLowerCase();
-            String apiKey = profile.getApiKey() == null || profile.getApiKey().isBlank()
-                    ? ("deepseek".equals(provider) ? deepSeekProperties.getKey() : null) : profile.getApiKey().trim();
+            String storedKey = effectiveApiKey(profile);
+            String apiKey = storedKey == null || storedKey.isBlank()
+                    ? ("deepseek".equals(provider) ? deepSeekProperties.getKey() : null) : storedKey.trim();
             String baseUrl = profile.getBaseUrl() == null || profile.getBaseUrl().isBlank()
                     ? defaultBaseUrl(provider) : profile.getBaseUrl().trim();
             if (apiKey == null || apiKey.isBlank()) {
@@ -287,6 +290,41 @@ public class UserService {
         }
         return new AiModelConfig(provider, apiKey, baseUrl, model,
                 thinkingType == null ? deepSeekProperties.getThinkingType() : thinkingType);
+    }
+
+    private String effectiveApiKey(AiModelProfile profile) {
+        if (profile.getPersonalModelApiKey() != null) return profile.getPersonalModelApiKey().getApiKey();
+        return profile.getApiKey();
+    }
+
+    private PersonalModelApiKey credentialFor(User user, ModelProfileValues values, String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) return null;
+        return personalModelApiKeyRepository.findByUserIdOrderByCreatedAtAsc(user.getId()).stream()
+                .filter(item -> item.getProvider().equals(values.provider)
+                        && item.getApiKey().equals(apiKey.trim()))
+                .findFirst()
+                .orElseGet(() -> personalModelApiKeyRepository.save(
+                        PersonalModelApiKey.builder().user(user).name(values.name + " Key")
+                                .provider(values.provider).apiKey(apiKey.trim()).baseUrl(values.baseUrl).build()));
+    }
+
+    public java.util.List<String> detectModels(String username, String provider, String baseUrl, String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) throw new BusinessException("请先配置 API Key");
+        String normalizedProvider = provider == null || provider.isBlank() ? "deepseek" : provider.trim().toLowerCase();
+        String url = baseUrl == null || baseUrl.isBlank() ? defaultBaseUrl(normalizedProvider) : baseUrl.trim();
+        try {
+            java.util.Map<?, ?> response = org.springframework.web.client.RestClient.builder()
+                    .baseUrl(url.replaceAll("/+$", ""))
+                    .defaultHeader("Authorization", "Bearer " + apiKey.trim())
+                    .build().get().uri("/models").retrieve().body(java.util.Map.class);
+            Object data = response == null ? null : response.get("data");
+            if (!(data instanceof java.util.List<?> list)) return java.util.List.of();
+            return list.stream().filter(item -> item instanceof java.util.Map<?, ?>)
+                    .map(item -> String.valueOf(((java.util.Map<?, ?>) item).get("id")))
+                    .filter(item -> !"null".equals(item)).sorted().toList();
+        } catch (RuntimeException ex) {
+            throw new BusinessException("模型列表检测失败：" + (ex.getMessage() == null ? "供应商未提供 /models" : ex.getMessage()));
+        }
     }
 
     private record ModelProfileValues(String name, String provider, String baseUrl, String model, String apiKey) {}

@@ -7,7 +7,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 ### Web application
 
 - **Novel translation** through DeepSeek, OpenAI-compatible, or Anthropic-compatible model endpoints.
-- **Multiple user model profiles** with independent provider, model, base URL, and API key settings. DeepSeek profiles may use the server key when their own key is empty.
+- **Personal model profiles** with reusable provider API keys: one personal API key can be shared by multiple model profiles. The profile page can proxy provider model-list detection and still permits manual model names when detection is unavailable.
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific terminology, plus an optional custom prompt.
@@ -45,7 +45,7 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 +----------------------+       +------------------------+       +----------------------+
 | Vue 3 web application| ----> | Spring Boot API        | ----> | DeepSeek or          |
 | TypeScript / Vite    | <---- | JWT and API-key auth   |       | compatible provider  |
-+----------------------+       | SSE / JPA / H2        |       +----------------------+
++----------------------+       | SSE / JPA / H2         |       +----------------------+
                                +-----------+------------+
                                            |
                                            v
@@ -186,13 +186,15 @@ The About page receives the build timestamp and short Git commit from `vite.conf
 
 ## Model provider configuration
 
-The web application's profile page supports multiple saved model profiles. Each profile contains:
+The web application's profile page supports multiple saved model profiles and reusable personal provider API keys. Each profile contains:
 
 - A display name.
 - A provider protocol: `deepseek`, `openai`, or `anthropic`.
 - A model name.
-- An API key.
+- A reference to a personal API key (legacy inline keys are migrated lazily).
 - A base URL for compatible providers.
+
+One API key may be used by multiple profiles. The authenticated endpoint `POST /auth/model-profiles/detect` proxies the provider's `/models` endpoint; model detection is optional and manual model entry remains supported. Model selectors use slash-separated labels such as `站方/DeepSeek/deepseek-v4-flash` and `我的配置/openai/gpt-5.6-sol`.
 
 The defaults are:
 
@@ -324,6 +326,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /auth/me` | Authenticated | Return the current username and administrator status. |
 | `GET /auth/profile` | Authenticated | Return profile and masked model configuration information. |
 | `GET /auth/model-profiles` | Authenticated or extension API key | List the current user's model profiles. Extension requests omit key previews. |
+| `POST /auth/model-profiles/detect` | Authenticated | Proxy a provider `/models` request for optional model-name detection. |
 | `POST /auth/model-profiles` | Authenticated | Create a model profile. |
 | `PUT /auth/model-profiles/{id}` | Authenticated | Update a model profile. |
 | `DELETE /auth/model-profiles/{id}` | Authenticated | Delete a model profile. |

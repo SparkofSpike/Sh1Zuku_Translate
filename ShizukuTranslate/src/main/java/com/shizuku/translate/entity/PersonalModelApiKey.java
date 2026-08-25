@@ -8,13 +8,14 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+/** A personal provider credential shared by one or more model profiles. */
 @Entity
-@Table(name = "ai_model_profiles")
+@Table(name = "personal_model_api_keys")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class AiModelProfile {
+public class PersonalModelApiKey {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -29,22 +30,11 @@ public class AiModelProfile {
     @Column(nullable = false, length = 20)
     private String provider;
 
-    /**
-     * Legacy inline key. New profiles should reference personalModelApiKey.
-     * Kept nullable so existing databases and clients remain compatible.
-     */
-    @Column(length = 255)
+    @Column(nullable = false, length = 255)
     private String apiKey;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "personal_api_key_id")
-    private PersonalModelApiKey personalModelApiKey;
 
     @Column(length = 500)
     private String baseUrl;
-
-    @Column(nullable = false, length = 200)
-    private String model;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

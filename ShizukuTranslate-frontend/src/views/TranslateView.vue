@@ -97,8 +97,8 @@ const model = ref('deepseek-v4-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
 const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-v4-flash'))
 const modelOptions = ref([
-  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
-  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' }
+  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/DeepSeek/deepseek-v4-flash' },
+  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/DeepSeek/deepseek-v4-pro' }
 ])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
@@ -138,13 +138,13 @@ onMounted(async () => {
     const res = await api.get('/auth/model-profiles')
     const profiles = res.data || []
     modelOptions.value = [
-      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方 DeepSeek · deepseek-v4-flash' },
-      { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方 DeepSeek · deepseek-v4-pro' },
+      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方/DeepSeek/deepseek-v4-flash' },
+      { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/DeepSeek/deepseek-v4-pro' },
       ...profiles.map((item: any) => ({
         key: `profile:${item.id}`,
         id: item.id,
         model: item.model,
-        label: `${item.name} · ${item.model}`
+        label: `${item.name}/${item.provider}/${item.model}`
       }))
     ]
     const storedProfileId = modelProfileId.value && modelProfileId.value > 0
