@@ -2,19 +2,15 @@
   <div class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
     <div class="card translation-card">
-      <a
-        class="open-source-banner"
-        href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <span class="open-source-banner__icon" aria-hidden="true">★</span>
-        <span class="open-source-banner__content">
-          <strong>项目开源地址</strong>
-          <span>您的 Star 和 Follow 是我更新的最大动力！</span>
-        </span>
-        <span class="open-source-banner__arrow" aria-hidden="true">↗</span>
-      </a>
+      <div class="open-source-banner">
+        <span>项目已开源：</span>
+        <a
+          href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Sh1Zuku_Translate</a>
+        <span>，欢迎 Star 和 Follow！</span>
+      </div>
 
       <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
 
@@ -467,58 +463,22 @@ async function translate() {
 }
 
 .open-source-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: -8px 0 20px;
-  padding: 12px 14px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #f8fbff, #eef6ff);
-  color: #1e3a5f;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-}
-
-.open-source-banner:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.12);
-  text-decoration: none;
-  transform: translateY(-1px);
-}
-
-.open-source-banner__icon {
-  display: grid;
-  flex: 0 0 32px;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #facc15;
-  color: #fff;
-  font-size: 18px;
-}
-
-.open-source-banner__content {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.open-source-banner__content strong {
-  color: #173b69;
-  font-size: 14px;
-}
-
-.open-source-banner__content span {
-  color: #52708f;
+  margin: -4px 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-muted);
   font-size: 13px;
 }
 
-.open-source-banner__arrow {
-  color: #3b82f6;
-  font-size: 20px;
+.open-source-banner a {
+  color: var(--color-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.open-source-banner a:hover {
+  color: var(--color-muted);
 }
 
 .source-wrap {
@@ -553,16 +513,6 @@ textarea {
   resize: vertical;
   width: 100%;
   box-sizing: border-box;
-}
-
-@media (max-width: 480px) {
-  .open-source-banner {
-    align-items: flex-start;
-  }
-
-  .open-source-banner__content span {
-    line-height: 1.4;
-  }
 }
 
 @media (max-width: 720px) {
