@@ -8,6 +8,7 @@
           target="_blank"
           rel="noopener noreferrer"
         >Sh1Zuku_Translate</a>（https://github.com/SparkofSpike/Sh1Zuku_Translate），你们的star和follow是我更新的动力！
+        <br />浏览器插件正在锐意研发中，预计九月初正式可用……
       </div>
 
       <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
