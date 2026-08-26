@@ -3,13 +3,11 @@
 
     <div class="card translation-card">
       <div class="open-source-banner">
-        <span>项目已开源：</span>
-        <a
+        项目已开源：<a
           href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
           target="_blank"
           rel="noopener noreferrer"
-        >Sh1Zuku_Translate</a>
-        <span>，欢迎 Star 和 Follow！</span>
+        >Sh1Zuku_Translate</a>（https://github.com/SparkofSpike/Sh1Zuku_Translate），你们的star和follow是我更新的动力！
       </div>
 
       <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
