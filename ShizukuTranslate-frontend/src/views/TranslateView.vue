@@ -127,7 +127,7 @@ const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelPro
 const modelOptions = ref([
   { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
   { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
-  { key: 'site:deepseek-v4-flash-vision-exp', id: null as number | null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp（视觉）' }
+  { key: 'site:deepseek-v4-flash-vision-exp', id: null as number | null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp' }
 ])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
@@ -167,6 +167,7 @@ interface ModelProfileOption {
   id: number
   name: string
   model: string
+  models?: string[]
 }
 
 onMounted(async () => {
@@ -182,13 +183,17 @@ onMounted(async () => {
     modelOptions.value = [
       { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
       { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
-      { key: 'site:deepseek-v4-flash-vision-exp', id: null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp（视觉）' },
-      ...profiles.map((item: ModelProfileOption & { provider: string }) => ({
-        key: `profile:${item.id}`,
-        id: item.id,
-        model: item.model,
-        label: `${item.name}/${item.provider}/${item.model}`
-      }))
+      { key: 'site:deepseek-v4-flash-vision-exp', id: null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp' },
+      ...profiles.flatMap((item: ModelProfileOption & { provider: string }) => {
+        const models = Array.isArray(item.models) && item.models.length ? item.models : [item.model]
+        return models.map(modelName => ({
+          key: `profile:${item.id}:${modelName}`,
+          profileKey: `profile:${item.id}`,
+          id: item.id,
+          model: modelName,
+          label: `${item.name}/${modelName}`
+        }))
+      })
     ]
     const storedProfileId = modelProfileId.value && modelProfileId.value > 0
       ? modelProfileId.value
@@ -196,20 +201,23 @@ onMounted(async () => {
     const storedProfileKey = storedProfileId ? 'profile:' + storedProfileId : ''
     const storedSelection = localStorage.getItem('modelSelection') || ''
     const profileSelectionIsValid = storedProfileKey
-      && modelOptions.value.some(option => option.key === storedProfileKey)
+      && modelOptions.value.some(option => option.key === storedProfileKey || option.profileKey === storedProfileKey)
     const savedSelectionIsValid = modelOptions.value.some(option => option.key === storedSelection)
 
     // A profile ID is more authoritative than the legacy display-mode key.
     // This recovers users whose old localStorage still says "site" after
     // they configured a personal model profile.
     if (profileSelectionIsValid) {
-      selectedModelKey.value = storedProfileKey
+      selectedModelKey.value = modelOptions.value.find(option => option.profileKey === storedProfileKey)?.key || storedProfileKey
     } else if (savedSelectionIsValid) {
       selectedModelKey.value = storedSelection
     } else if (profiles.length) {
-      selectedModelKey.value = 'profile:' + profiles[0].id
+      const firstProfile = profiles[0]
+      const firstModels = Array.isArray(firstProfile.models) && firstProfile.models.length
+        ? firstProfile.models : [firstProfile.model]
+      selectedModelKey.value = `profile:${firstProfile.id}:${firstModels[0]}`
     } else {
-      selectedModelKey.value = 'site:deepseek-v4-flash'
+      selectedModelKey.value = ''
     }
     handleModelChange()
   } catch (e) {

@@ -32,7 +32,7 @@
         >
           <div class="profile-main">
             <strong>站方</strong>
-            <span class="profile-meta">使用站方 API Key · Flash / Pro / Flash Vision Exp</span>
+            <span class="profile-meta">使用站方提供的 DeepSeek API Key</span>
           </div>
           <span v-if="selectedProfileId === null" class="selected-label">当前选择</span>
         </div>
@@ -73,13 +73,24 @@
 
         <label class="field-label">模型名称</label>
         <div class="model-input-row">
-          <input v-model.trim="form.model" type="text" placeholder="例如 DeepSeek-V4-Flash" />
-          <button class="btn-sm" type="button" @click="detectModels" :disabled="detecting">{{ detecting ? '检测中...' : '检测模型' }}</button>
+          <input v-model.trim="manualModel" type="text" placeholder="输入模型名称" @keydown.enter.prevent="addManualModel" />
+          <button class="btn-sm" type="button" @click="addManualModel">添加</button>
+          <button class="btn-sm" type="button" @click="detectModels" :disabled="detecting">{{ detecting ? '检测中...' : '自动检测' }}</button>
+        </div>
+        <div v-if="form.models.length" class="selected-models">
+          <span v-for="model in form.models" :key="model" class="selected-model">
+            {{ model }}
+            <button type="button" class="remove-model" @click="removeModel(model)" :aria-label="'移除 ' + model">×</button>
+          </span>
         </div>
         <div v-if="detectedModels.length" class="detected-models">
-          <button v-for="model in detectedModels" :key="model" type="button" class="model-chip" @click="form.model = model">{{ model }}</button>
+          <span class="field-hint detected-title">检测到的模型（可多选）：</span>
+          <label v-for="model in detectedModels" :key="model" class="model-option">
+            <input v-model="form.models" type="checkbox" :value="model" />
+            <span>{{ model }}</span>
+          </label>
         </div>
-        <p class="field-hint">同一 API Key 可保存多条模型配置；检测失败时仍可手动填写。</p>
+        <p class="field-hint">可以同时勾选多个模型；保存后每个模型会建立一条独立配置。</p>
 
         <template v-if="form.provider !== 'deepseek'">
           <label class="field-label">Base URL</label>
@@ -143,13 +154,14 @@ const error = ref('')
 const saving = ref(false)
 const detecting = ref(false)
 const detectedModels = ref([])
+const manualModel = ref('')
 const newKey = ref('')
 const keys = ref([])
 
 const baseUrlPlaceholder = computed(() => DEFAULT_BASE_URLS[form.value.provider] || '')
 
 function emptyForm() {
-  return { name: '', provider: 'deepseek', baseUrl: '', model: 'deepseek-v4-flash', apiKey: '' }
+  return { name: '', provider: 'deepseek', baseUrl: '', model: '', models: [], apiKey: '' }
 }
 
 function readSelectedProfileId() {
@@ -197,6 +209,7 @@ function startEdit(item) {
     provider: item.provider,
     baseUrl: item.baseUrl || DEFAULT_BASE_URLS[item.provider] || '',
     model: item.model,
+    models: Array.isArray(item.models) && item.models.length ? item.models : [item.model],
     apiKey: ''
   }
   formVisible.value = true
@@ -248,8 +261,10 @@ async function detectModels() {
       baseUrl: form.value.provider === 'deepseek' && !form.value.baseUrl ? '' : form.value.baseUrl,
       apiKey: form.value.apiKey || undefined
     })
-    detectedModels.value = res.data || []
+    detectedModels.value = Array.isArray(res.data) ? res.data : []
+    form.value.models = [...new Set(form.value.models)]
     if (!detectedModels.value.length) message.value = '供应商未返回模型列表，请手动填写'
+    else message.value = '已检测到 ' + detectedModels.value.length + ' 个模型，请勾选需要保存的模型'
   } catch (e) {
     error.value = e.response?.data?.error || '模型检测失败，可手动填写模型名称'
   } finally {
@@ -258,8 +273,10 @@ async function detectModels() {
 }
 
 async function saveProfile() {
-  if (!form.value.model) {
-    error.value = '请填写模型名称'
+  form.value.models = form.value.models.filter(model => model && model.trim())
+  if (!form.value.models.length && form.value.model) form.value.models = [form.value.model.trim()]
+  if (!form.value.models.length) {
+    error.value = '请至少添加一个模型名称'
     return
   }
   saving.value = true
@@ -270,14 +287,19 @@ async function saveProfile() {
       name: form.value.name,
       provider: form.value.provider,
       baseUrl: form.value.provider === 'deepseek' ? '' : form.value.baseUrl,
-      model: form.value.model,
+      model: form.value.models[0],
+      models: form.value.models,
       ...(form.value.apiKey ? { apiKey: form.value.apiKey } : {})
     }
     let res
-    if (editingId.value) res = await api.put('/auth/model-profiles/' + editingId.value, body)
-    else res = await api.post('/auth/model-profiles', body)
+    if (editingId.value) {
+      res = await api.put('/auth/model-profiles/' + editingId.value, body)
+    } else {
+      res = await api.post('/auth/model-profiles', body)
+    }
     await loadModelProfiles()
-    if (res.data?.id) selectProfile(res.data.id)
+    const createdProfiles = Array.isArray(res?.data) ? res.data : []
+    if (createdProfiles[0]?.id) selectProfile(createdProfiles[0].id)
     form.value.apiKey = ''
     formVisible.value = false
     message.value = '模型配置已保存'
@@ -286,6 +308,25 @@ async function saveProfile() {
   } finally {
     saving.value = false
   }
+}
+
+function addManualModel() {
+  const model = manualModel.value.trim()
+  if (!model) return
+  if (!form.value.models.includes(model)) form.value.models.push(model)
+  form.value.model = form.value.models[0] || model
+  manualModel.value = ''
+}
+
+function toggleModel(model) {
+  if (form.value.models.includes(model)) removeModel(model)
+  else form.value.models = [...form.value.models, model]
+  form.value.model = form.value.models[0] || ''
+}
+
+function removeModel(model) {
+  form.value.models = form.value.models.filter(item => item !== model)
+  form.value.model = form.value.models[0] || ''
 }
 
 async function clearProfileKey() {
@@ -403,8 +444,15 @@ onMounted(() => {
 .base-url-input { min-width: 420px; }
 .model-input-row { display: flex; gap: 8px; align-items: center; }
 .model-input-row input { flex: 1; }
-.detected-models { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.model-chip { padding: 4px 8px; border: 1px solid #ccc; border-radius: 999px; background: white; cursor: pointer; font-size: 12px; }
+.detected-models { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+.detected-title { flex-basis: 100%; margin: 0; }
+.model-option { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border: 1px solid #ccc; border-radius: 6px; background: #f7f7f7; color: #222; cursor: pointer; font-size: 13px; }
+.model-option:hover { background: #eee; border-color: #999; }
+.model-option input { width: auto; margin: 0; accent-color: #1a1a1a; }
+.selected-models { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.selected-model { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 999px; background: #1a1a1a; color: #fff; font-size: 13px; }
+.remove-model { padding: 0; background: transparent; color: #fff; font-size: 16px; line-height: 1; }
+.remove-model:hover { background: transparent; color: #ffb3b3; }
 .usage-highlight { display: flex; flex-direction: column; gap: 2px; margin-top: 20px; padding: 16px; background: #f5f5f5; border: 1px solid #e6e6e6; border-radius: 8px; }
 .usage-highlight strong { font-size: 30px; letter-spacing: -.5px; }
 .usage-label, .usage-meta, .muted { color: #777; font-size: 13px; }
