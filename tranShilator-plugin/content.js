@@ -891,7 +891,7 @@ async function handleTranslate() {
           selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
           customPrompt: items.customPrompt || '',
           thinkingType: items.thinkingType || 'disabled',
-          model: items.model || 'deepseek-v4-flash',
+          model: items.model || '',
           modelProfileId: items.modelProfileId !== null && items.modelProfileId !== undefined && items.modelProfileId !== ''
             ? Number(items.modelProfileId) : 0
         });
@@ -904,8 +904,8 @@ async function handleTranslate() {
         displayMode: 'panel',
         selectedPresets: [],
         customPrompt: '',
-        model: 'deepseek-v4-flash',
-        modelProfileId: 0
+        model: '',
+        modelProfileId: null
       });
     }
   });

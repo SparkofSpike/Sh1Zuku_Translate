@@ -238,7 +238,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tabId,
         message.selectedPresets || [],
         message.customPrompt || '',
-        message.model || 'deepseek-v4-flash',
+        message.model || '',
         message.modelProfileId || null,
         message.currentPage || 0,
         !!message.fullMode,
@@ -299,7 +299,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = 'deepseek-v4-flash', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode) {
   const safeNovelId = String(novelId || '').match(/^\d+$/) ? String(novelId) : '';
   if (!safeNovelId) {
     throw new Error('无效的小说 ID');
@@ -576,7 +576,7 @@ async function loadSettings() {
       resolve({
         backendUrl: items.backendUrl || '',
         apiKey: items.apiKey || '',
-        model: items.model || 'deepseek-v4-flash',
+        model: items.model || '',
         modelProfileId: items.modelProfileId !== null && items.modelProfileId !== undefined && items.modelProfileId !== ''
           ? Number(items.modelProfileId) : 0
       });
@@ -656,7 +656,7 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     },
     body: JSON.stringify({
       sourceText: text,
-      model: model || 'deepseek-v4-flash',
+      model: model || undefined,
       modelProfileId: modelProfileId === null || modelProfileId === undefined ? 0 : modelProfileId,
       customPrompt: prompt,
       thinkingType: thinkingType || undefined,

@@ -98,7 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
         settingsPanel.style.display = 'block';
       }
 
-      renderModelOptions(null);
       loadUserModel();
       loadPresets();
     }
@@ -112,14 +111,28 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderModelOptions(profiles) {
     const profileList = Array.isArray(profiles) ? profiles : [];
     const models = [
-      ...defaultModels.map(model => ({ key: 'site:' + model, profileId: '0', model, label: '站方/DeepSeek/' + model })),
-      ...profileList.map(profile => ({
-        key: 'profile:' + String(profile.id),
-        profileId: String(profile.id),
-        model: profile.model,
-        label: profile.name + '/' + profile.provider + '/' + profile.model
-      }))
+      ...defaultModels.map(model => ({
+        key: 'site:' + model,
+        profileId: '0',
+        model,          label: '站方/' + model
+      })),
+      ...profileList.flatMap(profile => {
+        const models = Array.isArray(profile.models) && profile.models.length ? profile.models : [profile.model];
+        return models.map(model => ({
+          key: 'profile:' + String(profile.id) + ':' + model,
+          profileId: String(profile.id),
+          model,
+          label: profile.name + '/' + model
+        }));
+      })
     ];
+    if (!models.length) {
+      modelSelect.innerHTML = '<option value="0">暂无可用模型配置</option>';
+      modelSelect.disabled = true;
+      if (modelStatus) modelStatus.textContent = '请先在网站“个人 → 模型配置”中选择或创建配置';
+      return;
+    }
+    modelSelect.disabled = false;
     modelSelect.innerHTML = '';
     models.forEach((item) => {
       const option = document.createElement('option');
@@ -139,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (modelStatus) {
       modelStatus.textContent = profileList.length
-        ? '已加载个人页面配置的模型，可在此选择'
+        ? '已加载网站模型配置，可在此选择'
         : '';
     }
   }
@@ -160,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderModelOptions(await response.json());
     } catch (e) {
       renderModelOptions(null);
-      if (modelStatus) modelStatus.textContent = '无法读取个人模型配置';
+      if (modelStatus) modelStatus.textContent = '无法读取个人模型配置，当前显示站方模型';
     }
   }
 
