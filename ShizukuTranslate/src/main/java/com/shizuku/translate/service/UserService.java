@@ -15,6 +15,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.List;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class UserService {
@@ -27,19 +30,22 @@ public class UserService {
 
     private final AiModelProfileRepository modelProfileRepository;
     private final com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository;
+    private final ObjectMapper objectMapper;
 
     public UserService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider,
                        DeepSeekConfig.DeepSeekProperties deepSeekProperties,
                        AiModelProfileRepository modelProfileRepository,
-                       com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository) {
+                       com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository,
+                       ObjectMapper objectMapper) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.deepSeekProperties = deepSeekProperties;
         this.modelProfileRepository = modelProfileRepository;
         this.personalModelApiKeyRepository = personalModelApiKeyRepository;
+        this.objectMapper = objectMapper;
     }
 
     public void register(RegisterRequest request) {
@@ -119,27 +125,58 @@ public class UserService {
         PersonalModelApiKey credential = credentialFor(user, values, apiKey);
         AiModelProfile profile = AiModelProfile.builder()
                 .user(user).name(values.name).provider(values.provider).baseUrl(values.baseUrl)
-                .model(values.model).apiKey(null).personalModelApiKey(credential).build();
+                .model(values.model).models(writeModels(List.of(values.model))).apiKey(null).personalModelApiKey(credential).build();
         return modelProfileRepository.save(profile);
+    }
+
+    public void setModelList(AiModelProfile profile, List<String> models) {
+        try { profile.setModels(objectMapper.writeValueAsString(models)); }
+        catch (JsonProcessingException e) { throw new BusinessException("无法保存模型列表"); }
+    }
+
+    private String writeModels(List<String> models) {
+        try { return objectMapper.writeValueAsString(models); }
+        catch (JsonProcessingException e) { throw new BusinessException("无法保存模型列表"); }
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public java.util.List<AiModelProfile> updateModelProfiles(String username, Long profileId, String name, String provider,
+                                                               String baseUrl, java.util.List<String> models,
+                                                               String apiKey, boolean clearApiKey) {
+        User user = findByUsername(username);
+        AiModelProfile anchor = modelProfileRepository.findByIdAndUserId(profileId, user.getId())
+                .orElseThrow(() -> new RuntimeException("Model profile not found"));
+        java.util.List<AiModelProfile> group = java.util.List.of(anchor);
+        /* Existing split rows remain compatible, but new edits stay on the anchor row. */
+        /*
+        group = modelProfileRepository.findByUserIdOrderByCreatedAtAsc(user.getId()).stream()
+                .filter(item -> java.util.Objects.equals(item.getName(), anchor.getName())
+                        && java.util.Objects.equals(item.getProvider(), anchor.getProvider())
+                        && java.util.Objects.equals(item.getBaseUrl(), anchor.getBaseUrl()))
+                .toList();
+        */
+        String preservedKey = clearApiKey ? null : effectiveApiKey(anchor);
+        String effectiveKey = apiKey == null || apiKey.isBlank() ? preservedKey : apiKey;
+        java.util.List<String> normalizedModels = models == null ? java.util.List.of() : models.stream()
+                .map(item -> item == null ? "" : item.trim()).filter(item -> !item.isBlank()).distinct().toList();
+        if (normalizedModels.isEmpty()) throw new BusinessException("请至少添加一个模型名称");
+        ModelProfileValues values = normalizeModelProfile(name, provider, baseUrl, normalizedModels.get(0), effectiveKey);
+        anchor.setName(values.name);
+        anchor.setProvider(values.provider);
+        anchor.setBaseUrl(values.baseUrl);
+        anchor.setModel(normalizedModels.get(0));
+        anchor.setModels(writeModels(normalizedModels));
+        anchor.setApiKey(null);
+        anchor.setPersonalModelApiKey(clearApiKey && (apiKey == null || apiKey.isBlank())
+                ? null : credentialFor(user, values, effectiveKey));
+        return java.util.List.of(modelProfileRepository.save(anchor));
     }
 
     @org.springframework.transaction.annotation.Transactional
     public AiModelProfile updateModelProfile(String username, Long profileId, String name, String provider,
                                              String baseUrl, String model, String apiKey, boolean clearApiKey) {
-        User user = findByUsername(username);
-        AiModelProfile profile = modelProfileRepository.findByIdAndUserId(profileId, user.getId())
-                .orElseThrow(() -> new RuntimeException("Model profile not found"));
-        String preservedKey = clearApiKey ? null : effectiveApiKey(profile);
-        ModelProfileValues values = normalizeModelProfile(name, provider, baseUrl, model,
-                apiKey == null || apiKey.isBlank() ? preservedKey : apiKey);
-        profile.setName(values.name);
-        profile.setProvider(values.provider);
-        profile.setBaseUrl(values.baseUrl);
-        profile.setModel(values.model);
-        profile.setApiKey(null);
-        profile.setPersonalModelApiKey(clearApiKey && (apiKey == null || apiKey.isBlank())
-                ? null : credentialFor(user, values, apiKey == null || apiKey.isBlank() ? preservedKey : apiKey));
-        return modelProfileRepository.save(profile);
+        return updateModelProfiles(username, profileId, name, provider, baseUrl,
+                java.util.List.of(model), apiKey, clearApiKey).get(0);
     }
 
     @org.springframework.transaction.annotation.Transactional

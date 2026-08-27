@@ -15,10 +15,13 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private final UserService userService;
     private final AppConfig.AppProperties appProperties;
@@ -28,11 +31,13 @@ public class AuthController {
     public AuthController(UserService userService,
                           AppConfig.AppProperties appProperties,
                           ApiKeyService apiKeyService,
-                          UsageService usageService) {
+                          UsageService usageService,
+                          com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.userService = userService;
         this.appProperties = appProperties;
         this.apiKeyService = apiKeyService;
         this.usageService = usageService;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/register")
@@ -88,10 +93,18 @@ public class AuthController {
     }
 
     @PostMapping("/model-profiles")
-    public ResponseEntity<?> createModelProfile(Principal principal, @RequestBody Map<String, String> body) {
-        var profile = userService.createModelProfile(principal.getName(), body.get("name"), body.get("provider"),
-                body.get("baseUrl"), body.get("model"), body.get("apiKey"));
-        return ResponseEntity.ok(modelProfileResponse(profile, false));
+    public ResponseEntity<?> createModelProfile(Principal principal, @RequestBody CreateModelProfileRequest body) {
+        List<String> models = body.models() == null || body.models().isEmpty()
+                ? parseModels(body.model(), null)
+                : body.models().stream().map(this::stringValue).filter(value -> !value.isBlank()).distinct().toList();
+        List<Map<String, Object>> profiles = new java.util.ArrayList<>();
+        if (models.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "请至少添加一个模型名称"));
+        var profile = userService.createModelProfile(principal.getName(), stringValue(body.name()),
+                stringValue(body.provider()), stringValue(body.baseUrl()), models.get(0),
+                stringValue(body.apiKey()));
+        userService.setModelList(profile, models);
+        profiles.add(modelProfileResponse(profile, false));
+        return ResponseEntity.ok(profiles);
     }
 
     /** Probe a provider's model catalogue without exposing the credential to the browser. */
@@ -105,17 +118,63 @@ public class AuthController {
 
     @PutMapping("/model-profiles/{id}")
     public ResponseEntity<?> updateModelProfile(@PathVariable Long id, Principal principal,
-                                                 @RequestBody Map<String, String> body) {
-        boolean clearApiKey = "true".equalsIgnoreCase(body.get("clearApiKey"));
-        var profile = userService.updateModelProfile(principal.getName(), id, body.get("name"), body.get("provider"),
-                body.get("baseUrl"), body.get("model"), body.get("apiKey"), clearApiKey);
-        return ResponseEntity.ok(modelProfileResponse(profile, false));
+                                                 @RequestBody Map<String, Object> body) {
+        boolean clearApiKey = "true".equalsIgnoreCase(stringValue(body.get("clearApiKey")));
+        List<String> models = parseModels(body.get("models"), body.get("model"));
+        var profiles = userService.updateModelProfiles(principal.getName(), id, stringValue(body.get("name")),
+                stringValue(body.get("provider")), stringValue(body.get("baseUrl")), models,
+                stringValue(body.get("apiKey")), clearApiKey);
+        return ResponseEntity.ok(profiles.stream().map(profile -> modelProfileResponse(profile, false)).toList());
     }
 
     @DeleteMapping("/model-profiles/{id}")
     public ResponseEntity<?> deleteModelProfile(@PathVariable Long id, Principal principal) {
         userService.deleteModelProfile(principal.getName(), id);
         return ResponseEntity.ok(Map.of("message", "模型配置已删除"));
+    }
+
+    private List<String> parseModels(Object rawModels, Object fallbackModel) {
+        if (rawModels instanceof List<?> values) {
+            List<String> models = values.stream().map(String::valueOf).map(String::trim)
+                    .filter(value -> !value.isBlank()).distinct().toList();
+            if (!models.isEmpty()) return models;
+        }
+        if (rawModels instanceof String raw && !raw.isBlank()) {
+            try {
+                List<?> values = objectMapper.readValue(raw, List.class);
+                List<String> models = values.stream().map(String::valueOf).map(String::trim)
+                        .filter(value -> !value.isBlank()).distinct().toList();
+                if (!models.isEmpty()) return models;
+            } catch (Exception ignored) {
+                // Treat a plain string as the legacy single-model field.
+            }
+        }
+        String fallback = stringValue(fallbackModel == null ? rawModels : fallbackModel);
+        return fallback.isBlank() ? List.of() : List.of(fallback);
+    }
+
+    private record CreateModelProfileRequest(
+            String name,
+            String provider,
+            String baseUrl,
+            String model,
+            List<String> models,
+            String apiKey) {
+    }
+
+    private String writeModels(List<String> models) {
+        try { return objectMapper.writeValueAsString(models); }
+        catch (Exception e) { throw new IllegalStateException("无法保存模型列表", e); }
+    }
+
+    private List<String> readModels(com.shizuku.translate.entity.AiModelProfile profile) {
+        if (profile.getModels() == null || profile.getModels().isBlank()) return List.of(profile.getModel());
+        try { return objectMapper.readValue(profile.getModels(), List.class); }
+        catch (Exception e) { return List.of(profile.getModel()); }
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private Map<String, Object> modelProfileResponse(com.shizuku.translate.entity.AiModelProfile profile,
@@ -126,6 +185,7 @@ public class AuthController {
         data.put("provider", profile.getProvider());
         data.put("baseUrl", profile.getBaseUrl() == null ? "" : profile.getBaseUrl());
         data.put("model", profile.getModel());
+        data.put("models", readModels(profile));
         String profileKey = profile.getPersonalModelApiKey() != null
                 ? profile.getPersonalModelApiKey().getApiKey() : profile.getApiKey();
         data.put("hasApiKey", profileKey != null && !profileKey.isBlank());

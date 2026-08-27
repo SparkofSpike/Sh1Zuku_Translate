@@ -46,6 +46,10 @@ public class AiModelProfile {
     @Column(nullable = false, length = 200)
     private String model;
 
+    /** JSON array of models belonging to this single configuration. */
+    @Column(length = 4000)
+    private String models;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
