@@ -20,7 +20,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.3.1` (build metadata in `version.js` is `1.3.1+4049dd7`).
+The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.3.2` (build metadata in `version.js` is generated from the release commit).
 
 The extension supports:
 
