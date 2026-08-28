@@ -76,6 +76,29 @@ function globalParagraphId(page, k) {
   return start ? start + k : k + 1;
 }
 
+// Ordered source paragraphs of the page currently displayed in the DOM,
+// each with the paragraph id the background script assigned to it
+// (buildFullSource / buildPageSource / numberAllParagraphs) and the
+// tag-stripped match key used to align it against the DOM. Splitting
+// mirrors background.js exactly: pages on [newpage], paragraphs on \n\n.
+function sourceParagraphsForPage(originalContent, currentPage) {
+  const pages = String(originalContent || '')
+    .split(/\[newpage\]/i)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+  const paged = currentPage > 0 && pages.length > 1;
+  const pageNo = paged ? Math.min(currentPage, pages.length) : 1;
+  const pageText = paged ? pages[pageNo - 1] || '' : String(originalContent || '');
+  return pageText
+    .split(/\n{2,}/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
+    .map((block, k) => ({
+      id: globalParagraphId(pageNo, k),
+      key: paraMatchKey(block)
+    }));
+}
+
 // ─── Detect Novel ID from URL ───────────────────────────────
 
 function getNovelIdFromUrl() {
@@ -506,15 +529,60 @@ function normalizeText(s) {
   return (s || '').replace(/\s+/g, ' ').trim();
 }
 
+// Pixiv special tags never appear as literal text in the rendered DOM:
+// [chapter:X]/[b:X]/[i:X]/[e:X] render as their inner text X, ruby
+// [rb:漢字,かな] keeps the base text, and control tags ([newpage],
+// [jump:N], [uploadedimage:N], [[jumpuri:…]]…) render as nothing. Convert
+// them the same way before matching source text against the DOM, or
+// tag-led novels (bold/italics formatting update) can never be anchored
+// and every paragraph id would shift by the number of tag paragraphs.
+function pixivTagText(s) {
+  return (s || '')
+    .replace(/\[rb:([^,\]]*)[^\]]*\]/gi, '$1')
+    .replace(/\[\[[^\]]*\]\]/g, '')
+    .replace(/\[(?:jump|newpage|[a-z]*image)[^\]]*\]/gi, '')
+    .replace(/\[([a-z]+):([^\]]*)\]/gi, '$2');
+}
+
+// Match key for source-vs-DOM paragraph comparison: strip Pixiv tags and
+// ALL whitespace. Pixiv may join per-line <span>s without spaces while
+// the source separates lines with \n — both sides must squash to the
+// same key or a perfectly aligned paragraph would fail to match.
+function paraMatchKey(s) {
+  return pixivTagText(s || '').replace(/\s+/g, '');
+}
+
+// Order-preserving source-vs-DOM paragraph match: exact equality always
+// wins (even for one-character [b:壱] paragraphs); otherwise the shorter
+// key must be a prefix of the longer one by a safe margin (handles ruby
+// readings appended to the DOM text and partially rendered elements).
+function paraTextMatches(domKey, srcKey) {
+  if (!domKey || !srcKey) return false;
+  if (domKey === srcKey) return true;
+  const n = Math.min(domKey.length, srcKey.length);
+  return n >= 6 && domKey.slice(0, n) === srcKey.slice(0, n);
+}
+
+// A leaf line element: a DIV/SPAN that directly wraps line text, with no
+// nested block containers inside (Pixiv may render each body line as its
+// own <div> instead of a <p>).
+function isLeafLineEl(el) {
+  return !el.querySelector('p, div, section, article, ul, ol, table, h1, h2, h3, h4, h5, h6');
+}
+
 // Collect the paragraph run that starts at `startEl`: consecutive <p>
 // siblings (Pixiv's new page renders the whole novel body as one run of
-// <p> elements). Stops at the first non-paragraph block element.
-function collectParagraphRun(startEl) {
+// <p> elements). With `acceptDivs`, leaf <div>/<span> line elements count
+// as paragraphs too. Stops at the first non-paragraph block element.
+function collectParagraphRun(startEl, acceptDivs = false) {
   const paras = [];
   let el = startEl;
   while (el) {
     if (el.tagName === 'P') {
       if (el.textContent.trim().length > 0) paras.push(el);
+    } else if (acceptDivs && (el.tagName === 'DIV' || el.tagName === 'SPAN')
+        && el.textContent.trim().length > 0 && isLeafLineEl(el)) {
+      paras.push(el);
     } else if (el.tagName !== 'DIV' && el.tagName !== 'BR' && el.tagName !== 'SPAN') {
       // A non-paragraph block element breaks the run (ads, footer, …)
       break;
@@ -524,17 +592,46 @@ function collectParagraphRun(startEl) {
   return paras;
 }
 
+// Find the first paragraph run at or after `startEl`, tolerating the two
+// layouts the strict sibling walk cannot handle: the run nested one or
+// two wrapper levels deep (the <p> run is not the marker's sibling), and
+// non-paragraph elements (e.g. the [chapter:…] heading) preceding it.
+function findParagraphRunAfter(startEl, acceptDivs) {
+  let el = startEl;
+  for (let i = 0; el && i < 6; i++) {
+    // (a) the element itself starts the run
+    let paras = collectParagraphRun(el, acceptDivs);
+    if (paras.length) return paras;
+    // (b) the run is nested inside this element (wrapper container)
+    if (el.querySelector) {
+      const firstP = el.querySelector('p');
+      if (firstP) {
+        paras = collectParagraphRun(firstP, acceptDivs);
+        if (paras.length) return paras;
+      }
+    }
+    el = el.nextElementSibling;
+  }
+  return [];
+}
+
 // Locate the novel body paragraphs in the current DOM.
 // Returns an array of <p> elements, or null if they are not rendered yet
 // (the new Pixiv page renders the body client-side after page load).
 function findNovelParagraphs(originalContent) {
-  // 1. New Pixiv page: stable GTM marker div, immediately followed by the
-  //    body <p> run. `id="gtm-novel-work-scroll-begin-reading"` is a GTM
-  //    instrumentation id, not a styled-components hash — stable across
-  //    builds. The div itself is self-closing; the <p> are its siblings.
+  // 1. New Pixiv page: stable GTM marker div near the body. The <p> run
+  //    may be the marker's immediate siblings (older layout) or nested
+  //    inside a following wrapper element, and a [chapter:…] heading may
+  //    precede the paragraphs — scan a few siblings forward and descend
+  //    into wrappers instead of relying on an exact sibling layout.
+  //    `id="gtm-novel-work-scroll-begin-reading"` is a GTM instrumentation
+  //    id, not a styled-components hash — stable across builds.
   const gtm = document.querySelector('#gtm-novel-work-scroll-begin-reading');
-  if (gtm) {
-    const paras = collectParagraphRun(gtm.nextElementSibling);
+  if (gtm && gtm.nextElementSibling) {
+    let paras = findParagraphRunAfter(gtm.nextElementSibling, false);
+    if (paras.length) return paras;
+    // Layouts that render each body line as a leaf <div> instead of <p>.
+    paras = findParagraphRunAfter(gtm.nextElementSibling, true);
     if (paras.length) return paras;
   }
 
@@ -542,9 +639,13 @@ function findNovelParagraphs(originalContent) {
   //    Every line of the body is wrapped in <span class="text-count">.
   const textCount = document.querySelector('span.text-count');
   if (textCount) {
-    const firstPara = textCount.closest('p');
-    if (firstPara) {
-      const paras = collectParagraphRun(firstPara);
+    const lineEl = textCount.closest('p')
+      || (textCount.parentElement && isLeafLineEl(textCount.parentElement)
+        ? textCount.parentElement
+        : null)
+      || textCount.closest('div');
+    if (lineEl) {
+      const paras = collectParagraphRun(lineEl, lineEl.tagName !== 'P');
       if (paras.length) return paras;
     }
   }
@@ -564,30 +665,45 @@ function findNovelParagraphs(originalContent) {
     }
   }
 
-  // 4. Text-anchor fallback: locate the first paragraph of the novel body
-  //    by content. Unlike the old code (which took 40 chars across
-  //    paragraph boundaries and compared with startsWith), we use the
-  //    first paragraph only, normalize whitespace, and match any text node
-  //    that contains the anchor.
+  // 4. Text-anchor fallback: locate the first real text paragraph of the
+  //    novel body by content. Pixiv special tags ([chapter:…], [b:…] …)
+  //    never appear as literal text in the DOM, so they are stripped (and
+  //    tag-only paragraphs skipped) before picking the anchor — otherwise
+  //    tag-led novels can never be anchored to the page.
   if (originalContent) {
-    const firstPara = textToParagraphs(htmlToText(originalContent))[0];
-    const anchor = firstPara ? normalizeText(firstPara).slice(0, 20) : '';
-    if (anchor.length >= 10) {
+    const anchorPara = textToParagraphs(htmlToText(originalContent))
+      .map(b => paraMatchKey(b))
+      .find(t => t.length >= 10);
+    if (anchorPara) {
+      const anchor = anchorPara.slice(0, 20);
       const walker = document.createTreeWalker(
         document.body,
         NodeFilter.SHOW_TEXT
       );
       while (walker.nextNode()) {
         const node = walker.currentNode;
-        const t = normalizeText(node.textContent);
-        if (t && (t.includes(anchor) || anchor.includes(t.slice(0, 8)))) {
+        const t = paraMatchKey(node.textContent);
+        if (t && (t.includes(anchor) || (t.length >= 6 && anchor.includes(t.slice(0, 8))))) {
+          // Climb up to the element that holds (at most) this paragraph,
+          // then collect the run from there.
           let el = node.parentElement;
-          // Climb up to the paragraph that holds this line
-          while (el && el !== document.body && el.tagName !== 'P') {
+          let line = el;
+          while (el && el !== document.body) {
+            if (paraMatchKey(el.textContent).length > anchorPara.length + 8) break;
+            line = el;
             el = el.parentElement;
           }
-          if (el && el !== document.body && el.textContent.trim().length > 10) {
-            const paras = collectParagraphRun(el);
+          if (line && line !== document.body) {
+            const paras = findParagraphRunAfter(line, line.tagName !== 'P');
+            if (paras.length) return paras;
+          }
+          // Fall back to the paragraph element holding this text node.
+          let p = node.parentElement;
+          while (p && p !== document.body && p.tagName !== 'P') {
+            p = p.parentElement;
+          }
+          if (p && p !== document.body && p.textContent.trim().length > 10) {
+            const paras = collectParagraphRun(p, false);
             if (paras.length) return paras;
           }
         }
@@ -614,18 +730,38 @@ function buildInlineParagraphs(originalContent) {
   let paraEls = findNovelParagraphs(originalContent);
   if (!paraEls || paraEls.length === 0) return null;
 
-  // Insert one translation div after each paragraph element
+  // Align the DOM paragraphs to the numbered source paragraphs BY TEXT,
+  // not by position. Tag paragraphs ([chapter:…]/[b:…] — no literal DOM
+  // text) and non-body elements (ads, images) can no longer shift every
+  // following id: an element that matches no source paragraph simply
+  // gets no translation slot instead of pushing all later translations
+  // one slot down (the root cause of 错段 on tag-led novels).
+  const src = sourceParagraphsForPage(originalContent, getCurrentNovelPage());
   const transEls = [];
-  const currentPage = getCurrentNovelPage() || 1;
-  paraEls.forEach((p, k) => {
+  let si = 0;
+  const LOOKAHEAD = 6; // consecutive source paragraphs without a DOM slot
+  paraEls.forEach((p) => {
+    const t = paraMatchKey(p.textContent);
+    if (!t) return; // empty element (image, ad) — no slot
+    let matched = -1;
+    const end = Math.min(src.length, si + LOOKAHEAD);
+    for (let j = si; j < end; j++) {
+      if (paraTextMatches(t, src[j].key)) { matched = j; break; }
+    }
+    if (matched < 0) return; // unmatched element — leave it alone
+    si = matched + 1;
     const trans = document.createElement('div');
     trans.className = 'pnt-inline-trans';
     // Remember which global paragraph id this div corresponds to, so a
     // full-novel stream can refill it after a page flip.
-    trans.dataset.pid = String(globalParagraphId(currentPage, k));
+    trans.dataset.pid = String(src[matched].id);
     p.insertAdjacentElement('afterend', trans);
     transEls.push(trans);
   });
+
+  // Nothing matched: the run is not the novel body — keep looking / fall
+  // back to the panel instead of rendering under the wrong elements.
+  if (!transEls.length) return null;
 
   state.inlineContainer = paraEls[0].parentElement;
   state.inlineTransEls = transEls;
@@ -752,18 +888,26 @@ function renderInlineJsonLines(entries) {
   const transEls = state.inlineTransEls || [];
   if (!transEls.length) return;
 
+  // Map divs by the pid assigned when the pairs were built (text-based
+  // alignment) — never by array position: a single unmatched element
+  // would otherwise shift every later translation onto the wrong line.
+  const byPid = new Map();
+  transEls.forEach((el) => {
+    if (el && el.dataset && el.dataset.pid) byPid.set(el.dataset.pid, el);
+  });
+
   // Reset every div first so a remapped stream (e.g. after the model
   // re-emits an earlier line) does not leave stale text behind.
   transEls.forEach((el) => { if (el) el.textContent = ''; });
 
   entries.forEach((entry) => {
-    const el = transEls[entry.id - 1]; // ids are 1-based paragraph numbers
+    const el = byPid.get(String(entry.id));
     if (el) el.textContent = entry.text;
   });
 
   // Never leave an omitted paragraph looking like an intentional blank line.
   state.missingParagraphIds.forEach((id) => {
-    const el = transEls[id - 1];
+    const el = byPid.get(String(id));
     if (el && !el.textContent) {
       el.textContent = `⚠ 第 ${id} 段翻译缺失，请点击重新翻译`;
     }
@@ -1048,6 +1192,8 @@ function fillWindowFromNovel(data) {
   const origBody = state.windowEl.querySelector('.pnt-orig-body');
   if (origBody) {
     origBody.innerHTML = textToParagraphs(htmlToText(data.originalContent))
+      .map(p => pixivTagText(p).trim())
+      .filter(p => p.length > 0)
       .map(p => `<p class="pnt-original-p">${escapeHtml(p)}</p>`)
       .join('');
   }
