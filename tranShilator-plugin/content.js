@@ -46,8 +46,16 @@ let state = {
 function getCurrentNovelPage() {
   const el = document.querySelector('#gtm-novel-work-scroll-begin-reading');
   if (!el) return 0;
-  const page = parseInt(el.getAttribute('data-current-page') || '0', 10);
-  return page > 0 ? page : 0;
+  const candidates = [
+    el.getAttribute('data-current-page'),
+    el.getAttribute('data-page'),
+    el.closest('[data-current-page]')?.getAttribute('data-current-page')
+  ];
+  for (const value of candidates) {
+    const page = Number.parseInt(value || '', 10);
+    if (page > 0) return page;
+  }
+  return 0;
 }
 
 // Split novel text into pages ([newpage]) then into paragraphs (\n\n),
@@ -724,22 +732,60 @@ function findNovelParagraphs(originalContent) {
 }
 
 function domInlineUnitsForParagraph(element, separator = state.inlineSeparator) {
-  if (separator !== 'p-br') return [element];
-  const hasBreak = element.querySelector('br');
-  if (!hasBreak) return [element];
+  if (separator !== 'p-br' || !element.querySelector('br')) return [element];
+
+  // Keep Pixiv's React-owned children untouched. A live zero-width marker is
+  // inserted at each line boundary and used as the stable insertion anchor;
+  // unlike detached clones, these anchors remain connected to the document.
   const units = [];
-  let current = document.createElement('span');
-  const append = (node) => current.appendChild(node.cloneNode(true));
-  element.childNodes.forEach((node) => {
-    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
-      if (current.textContent.trim()) units.push(current);
-      current = document.createElement('span');
-    } else {
-      append(node);
-    }
+  let rangeStart = element.firstChild;
+  let text = '';
+  const addUnit = (beforeNode) => {
+    if (!text.trim()) return;
+    const marker = document.createElement('span');
+    marker.className = 'pnt-inline-unit';
+    marker.dataset.pntAnchor = 'true';
+    marker.style.display = 'inline';
+    marker.style.width = '0';
+    marker.style.overflow = 'hidden';
+    element.insertBefore(marker, beforeNode);
+    units.push(marker);
+    text = '';
+  };
+
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  textNodes.forEach((node) => {
+    text += node.textContent || '';
   });
-  if (current.textContent.trim()) units.push(current);
-  return units.length ? units : [element];
+
+  // The DOM's <br> nodes are the line boundaries. Insert markers directly
+  // before each break, then one before the paragraph's end. Source matching
+  // is performed against the complete paragraph below; markers are only
+  // anchors and carry no source text.
+  const breaks = Array.from(element.querySelectorAll('br'));
+  if (!breaks.length) return [element];
+  const paragraphText = element.textContent || '';
+  const lines = paragraphText.split(/\n+/).filter(line => line.trim());
+  if (!lines.length) return [element];
+  const markers = [];
+  breaks.forEach((br) => {
+    const marker = document.createElement('span');
+    marker.className = 'pnt-inline-unit';
+    marker.dataset.pntAnchor = 'true';
+    marker.style.display = 'inline-block';
+    marker.style.width = '0';
+    element.insertBefore(marker, br);
+    markers.push(marker);
+  });
+  const tail = document.createElement('span');
+  tail.className = 'pnt-inline-unit';
+  tail.dataset.pntAnchor = 'true';
+  tail.style.display = 'inline-block';
+  tail.style.width = '0';
+  element.appendChild(tail);
+  return markers.concat(tail);
 }
 
 function buildInlineParagraphs(originalContent) {
@@ -768,18 +814,24 @@ function buildInlineParagraphs(originalContent) {
   const src = sourceParagraphsForPage(originalContent, getCurrentNovelPage(), state.inlineSeparator);
   const transEls = [];
   let si = 0;
+  let unmatchedCount = 0;
   const LOOKAHEAD = 6; // consecutive source paragraphs without a DOM slot
   paraEls.forEach((p) => {
     const units = domInlineUnitsForParagraph(p);
-    units.forEach((unit) => {
-      const t = paraMatchKey(unit.textContent);
+    units.forEach((unit, unitIndex) => {
+      const t = state.inlineSeparator === 'p-br' && unit.dataset.pntAnchor
+        ? paraMatchKey((p.textContent || '').split(/\n+/).filter(line => line.trim())[unitIndex] || '')
+        : paraMatchKey(unit.textContent);
       if (!t) return; // empty element (image, ad) — no slot
       let matched = -1;
       const end = Math.min(src.length, si + LOOKAHEAD);
       for (let j = si; j < end; j++) {
         if (paraTextMatches(t, src[j].key)) { matched = j; break; }
       }
-      if (matched < 0) return; // unmatched element — leave it alone
+      if (matched < 0) {
+        unmatchedCount++;
+        return; // unmatched element — leave it alone
+      }
       si = matched + 1;
       const trans = document.createElement('div');
       trans.className = 'pnt-inline-trans';
@@ -788,6 +840,20 @@ function buildInlineParagraphs(originalContent) {
       unit.insertAdjacentElement('afterend', trans);
       transEls.push(trans);
     });
+  });
+
+  console.debug('[PNT][inline-map]', {
+    page: getCurrentNovelPage(),
+    domCount: paraEls.length,
+    sourceCount: src.length,
+    matchedCount: transEls.length,
+    unmatchedCount,
+    firstDomKey: paraEls[0] ? paraMatchKey(paraEls[0].textContent).slice(0, 40) : '',
+    lastDomKey: paraEls.length ? paraMatchKey(paraEls[paraEls.length - 1].textContent).slice(0, 40) : '',
+    firstSourceKey: src[0]?.key.slice(0, 40) || '',
+    lastSourceKey: src[src.length - 1]?.key.slice(0, 40) || '',
+    firstPid: transEls[0]?.dataset.pid || '',
+    lastPid: transEls[transEls.length - 1]?.dataset.pid || ''
   });
 
   // Nothing matched: the run is not the novel body — keep looking / fall
@@ -801,7 +867,7 @@ function buildInlineParagraphs(originalContent) {
 
 function restoreOriginalHtml() {
   // Remove only the translation divs we inserted; leave Pixiv DOM intact
-  document.querySelectorAll('.pnt-inline-trans').forEach(el => el.remove());
+  document.querySelectorAll('.pnt-inline-trans, .pnt-inline-unit[data-pnt-anchor="true"]').forEach(el => el.remove());
   state.inlineContainer = null;
   state.inlineTransEls = [];
 }
@@ -1107,8 +1173,9 @@ async function handleTranslate(skipCache = false) {
 
   state.novelId = novelId;
   state.targetLang = settings.targetLang;
-  // inline-full: translate the whole novel once, keep refilling each
-  // page as the user flips to it. Internally it renders like 'inline'.
+  // Keep the legacy paged inline path stable: inline + page scope renders
+  // only the visible page, while full scope explicitly enables global IDs.
+  // The old inline-full setting remains backward compatible.
   state.fullMode = settings.displayMode === 'inline-full'
     || (settings.displayMode === 'inline' && settings.inlineScope === 'full');
   state.inlineSeparator = settings.inlineSeparator === 'p-br' ? 'p-br' : 'p';
@@ -1217,6 +1284,14 @@ function onNovelLoaded(data) {
   if (state.fullMode) {
     state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
   }
+  console.debug('[PNT][novel-loaded]', {
+    fullMode: state.fullMode,
+    inlineSeparator: state.inlineSeparator,
+    currentPage: getCurrentNovelPage(),
+    pageCount: String(data.originalContent || '').split(/\\[newpage\\]/i).filter(p => p.trim()).length,
+    pageStartIds: state.pageStartIds,
+    expectedParagraphCount: state.expectedParagraphCount
+  });
 
   fillWindowFromNovel(data);
 
@@ -1266,7 +1341,18 @@ function watchPageFlips(originalContent) {
   if (state.pageFlipObserver) return; // already watching
   let timer = null;
   let lastPage = getCurrentNovelPage() || 1;
-  state.pageFlipObserver = new MutationObserver(() => {
+  let lastDomSignature = '';
+  let observerMutating = false;
+  state.pageFlipObserver = new MutationObserver((mutations) => {
+    // Ignore mutations caused only by our own translation/anchor nodes.
+    const pixivMutation = mutations.some((mutation) => {
+      const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+      return mutation.type === 'attributes'
+        ? !mutation.target.closest?.('.pnt-inline-trans, .pnt-inline-unit')
+        : nodes.some(node => !(node.nodeType === Node.ELEMENT_NODE
+          && node.closest?.('.pnt-inline-trans, .pnt-inline-unit')));
+    });
+    if (!pixivMutation || observerMutating) return;
     // Debounce: Pixiv re-renders in a burst on page flip.
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
@@ -1279,9 +1365,24 @@ function watchPageFlips(originalContent) {
       const renderedKeys = (state.inlineTransEls || [])
         .map(el => el.dataset.sourceKey || '')
         .filter(Boolean);
-      const stale = !active || pageChanged
+      const liveParas = findNovelParagraphs(originalContent) || [];
+      const domSignature = liveParas
+        .map(el => paraMatchKey(el.textContent).slice(0, 80))
+        .join('|');
+      const domChanged = domSignature !== lastDomSignature;
+      lastDomSignature = domSignature;
+      const stale = !active || pageChanged || domChanged
         || !renderedKeys.length
         || renderedKeys.some(key => !currentKeys.includes(key));
+      console.debug('[PNT][page-flip]', {
+        page,
+        pageAttribute: document.querySelector('#gtm-novel-work-scroll-begin-reading')?.getAttribute('data-current-page') || '',
+        domCount: liveParas.length,
+        renderedCount: renderedKeys.length,
+        pageChanged,
+        domChanged,
+        stale
+      });
       if (!stale) return;
 
       // Translations hidden by the user: keep them hidden across page
@@ -1300,24 +1401,34 @@ function watchPageFlips(originalContent) {
         // and giving the new page none. Force a clean rebuild every time:
         // remove all translation divs, rebuild the new page's pairs, then
         // refill from the accumulated map.
+        observerMutating = true;
         restoreOriginalHtml();
         const wrapper = buildInlineParagraphs(originalContent);
         if (wrapper) {
           refillInlineFromMap();
         }
+        observerMutating = false;
       } else {
         // Per-page mode: Pixiv swapped the paragraphs but kept our stale
         // translation divs (the container itself stays connected). Clear
         // them so the new page starts clean; the user translates it on
         // demand. Never let previous-page translations pile up on top.
+        observerMutating = true;
         restoreOriginalHtml();
         state.streamingText = '';
         state.inlineContainer = null;
+        observerMutating = false;
       }
     }, 300);
   });
   // Watch both node replacement (page flip) and the data-current-page
   // attribute (in-place re-render keeps the container connected).
+  // Seed the signature after the initial build so our own insertion does
+  // not look like a page flip.
+  const initialParas = findNovelParagraphs(originalContent) || [];
+  lastDomSignature = initialParas
+    .map(el => paraMatchKey(el.textContent).slice(0, 80))
+    .join('|');
   state.pageFlipObserver.observe(document.body, {
     childList: true,
     subtree: true,
@@ -1362,6 +1473,10 @@ function waitForInlineContainer(data) {
   const tryBuild = () => {
     if (buildInlineParagraphs(data.originalContent)) {
       cleanup();
+      // If the stream completed before the DOM became available, the final
+      // text is already in state.streamingText; render it immediately.
+      if (state.fullMode) refillInlineFromMap();
+      else if (state.streamingText) renderInlineStreaming();
       // In full-novel mode keep watching for page flips so translations
       // appear on every page without re-translating.
       // All inline modes watch for page flips: Pixiv reuses the body
@@ -1419,6 +1534,16 @@ function onStreamToken(token) {
 function onStreamDone(data) {
   if (!state.translating) return; // cancelled — ignore
 
+  // The model may finish before Pixiv has mounted the client-rendered body.
+  // Keep the final payload and let the inline wait/build path consume it.
+  if (state.mode === 'inline' && (!state.inlineTransEls || !state.inlineTransEls.length)) {
+    const rebuilt = state.originalContent ? buildInlineParagraphs(state.originalContent) : null;
+    if (rebuilt) {
+      watchPageFlips(state.originalContent);
+      if (state.fullMode) refillInlineFromMap();
+    }
+  }
+
   // The backend's done event contains the authoritative complete response.
   // Keep it when a proxy/client delivered tokens out of order or the final
   // token notification was lost.
@@ -1442,6 +1567,16 @@ function onStreamDone(data) {
   // user "翻译完成" while silently leaving paragraphs untranslated.
   if (state.numberedRequest && state.expectedParagraphCount > 0) {
     const validation = validateNumberedStream();
+    const ids = validation.entries.map(entry => entry.id);
+    console.debug('[PNT][stream-done]', {
+      translatedChars: state.streamingText.length,
+      entryCount: validation.entries.length,
+      minId: ids.length ? Math.min(...ids) : null,
+      maxId: ids.length ? Math.max(...ids) : null,
+      uniqueIdCount: new Set(ids).size,
+      missing: validation.missing,
+      invalid: validation.invalid
+    });
     state.missingParagraphIds = validation.missing;
     if (validation.missing.length || validation.invalid.length) {
       if (state.mode === 'inline') renderInlineStreaming();
@@ -1449,7 +1584,7 @@ function onStreamDone(data) {
       const missingText = validation.missing.length
         ? `缺少第 ${validation.missing.slice(0, 8).join('、')}${validation.missing.length > 8 ? ' 等' : ''}段`
         : '段落编号重复或无效';
-      finishTranslate(false, `模型返回不完整（${missingText}），请点击重新翻译`, data);
+      finishTranslate(false, `模型返回不完整：${missingText}，请点击重新翻译`, data);
       return;
     }
   }
@@ -1479,7 +1614,18 @@ function finishTranslate(success, errorMsg, data) {
   }
 
   if (success) {
-    showToast('翻译完成');
+    const inlineReady = state.mode !== 'inline'
+      || (state.inlineTransEls && state.inlineTransEls.length > 0);
+    if (!inlineReady) {
+      showToast('翻译完成，但未找到 Pixiv 原文段落，译文未能插入页面；请刷新页面后重试');
+      console.warn('[PNT] translation completed without inline DOM anchors', {
+        currentPage: getCurrentNovelPage(),
+        originalChars: state.originalContent.length,
+        translatedChars: state.streamingText.length
+      });
+    } else {
+      showToast('翻译完成');
+    }
   } else {
     // Treat both the raw AbortError and the background's friendly
     // "翻译已取消" as a user cancellation, not a failure.
@@ -1488,7 +1634,7 @@ function finishTranslate(success, errorMsg, data) {
     } else {
       // Keep whatever was already rendered: a transient network error
       // must not wipe the translations the user already received.
-      showToast('翻译中断: ' + (errorMsg || '未知错误') + '（已显示的译文保留）');
+      showToast('翻译中断：' + (errorMsg || '未知错误'));
     }
   }
 }

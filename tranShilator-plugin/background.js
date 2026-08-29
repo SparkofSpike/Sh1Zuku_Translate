@@ -386,7 +386,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         recordPluginError(error);
         await notifyTab(tabId, { type: 'SSE_ERROR', error });
       },
-      skipCache
+      skipCache,
+      inlineSeparator
     );
   } finally {
     // Clean up controller + keepalive on every exit path, STEP1/2
@@ -592,7 +593,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false) {
+async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false, inlineSeparator = 'p') {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -624,14 +625,20 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     }
     prompt += `
 要求：
-1. 每行一个 JSON 对象，用双引号，不要注释、不要 Markdown 代码块标记、不要任何额外文字；
-2. id 与输入 [编号] 一一对应，顺序不变，不得合并或遗漏；
-3. 译文内部的换行用 \n 转义写在 text 里。
+1. 每个输入编号必须输出且只能输出一个 JSON 对象；
+2. 每个 JSON 对象必须单独占一行，格式为 {"id":数字,"text":"译文"}；
+3. 输出顺序必须严格按照输入编号递增，禁止交换、合并、拆分、遗漏或重复任何编号；
+4. 即使相邻原文行很短、是对白、感叹词、拟声词、单句或只有几个字，也必须保持独立编号，绝对不能与前后编号合并；
+5. text 只填写对应这一条编号原文的译文，不得把其他编号原文的内容写进来；
+6. 原文中的换行如果属于同一编号，译文内部用 \n 转义写在 text 里；
+7. 不要注释、不要 Markdown 代码块标记、不要任何额外文字。
 
 示例：
-{"id":1,"text":"第一段的译文"}
-{"id":2,"text":"第二段的译文"}
-{"id":3,"text":"第三段的译文"}`;
+{"id":1,"text":"第一行的译文"}
+{"id":2,"text":"第二行的译文"}
+{"id":3,"text":"第三行的译文"}
+
+再次强调：输入有几条 [编号]，就必须输出几行 JSON；一条编号对应一行 JSON，绝不允许按语义合并相邻编号。`;
   }
 
 
@@ -654,6 +661,12 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   let firstTokenTimer = setTimeout(() => {
     firstTokenController.abort();
   }, firstTokenTimeoutMs);
+  console.log('[PNT][request]', {
+    separator: inlineSeparator,
+    numbered: text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本'),
+    sourceChars: text.length,
+    sourceLines: text.split('\\n').length
+  });
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -686,6 +699,7 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     const body = await response.text().catch(() => '');
     throw new Error(`翻译服务请求失败 (${response.status}): ${body}`);
   }
+  console.log('[PNT][response]', { status: response.status, contentType: response.headers.get('content-type') || '' });
   const reader = response.body?.getReader();
   if (!reader) {
     throw new Error('浏览器不支持流式响应');
