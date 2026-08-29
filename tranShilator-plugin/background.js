@@ -243,7 +243,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.currentPage || 0,
         !!message.fullMode,
         message.thinkingType,
-        message.displayMode
+        message.displayMode,
+        message.inlineSeparator || 'p',
+        !!message.skipCache
       ).catch((error) => {
         const msg = error && error.message ? error.message : String(error);
         // An aborted body stream is almost always the user pressing cancel
@@ -299,7 +301,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode, inlineSeparator = 'p', skipCache = false) {
   const safeNovelId = String(novelId || '').match(/^\d+$/) ? String(novelId) : '';
   if (!safeNovelId) {
     throw new Error('无效的小说 ID');
@@ -357,7 +359,9 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // fullMode translates the WHOLE novel in one request with global
     // paragraph ids; the content script maps ids back to whatever page
     // the user is reading, so flipping pages never needs a re-translate.
-    const sourceText = fullMode ? buildFullSource(novel.content) : buildPageSource(novel.content, currentPage, numbered);
+    const sourceText = fullMode
+      ? buildFullSource(novel.content, inlineSeparator)
+      : buildPageSource(novel.content, currentPage, numbered, inlineSeparator);
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
@@ -381,7 +385,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       async (error) => {
         recordPluginError(error);
         await notifyTab(tabId, { type: 'SSE_ERROR', error });
-      }
+      },
+      skipCache
     );
   } finally {
     // Clean up controller + keepalive on every exit path, STEP1/2
@@ -398,7 +403,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
 // script computes the per-page id offset from originalContent so it can
 // render each page's translations as the user flips to it — the SSE
 // stream keeps running while the user reads/flips (never interrupted).
-function buildFullSource(fullText) {
+function buildFullSource(fullText, separator = 'p') {
   const pages = fullText
     .split(/\[newpage\]/i)
     .map((p) => p.trim())
@@ -408,7 +413,7 @@ function buildFullSource(fullText) {
   let id = 1;
   for (const page of pages) {
     const paras = page
-      .split(/\n{2,}/)
+      .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
     for (const para of paras) {
@@ -423,9 +428,9 @@ function buildFullSource(fullText) {
 // Number every paragraph of a text as [1]..[N]. Used for single-page
 // novels in inline mode so the model's JSON Lines ids map 1:1 onto the
 // DOM paragraphs. Also the base for the per-page numbering below.
-function numberAllParagraphs(fullText) {
+function numberAllParagraphs(fullText, separator = 'p') {
   return fullText
-    .split(/\n{2,}/)
+    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
     .map((p, i) => `[${i + 1}] ${p}`)
@@ -438,7 +443,7 @@ function numberAllParagraphs(fullText) {
 // the user is currently reading. The full text stays as context: the
 // page before and after the target page are included as "reference
 // only" sections, and the prompt tells the model not to translate them.
-function buildPageSource(fullText, currentPage, numbered) {
+function buildPageSource(fullText, currentPage, numbered, separator = 'p') {
   const pages = fullText
     .split(/\[newpage\]/i)
     .map((p) => p.trim())
@@ -453,7 +458,7 @@ function buildPageSource(fullText, currentPage, numbered) {
     // shifts every later translation one slot and the inline pairs
     // misalign — the root cause of intermittent 错段 on short novels.
     if (!numbered) return fullText;
-    return `【待翻译文本（段落已编号）】\n` + numberAllParagraphs(fullText);
+    return `【待翻译文本（段落已编号）】\n` + numberAllParagraphs(fullText, separator);
   }
 
   const idx = Math.min(Math.max(currentPage - 1, 0), pages.length - 1);
@@ -477,7 +482,7 @@ function buildPageSource(fullText, currentPage, numbered) {
   // paragraph back to the exact DOM paragraph, even when the model merges
   // or splits paragraphs. Without numbering, a single merged paragraph
   // shifts every later translation one slot and the inline pairs misalign.
-  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n` + numberAllParagraphs(current);
+  text += `【当前页（第 ${currentPage} 页，请翻译这部分）】\n` + numberAllParagraphs(current, separator);
   return text;
 }
 
@@ -586,7 +591,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError) {
+async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -660,7 +665,8 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       modelProfileId: modelProfileId === null || modelProfileId === undefined ? 0 : modelProfileId,
       customPrompt: prompt,
       thinkingType: thinkingType || undefined,
-      presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined
+      presets: (selectedPresets && selectedPresets.length > 0) ? selectedPresets : undefined,
+      skipCache
     }),
     signal
   }).catch((e) => {

@@ -21,8 +21,10 @@ let state = {
   novelTitle: '',
   novelAuthor: '',
   numberedRequest: false, // true when the response is numbered JSON Lines
-  fullMode: false,        // true: translate whole novel once (inline-full)
+  fullMode: false,        // true: translate whole novel once
+  inlineSeparator: 'p',   // 'p' or 'p-br'
   fullTranslations: {},   // global paragraph id -> translated text
+  fullEntryMeta: {},      // global paragraph id -> latest JSON line metadata
   pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
   pageFlipObserver: null,  // MutationObserver for page flips (fullMode)
   inlineTransEls: [],      // translation elements inserted after Pixiv paragraphs
@@ -81,7 +83,7 @@ function globalParagraphId(page, k) {
 // (buildFullSource / buildPageSource / numberAllParagraphs) and the
 // tag-stripped match key used to align it against the DOM. Splitting
 // mirrors background.js exactly: pages on [newpage], paragraphs on \n\n.
-function sourceParagraphsForPage(originalContent, currentPage) {
+function sourceParagraphsForPage(originalContent, currentPage, separator = state.inlineSeparator) {
   const pages = String(originalContent || '')
     .split(/\[newpage\]/i)
     .map(p => p.trim())
@@ -90,7 +92,7 @@ function sourceParagraphsForPage(originalContent, currentPage) {
   const pageNo = paged ? Math.min(currentPage, pages.length) : 1;
   const pageText = paged ? pages[pageNo - 1] || '' : String(originalContent || '');
   return pageText
-    .split(/\n{2,}/)
+    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
     .map(p => p.trim())
     .filter(p => p.length > 0)
     .map((block, k) => ({
@@ -182,21 +184,28 @@ function textToParagraphs(text) {
 // Numbered requests must be checked against the same page boundaries used
 // by background.js. A blank result is not a successful translation: it is a
 // missing paragraph that needs to remain visible to the user.
-function expectedParagraphCount(originalContent, fullMode, currentPage) {
+function expectedParagraphCount(originalContent, fullMode, currentPage, separator = state.inlineSeparator) {
   const pages = String(originalContent || '')
     .split(/\[newpage\]/i)
     .map(p => p.trim())
     .filter(p => p.length > 0);
 
   if (fullMode) {
-    return pages.reduce((total, page) => total + textToParagraphs(page).length, 0);
+    return pages.reduce((total, page) => total + splitInlineUnits(page, separator).length, 0);
   }
 
   if (currentPage > 0 && pages.length > 1) {
     const page = pages[Math.min(currentPage - 1, pages.length - 1)] || '';
-    return textToParagraphs(page).length;
+    return splitInlineUnits(page, separator).length;
   }
-  return textToParagraphs(originalContent || '').length;
+  return splitInlineUnits(originalContent || '', separator).length;
+}
+
+function splitInlineUnits(text, separator = state.inlineSeparator) {
+  return String(text || '')
+    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
 }
 
 function escapeHtml(str) {
@@ -343,9 +352,9 @@ function createWindow() {
   retranslateBtn.addEventListener('click', () => {
     if (state.translating) {
       cancelTranslation();
-      handleTranslate();
+      handleTranslate(true);
     } else {
-      handleTranslate();
+      handleTranslate(true);
     }
   });
   state.retranslateBtn = retranslateBtn;
@@ -713,6 +722,25 @@ function findNovelParagraphs(originalContent) {
   return null;
 }
 
+function domInlineUnitsForParagraph(element, separator = state.inlineSeparator) {
+  if (separator !== 'p-br') return [element];
+  const hasBreak = element.querySelector('br');
+  if (!hasBreak) return [element];
+  const units = [];
+  let current = document.createElement('span');
+  const append = (node) => current.appendChild(node.cloneNode(true));
+  element.childNodes.forEach((node) => {
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+      if (current.textContent.trim()) units.push(current);
+      current = document.createElement('span');
+    } else {
+      append(node);
+    }
+  });
+  if (current.textContent.trim()) units.push(current);
+  return units.length ? units : [element];
+}
+
 function buildInlineParagraphs(originalContent) {
   // Idempotent: if we already built the inline pairs for the CURRENT
   // (still-connected) DOM, do nothing. When the user flips to another
@@ -736,27 +764,28 @@ function buildInlineParagraphs(originalContent) {
   // following id: an element that matches no source paragraph simply
   // gets no translation slot instead of pushing all later translations
   // one slot down (the root cause of 错段 on tag-led novels).
-  const src = sourceParagraphsForPage(originalContent, getCurrentNovelPage());
+  const src = sourceParagraphsForPage(originalContent, getCurrentNovelPage(), state.inlineSeparator);
   const transEls = [];
   let si = 0;
   const LOOKAHEAD = 6; // consecutive source paragraphs without a DOM slot
   paraEls.forEach((p) => {
-    const t = paraMatchKey(p.textContent);
-    if (!t) return; // empty element (image, ad) — no slot
-    let matched = -1;
-    const end = Math.min(src.length, si + LOOKAHEAD);
-    for (let j = si; j < end; j++) {
-      if (paraTextMatches(t, src[j].key)) { matched = j; break; }
-    }
-    if (matched < 0) return; // unmatched element — leave it alone
-    si = matched + 1;
-    const trans = document.createElement('div');
-    trans.className = 'pnt-inline-trans';
-    // Remember which global paragraph id this div corresponds to, so a
-    // full-novel stream can refill it after a page flip.
-    trans.dataset.pid = String(src[matched].id);
-    p.insertAdjacentElement('afterend', trans);
-    transEls.push(trans);
+    const units = domInlineUnitsForParagraph(p);
+    units.forEach((unit) => {
+      const t = paraMatchKey(unit.textContent);
+      if (!t) return; // empty element (image, ad) — no slot
+      let matched = -1;
+      const end = Math.min(src.length, si + LOOKAHEAD);
+      for (let j = si; j < end; j++) {
+        if (paraTextMatches(t, src[j].key)) { matched = j; break; }
+      }
+      if (matched < 0) return; // unmatched element — leave it alone
+      si = matched + 1;
+      const trans = document.createElement('div');
+      trans.className = 'pnt-inline-trans';
+      trans.dataset.pid = String(src[matched].id);
+      unit.insertAdjacentElement('afterend', trans);
+      transEls.push(trans);
+    });
   });
 
   // Nothing matched: the run is not the novel body — keep looking / fall
@@ -896,13 +925,22 @@ function renderInlineJsonLines(entries) {
     if (el && el.dataset && el.dataset.pid) byPid.set(el.dataset.pid, el);
   });
 
-  // Reset every div first so a remapped stream (e.g. after the model
-  // re-emits an earlier line) does not leave stale text behind.
-  transEls.forEach((el) => { if (el) el.textContent = ''; });
-
+  // Re-render the complete accumulated stream. During SSE streaming the
+  // last JSON object is normally incomplete; clearing the DOM before
+  // parsing that prefix makes already translated paragraphs blink empty
+  // and, more importantly, allows a late partial line to replace a
+  // complete line. Keep the latest entry per id and only replace a value
+  // when the new entry is complete or no value exists yet.
+  const latest = new Map();
   entries.forEach((entry) => {
-    const el = byPid.get(String(entry.id));
-    if (el) el.textContent = entry.text;
+    const previous = latest.get(entry.id);
+    if (!previous || entry.complete || !previous.complete) latest.set(entry.id, entry);
+  });
+
+  transEls.forEach((el) => {
+    if (!el) return;
+    const entry = latest.get(Number(el.dataset.pid));
+    el.textContent = entry ? entry.text : '';
   });
 
   // Never leave an omitted paragraph looking like an intentional blank line.
@@ -967,7 +1005,14 @@ function renderInlineStreaming() {
       if (state.fullMode) {
         // Full-novel stream: accumulate into the global map, then refill
         // whatever page is currently visible (typing effect preserved).
-        jsonEntries.forEach((e) => { state.fullTranslations[e.id] = e.text; });
+        jsonEntries.forEach((e) => {
+          const key = String(e.id);
+          const previous = state.fullEntryMeta[key];
+          if (!previous || e.complete || !previous.complete) {
+            state.fullTranslations[key] = e.text;
+            state.fullEntryMeta[key] = e;
+          }
+        });
         refillInlineFromMap();
       } else {
         renderInlineJsonLines(jsonEntries);
@@ -1006,7 +1051,7 @@ function renderInlineStreaming() {
 
 // ─── Translation Flow ───────────────────────────────────────
 
-async function handleTranslate() {
+async function handleTranslate(skipCache = false) {
   // Bail out if this content script belongs to a dead extension instance
   // (extension was reloaded) — chrome.* calls would throw
   // "Extension context invalidated" otherwise.
@@ -1028,7 +1073,7 @@ async function handleTranslate() {
   // Load settings
   const settings = await new Promise((resolve) => {
     try {
-      chrome.storage.sync.get(['targetLang', 'displayMode', 'selectedPresets', 'customPrompt', 'thinkingType', 'model', 'modelProfileId'], (items) => {
+      chrome.storage.sync.get(['targetLang', 'displayMode', 'inlineScope', 'inlineSeparator', 'selectedPresets', 'customPrompt', 'thinkingType', 'model', 'modelProfileId'], (items) => {
         resolve({
           targetLang: items.targetLang || 'zh',
           displayMode: items.displayMode || 'panel',
@@ -1037,7 +1082,9 @@ async function handleTranslate() {
           thinkingType: items.thinkingType || 'disabled',
           model: items.model || '',
           modelProfileId: items.modelProfileId !== null && items.modelProfileId !== undefined && items.modelProfileId !== ''
-            ? Number(items.modelProfileId) : 0
+            ? Number(items.modelProfileId) : 0,
+          inlineScope: items.inlineScope || (items.displayMode === 'inline-full' ? 'full' : 'page'),
+          inlineSeparator: items.inlineSeparator || 'p'
         });
       });
     } catch (e) {
@@ -1049,7 +1096,9 @@ async function handleTranslate() {
         selectedPresets: [],
         customPrompt: '',
         model: '',
-        modelProfileId: null
+        modelProfileId: null,
+        inlineScope: 'page',
+        inlineSeparator: 'p'
       });
     }
   });
@@ -1058,8 +1107,10 @@ async function handleTranslate() {
   state.targetLang = settings.targetLang;
   // inline-full: translate the whole novel once, keep refilling each
   // page as the user flips to it. Internally it renders like 'inline'.
-  state.fullMode = settings.displayMode === 'inline-full';
-  state.mode = state.fullMode ? 'inline' : settings.displayMode;
+  state.fullMode = settings.displayMode === 'inline-full'
+    || (settings.displayMode === 'inline' && settings.inlineScope === 'full');
+  state.inlineSeparator = settings.inlineSeparator === 'p-br' ? 'p-br' : 'p';
+  state.mode = settings.displayMode;
   state.translating = true;
   if (state.inlineWaitCleanup) {
     state.inlineWaitCleanup();
@@ -1081,6 +1132,7 @@ async function handleTranslate() {
     state.pageFlipObserver = null;
   }
   state.fullTranslations = {};
+  state.fullEntryMeta = {};
   state.pageStartIds = [];
   state.expectedParagraphCount = 0;
   state.missingParagraphIds = [];
@@ -1138,7 +1190,9 @@ async function handleTranslate() {
       modelProfileId: settings.modelProfileId,
       // Request accepted: the button moves to the blue "reasoning"
       // state until the first token arrives (DeepSeek pre-fill).
-      thinkingType: settings.thinkingType
+      thinkingType: settings.thinkingType,
+      inlineSeparator: state.inlineSeparator,
+      skipCache
     });
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
@@ -1155,7 +1209,7 @@ function onNovelLoaded(data) {
   state.numberedRequest = !!data.numberedRequest;
   state.fullMode = !!data.fullMode;
   state.expectedParagraphCount = state.numberedRequest
-    ? expectedParagraphCount(data.originalContent, state.fullMode, getCurrentNovelPage())
+    ? expectedParagraphCount(data.originalContent, state.fullMode, getCurrentNovelPage(), state.inlineSeparator)
     : 0;
   state.missingParagraphIds = [];
   if (state.fullMode) {
@@ -1472,7 +1526,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (state.translating) {
           await cancelTranslation();
         }
-        await handleTranslate();
+        await handleTranslate(true);
       })();
       sendResponse({ ok: true });
       break;

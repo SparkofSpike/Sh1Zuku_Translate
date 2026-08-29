@@ -10,6 +10,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const targetLangSelect = document.getElementById('targetLang');
   const thinkingCheck = document.getElementById('thinking');
   const displayModeSelect = document.getElementById('displayMode');
+  const inlineOptions = document.getElementById('inlineOptions');
+  const inlineScopeSelect = document.getElementById('inlineScope');
+  const inlineSeparatorSelect = document.getElementById('inlineSeparator');
   const settingsToggle = document.getElementById('settingsToggle');
   const settingsPanel = document.getElementById('settingsPanel');
   const autoTranslateCheckbox = document.getElementById('autoTranslate');
@@ -74,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Load saved settings ─────────────────────────────────
 
   chrome.storage.sync.get(
-    ['backendUrl', 'apiKey', 'model', 'modelProfileId', 'targetLang', 'thinkingType', 'displayMode', 'autoTranslate', 'selectedPresets', 'customPrompt'],
+    ['backendUrl', 'apiKey', 'model', 'modelProfileId', 'targetLang', 'thinkingType', 'displayMode', 'inlineScope', 'inlineSeparator', 'autoTranslate', 'selectedPresets', 'customPrompt'],
     (items) => {
       if (items.backendUrl) backendUrlInput.value = items.backendUrl;
       if (items.apiKey) apiKeyInput.value = items.apiKey;
@@ -83,7 +86,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (items.targetLang) targetLangSelect.value = items.targetLang;
       // 思考：复选框，勾选 = 开启思考推理（默认关闭，与后端 disabled 一致）
       thinkingCheck.checked = items.thinkingType === 'enabled';
-      if (items.displayMode) displayModeSelect.value = items.displayMode;
+      if (items.displayMode) displayModeSelect.value = items.displayMode === 'inline-full' ? 'inline' : items.displayMode;
+      if (items.inlineScope) inlineScopeSelect.value = items.inlineScope;
+      else if (items.displayMode === 'inline-full') inlineScopeSelect.value = 'full';
+      if (items.inlineSeparator) inlineSeparatorSelect.value = items.inlineSeparator;
+      updateInlineOptions();
       if (items.customPrompt) customPromptInput.value = items.customPrompt;
       if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
       autoTranslateCheckbox.checked = items.autoTranslate !== false;
@@ -245,6 +252,8 @@ document.addEventListener('DOMContentLoaded', () => {
       targetLang: targetLangSelect.value,
       thinkingType: thinkingCheck.checked ? 'enabled' : 'disabled',
       displayMode: displayModeSelect.value,
+      inlineScope: inlineScopeSelect.value,
+      inlineSeparator: inlineSeparatorSelect.value,
       autoTranslate: autoTranslateCheckbox.checked,
       customPrompt: customPromptInput.value.trim(),
       selectedPresets
@@ -345,9 +354,16 @@ document.addEventListener('DOMContentLoaded', () => {
     window.close();
   });
 
-  [backendUrlInput, apiKeyInput, targetLangSelect, thinkingCheck, displayModeSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
+  [backendUrlInput, apiKeyInput, targetLangSelect, thinkingCheck, displayModeSelect, inlineScopeSelect, inlineSeparatorSelect, autoTranslateCheckbox, customPromptInput].forEach(el => {
     el.addEventListener('change', () => saveSettings(false));
   });
+  function updateInlineOptions() {
+    inlineOptions.style.display = displayModeSelect.value === 'inline' ? 'block' : 'none';
+  }
+
+  displayModeSelect.addEventListener('change', updateInlineOptions);
+  updateInlineOptions();
+
   modelSelect.addEventListener('change', () => {
     const selected = modelSelect.options[modelSelect.selectedIndex];
     savedModelProfileId = modelSelect.value;

@@ -16,6 +16,8 @@ public class TranslateRequest {
     private List<String> presets;
     /** DeepSeek v4 thinking mode: "enabled" | "disabled" (null = server default) */
     private String thinkingType;
+    /** Skip reading an existing translation cache entry, but still write the new result. */
+    private boolean skipCache;
 
     public String getSourceText() { return sourceText; }
     public void setSourceText(String sourceText) { this.sourceText = sourceText; }
@@ -29,5 +31,7 @@ public class TranslateRequest {
     public void setPresets(List<String> presets) { this.presets = presets; }
     public String getThinkingType() { return thinkingType; }
     public void setThinkingType(String thinkingType) { this.thinkingType = thinkingType; }
+    public boolean isSkipCache() { return skipCache; }
+    public void setSkipCache(boolean skipCache) { this.skipCache = skipCache; }
 
 }

@@ -162,7 +162,9 @@ public class TranslationService {
         if (cancelled.getAsBoolean()) {
             return;
         }
-        TranslationCache cached = cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
+        TranslationCache cached = request.isSkipCache()
+                ? null
+                : cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
         if (cached != null) {
             log.info("Translation cache hit for user {}, key {}", user.getId(), cacheKey.substring(0, 12));
             onToken.accept(cached.getTranslatedText());

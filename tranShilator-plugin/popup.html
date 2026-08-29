@@ -235,7 +235,7 @@
     </div>
   </div>
 
-  <!-- 常用项：模型 + 思考（同行复选框）、显示模式、预设、Prompt、自动翻译 -->
+  <!-- 常用项：模型 + 思考（同行复选框）、显示模式、内嵌选项、预设、Prompt、自动翻译 -->
   <div class="field">
     <div class="model-row">
       <select id="model">
@@ -251,10 +251,21 @@
   <div class="field">
     <label for="displayMode">显示模式</label>
     <select id="displayMode">
-      <option value="inline" selected>原文内嵌对照（当前页）</option>
+      <option value="inline" selected>原文内嵌对照</option>
       <option value="panel">侧边面板</option>
-      <option value="inline-full">原文内嵌对照（全文自动）</option>
       <option value="paged">分页模式（保留 [newpage]）</option>
+    </select>
+  </div>
+
+  <div class="field" id="inlineOptions">
+    <label>内嵌对照选项</label>
+    <select id="inlineScope">
+      <option value="page" selected>只翻译本页</option>
+      <option value="full">翻译全篇</option>
+    </select>
+    <select id="inlineSeparator" style="margin-top:6px;">
+      <option value="p" selected>按分段符 &lt;p&gt; 分隔</option>
+      <option value="p-br">&lt;br&gt; 和 &lt;p&gt; 都能分隔</option>
     </select>
   </div>
 
