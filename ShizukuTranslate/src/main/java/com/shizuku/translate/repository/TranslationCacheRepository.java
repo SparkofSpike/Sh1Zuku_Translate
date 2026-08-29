@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 
 public interface TranslationCacheRepository extends JpaRepository<TranslationCache, Long> {
 
-    TranslationCache findByUserIdAndCacheKey(Long userId, String cacheKey);
+    java.util.List<TranslationCache> findByUserIdAndCacheKeyOrderByCreatedAtDesc(Long userId, String cacheKey);
 
     int deleteByCreatedAtBefore(LocalDateTime before);
 }

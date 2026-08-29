@@ -15,7 +15,9 @@ import java.time.LocalDateTime;
  * calling DeepSeek again.
  */
 @Entity
-@Table(name = "translation_cache")
+@Table(name = "translation_cache", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_translation_cache_user_key", columnNames = {"userId", "cacheKey"})
+})
 @Data
 @Builder
 @NoArgsConstructor

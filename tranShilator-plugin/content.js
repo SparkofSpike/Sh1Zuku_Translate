@@ -731,61 +731,67 @@ function findNovelParagraphs(originalContent) {
   return null;
 }
 
+function extractDomLines(element) {
+  const lines = [];
+  let buffer = '';
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_ALL);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) buffer += node.nodeValue || '';
+    else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+      lines.push(buffer);
+      buffer = '';
+    }
+  }
+  lines.push(buffer);
+  return lines.filter(line => line.trim());
+}
+
 function domInlineUnitsForParagraph(element, separator = state.inlineSeparator) {
   if (separator !== 'p-br' || !element.querySelector('br')) return [element];
 
-  // Keep Pixiv's React-owned children untouched. A live zero-width marker is
-  // inserted at each line boundary and used as the stable insertion anchor;
-  // unlike detached clones, these anchors remain connected to the document.
-  const units = [];
-  let rangeStart = element.firstChild;
-  let text = '';
-  const addUnit = (beforeNode) => {
-    if (!text.trim()) return;
-    const marker = document.createElement('span');
-    marker.className = 'pnt-inline-unit';
-    marker.dataset.pntAnchor = 'true';
-    marker.style.display = 'inline';
-    marker.style.width = '0';
-    marker.style.overflow = 'hidden';
-    element.insertBefore(marker, beforeNode);
-    units.push(marker);
-    text = '';
-  };
+  // Pixiv owns the original children. Keep them untouched and create one
+  // live marker after each line's text using Range boundary points.
+  const lines = [];
+  let buffer = '';
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_ALL);
+  const breaks = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      buffer += node.nodeValue || '';
+    } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+      lines.push(buffer);
+      buffer = '';
+      breaks.push(node);
+    }
+  }
+  lines.push(buffer);
+  const nonEmptyLines = lines.filter(line => line.trim());
+  if (nonEmptyLines.length <= 1) return [element];
 
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-  textNodes.forEach((node) => {
-    text += node.textContent || '';
-  });
-
-  // The DOM's <br> nodes are the line boundaries. Insert markers directly
-  // before each break, then one before the paragraph's end. Source matching
-  // is performed against the complete paragraph below; markers are only
-  // anchors and carry no source text.
-  const breaks = Array.from(element.querySelectorAll('br'));
-  if (!breaks.length) return [element];
-  const paragraphText = element.textContent || '';
-  const lines = paragraphText.split(/\n+/).filter(line => line.trim());
-  if (!lines.length) return [element];
   const markers = [];
+  let lineIndex = 0;
   breaks.forEach((br) => {
+    if (lines[lineIndex]?.trim()) {
+      const marker = document.createElement('span');
+      marker.className = 'pnt-inline-unit';
+      marker.dataset.pntAnchor = 'true';
+      marker.style.cssText = 'display:inline-block;width:0;overflow:hidden;';
+      br.parentNode.insertBefore(marker, br);
+      markers.push(marker);
+    }
+    lineIndex++;
+  });
+  if (lines[lineIndex]?.trim()) {
     const marker = document.createElement('span');
     marker.className = 'pnt-inline-unit';
     marker.dataset.pntAnchor = 'true';
-    marker.style.display = 'inline-block';
-    marker.style.width = '0';
-    element.insertBefore(marker, br);
+    marker.style.cssText = 'display:inline-block;width:0;overflow:hidden;';
+    element.appendChild(marker);
     markers.push(marker);
-  });
-  const tail = document.createElement('span');
-  tail.className = 'pnt-inline-unit';
-  tail.dataset.pntAnchor = 'true';
-  tail.style.display = 'inline-block';
-  tail.style.width = '0';
-  element.appendChild(tail);
-  return markers.concat(tail);
+  }
+  return markers.length ? markers : [element];
 }
 
 function buildInlineParagraphs(originalContent) {
@@ -820,7 +826,7 @@ function buildInlineParagraphs(originalContent) {
     const units = domInlineUnitsForParagraph(p);
     units.forEach((unit, unitIndex) => {
       const t = state.inlineSeparator === 'p-br' && unit.dataset.pntAnchor
-        ? paraMatchKey((p.textContent || '').split(/\n+/).filter(line => line.trim())[unitIndex] || '')
+        ? paraMatchKey(extractDomLines(p)[unitIndex] || '')
         : paraMatchKey(unit.textContent);
       if (!t) return; // empty element (image, ad) — no slot
       let matched = -1;

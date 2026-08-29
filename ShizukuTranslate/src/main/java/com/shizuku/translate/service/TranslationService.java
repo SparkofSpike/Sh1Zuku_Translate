@@ -162,9 +162,17 @@ public class TranslationService {
         if (cancelled.getAsBoolean()) {
             return;
         }
-        TranslationCache cached = request.isSkipCache()
-                ? null
-                : cacheRepository.findByUserIdAndCacheKey(user.getId(), cacheKey);
+        TranslationCache cached = null;
+        if (!request.isSkipCache()) {
+            java.util.List<TranslationCache> cachedEntries =
+                    cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(user.getId(), cacheKey);
+            if (!cachedEntries.isEmpty()) {
+                cached = cachedEntries.get(0);
+                if (cachedEntries.size() > 1) {
+                    log.warn("Multiple translation cache entries for user {}, key {}; using newest", user.getId(), cacheKey.substring(0, 12));
+                }
+            }
+        }
         if (cached != null) {
             log.info("Translation cache hit for user {}, key {}", user.getId(), cacheKey.substring(0, 12));
             onToken.accept(cached.getTranslatedText());
