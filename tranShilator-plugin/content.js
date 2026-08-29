@@ -74,6 +74,14 @@ function globalParagraphId(page, k) {
   return start ? start + k : k + 1;
 }
 
+function pageSourceFor(originalContent, page) {
+  const pages = String(originalContent || '')
+    .split(/\[newpage\]/i)
+    .map(p => p.trim())
+    .filter(Boolean);
+  return pages[page - 1] || '';
+}
+
 // Ordered source paragraphs of the page currently displayed in the DOM,
 // each with the paragraph id the background script assigned to it
 // (buildFullSource / buildPageSource / numberAllParagraphs) and the
@@ -776,6 +784,7 @@ function buildInlineParagraphs(originalContent) {
       const trans = document.createElement('div');
       trans.className = 'pnt-inline-trans';
       trans.dataset.pid = String(src[matched].id);
+      trans.dataset.sourceKey = src[matched].key;
       unit.insertAdjacentElement('afterend', trans);
       transEls.push(trans);
     });
@@ -1207,6 +1216,8 @@ function onNovelLoaded(data) {
   state.missingParagraphIds = [];
   if (state.fullMode) {
     state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
+  } else if (state.pageStartIds.length === 0) {
+    state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
   }
 
   fillWindowFromNovel(data);
@@ -1268,11 +1279,11 @@ function watchPageFlips(originalContent) {
       const currentKeys = sourceParagraphsForPage(originalContent, page, state.inlineSeparator)
         .map(item => item.key);
       const renderedKeys = (state.inlineTransEls || [])
-        .map(el => el.previousElementSibling)
-        .filter(Boolean)
-        .map(el => paraMatchKey(el.textContent));
-      const stale = state.inlineTransEls && state.inlineTransEls.length
-        && (!active || pageChanged || !currentKeys.includes(renderedKeys[0] || ''));
+        .map(el => el.dataset.sourceKey || '')
+        .filter(Boolean);
+      const stale = !active || pageChanged
+        || !renderedKeys.length
+        || renderedKeys.some(key => !currentKeys.includes(key));
       if (!stale) return;
 
       // Translations hidden by the user: keep them hidden across page
