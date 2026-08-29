@@ -35,7 +35,9 @@ let state = {
   firstTokenReceived: false, // true once the first SSE token arrived
   aiConnected: false,       // upstream model response has connected
   expectedParagraphCount: 0, // number of numbered paragraphs in this request
-  missingParagraphIds: [] // ids the model did not return at completion
+  missingParagraphIds: [], // ids the model did not return at completion
+  repairMode: false,
+  settingsSnapshot: null
 };
 
 // ─── Current Page (paged novels) ─────────────────────────────
@@ -304,6 +306,7 @@ function createWindow() {
     <div class="pnt-toolbar">
       <button class="pnt-toggle-trans-btn" title="隐藏/显示译文">关闭翻译</button>
       <button class="pnt-retranslate-btn" style="display:none;" title="用当前设置重新翻译">重新翻译</button>
+      <button class="pnt-repair-btn" style="display:none;" title="只补译缺失段落">补译缺失段落</button>
       <button class="pnt-cancel-btn" style="display:none;">取消翻译</button>
     </div>
     <div class="pnt-content">
@@ -357,6 +360,10 @@ function createWindow() {
   // Retranslate button: starts a fresh translation with current settings.
   // Visible whenever a translation is not in flight (finished or failed),
   // so re-running is one click away.
+  const repairBtn = w.querySelector('.pnt-repair-btn');
+  repairBtn.addEventListener('click', () => repairMissingParagraphs());
+  state.repairBtn = repairBtn;
+
   const retranslateBtn = w.querySelector('.pnt-retranslate-btn');
   retranslateBtn.addEventListener('click', () => {
     if (state.translating) {
@@ -400,6 +407,7 @@ function removeWindow() {
   state.transBody = null;
   state.cancelBtn = null;
   state.retranslateBtn = null;
+  state.repairBtn = null;
 }
 
 // ─── Toggle Translation Display (关闭翻译 ↔ 显示翻译) ────────
@@ -1211,6 +1219,8 @@ async function handleTranslate(skipCache = false) {
   state.pageStartIds = [];
   state.expectedParagraphCount = 0;
   state.missingParagraphIds = [];
+  state.repairMode = false;
+  state.settingsSnapshot = settings;
   // Long texts (paged Pixiv novels) can take DeepSeek a while to pre-fill;
   // if no token arrives within a few seconds, tell the user we are working
   // instead of leaving the UI looking stuck.
@@ -1267,7 +1277,9 @@ async function handleTranslate(skipCache = false) {
       // state until the first token arrives (DeepSeek pre-fill).
       thinkingType: settings.thinkingType,
       inlineSeparator: state.inlineSeparator,
-      skipCache
+      skipCache,
+      repairParagraphIds: [],
+      repairContext: ''
     });
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
@@ -1539,6 +1551,19 @@ function onStreamToken(token) {
 
 function onStreamDone(data) {
   if (!state.translating) return; // cancelled — ignore
+  if (state.repairMode) {
+    if (data && typeof data.translatedText === 'string') state.streamingText = data.translatedText;
+    const repaired = parseJsonLines(state.streamingText);
+    repaired.forEach(entry => {
+      state.fullTranslations[String(entry.id)] = entry.text;
+      const el = (state.inlineTransEls || []).find(item => item.dataset.pid === String(entry.id));
+      if (el) el.textContent = entry.text;
+    });
+    state.missingParagraphIds = state.missingParagraphIds.filter(id => !repaired.some(e => e.id === id && e.text.trim()));
+    state.repairMode = false;
+    finishTranslate(state.missingParagraphIds.length === 0, state.missingParagraphIds.length ? '补译仍有段落缺失' : null, data);
+    return;
+  }
 
   // The model may finish before Pixiv has mounted the client-rendered body.
   // Keep the final payload and let the inline wait/build path consume it.
@@ -1597,6 +1622,40 @@ function onStreamDone(data) {
   finishTranslate(true, null, data);
 }
 
+async function repairMissingParagraphs() {
+  if (state.translating || !state.missingParagraphIds.length) return;
+  const ids = [...state.missingParagraphIds];
+  const context = state.streamingText.slice(-12000);
+  state.repairMode = true;
+  state.translating = true;
+  state.streamingText = '';
+  state.firstTokenReceived = false;
+  state.aiConnected = false;
+  if (state.repairBtn) state.repairBtn.style.display = 'none';
+  if (state.cancelBtn) state.cancelBtn.style.display = 'inline-block';
+  updateTranslateButton('preparing');
+  try {
+    await sendToBackground('TRANSLATE_NOVEL_STREAM', {
+      novelId: state.novelId,
+      currentPage: state.fullMode ? 0 : getCurrentNovelPage(),
+      fullMode: state.fullMode,
+      displayMode: state.mode === 'inline' ? 'inline' : state.mode,
+      targetLang: state.targetLang,
+      selectedPresets: state.settingsSnapshot?.selectedPresets || [],
+      customPrompt: state.settingsSnapshot?.customPrompt || '',
+      model: state.settingsSnapshot?.model || '',
+      modelProfileId: state.settingsSnapshot?.modelProfileId ?? null,
+      thinkingType: state.settingsSnapshot?.thinkingType,
+      inlineSeparator: state.inlineSeparator,
+      skipCache: true,
+      repairParagraphIds: ids,
+      repairContext: context
+    });
+  } catch (e) {
+    finishTranslate(false, e.message);
+  }
+}
+
 function onStreamError(error) {
   if (!state.translating) return; // cancelled — ignore
   finishTranslate(false, error);
@@ -1613,11 +1672,9 @@ function finishTranslate(success, errorMsg, data) {
   updateTranslateButton('idle');
 
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
-  // Translation over (finished or failed with text kept): offer a
-  // one-click retranslate instead of leaving the user to hunt for it.
-  if (state.retranslateBtn) {
-    state.retranslateBtn.style.display = hasTranslationContent() ? '' : 'none';
-  }
+  // Translation over: offer targeted repair when numbered paragraphs are missing.
+  if (state.retranslateBtn) state.retranslateBtn.style.display = hasTranslationContent() ? '' : 'none';
+  if (state.repairBtn) state.repairBtn.style.display = state.missingParagraphIds.length ? '' : 'none';
 
   if (success) {
     const inlineReady = state.mode !== 'inline'

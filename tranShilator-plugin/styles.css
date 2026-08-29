@@ -168,6 +168,20 @@
   transition: background 0.2s, border-color 0.2s;
 }
 
+#pnt-window .pnt-repair-btn {
+  background: #fff;
+  color: #2b8a3e;
+  border: 1px solid #b2f2bb;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#pnt-window .pnt-repair-btn:hover {
+  background: #ebfbee;
+}
+
 #pnt-window .pnt-retranslate-btn:hover {
   background: #e7f5ff;
   border-color: #74c0fc;

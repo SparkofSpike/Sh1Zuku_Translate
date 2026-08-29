@@ -245,7 +245,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.thinkingType,
         message.displayMode,
         message.inlineSeparator || 'p',
-        !!message.skipCache
+        !!message.skipCache,
+        message.repairParagraphIds || [],
+        message.repairContext || ''
       ).catch((error) => {
         const msg = error && error.message ? error.message : String(error);
         // An aborted body stream is almost always the user pressing cancel
@@ -301,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode, inlineSeparator = 'p', skipCache = false) {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode, inlineSeparator = 'p', skipCache = false, repairParagraphIds = [], repairContext = '') {
   const safeNovelId = String(novelId || '').match(/^\d+$/) ? String(novelId) : '';
   if (!safeNovelId) {
     throw new Error('无效的小说 ID');
@@ -359,9 +361,11 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // fullMode translates the WHOLE novel in one request with global
     // paragraph ids; the content script maps ids back to whatever page
     // the user is reading, so flipping pages never needs a re-translate.
-    const sourceText = fullMode
-      ? buildFullSource(novel.content, inlineSeparator)
-      : buildPageSource(novel.content, currentPage, numbered, inlineSeparator);
+    const sourceText = repairParagraphIds.length
+      ? buildRepairSource(novel.content, repairParagraphIds, currentPage, fullMode, inlineSeparator, repairContext)
+      : (fullMode
+        ? buildFullSource(novel.content, inlineSeparator)
+        : buildPageSource(novel.content, currentPage, numbered, inlineSeparator));
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
@@ -387,7 +391,8 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         await notifyTab(tabId, { type: 'SSE_ERROR', error });
       },
       skipCache,
-      inlineSeparator
+      inlineSeparator,
+      repairParagraphIds
     );
   } finally {
     // Clean up controller + keepalive on every exit path, STEP1/2
@@ -445,6 +450,21 @@ function numberAllParagraphs(fullText, separator = 'p') {
 // the user is currently reading. The full text stays as context: the
 // page before and after the target page are included as "reference
 // only" sections, and the prompt tells the model not to translate them.
+function buildRepairSource(fullText, repairIds, currentPage, fullMode, separator = 'p', repairContext = '') {
+  const pages = String(fullText || '').split(/\[newpage\]/i).map(p => p.trim()).filter(Boolean);
+  const units = [];
+  let id = 1;
+  pages.forEach(page => {
+    splitSourceUnits(page, separator).forEach(para => {
+      if (repairIds.includes(id)) units.push(`[${id}] ${para}`);
+      id++;
+    });
+  });
+  return `【补译任务：只翻译以下明确列出的缺失段落】\n${units.join('\n')}\n\n` +
+    (repairContext ? `【首次翻译上下文（仅供参考）】\n${repairContext}\n\n` : '') +
+    '【严格要求】只输出上述缺失编号，不要输出已完成段落。';
+}
+
 function buildPageSource(fullText, currentPage, numbered, separator = 'p') {
   const pages = fullText
     .split(/\[newpage\]/i)
@@ -615,7 +635,7 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   // The example lines matter: without them the flash model drifts into
   // plain-text output, which the fallback renderer maps by position and
   // misaligns as soon as one paragraph is merged or split.
-  if (text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本')) {
+  if (text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本') || text.includes('【补译任务')) {
     prompt += `
 
 请只翻译标记了 [编号] 的段落，逐段输出 JSON Lines 格式：每一行是一个完整、合法的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。`;

@@ -33,7 +33,7 @@ The extension supports:
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
 - Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
-- One-click retranslation and local error-log submission from the popup.
+- One-click retranslation, targeted repair of missing numbered paragraphs, and local error-log submission from the popup.
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 
