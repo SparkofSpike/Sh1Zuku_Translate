@@ -53,7 +53,7 @@ function getCurrentNovelPage() {
 // Split novel text into pages ([newpage]) then into paragraphs (\n\n),
 // exactly like buildFullSource() in background.js. Returns the first
 // global paragraph id of each page (1-based).
-function computePageStartIds(originalContent) {
+function computePageStartIds(originalContent, separator = state.inlineSeparator) {
   const pages = String(originalContent || '')
     .split(/\[newpage\]/i)
     .map((p) => p.trim())
@@ -62,11 +62,7 @@ function computePageStartIds(originalContent) {
   let id = 1;
   for (const page of pages) {
     starts.push(id);
-    const count = page
-      .split(state.inlineSeparator === 'p-br' ? /\n+/ : /\n{2,}/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0).length;
-    id += count;
+    id += splitInlineUnits(page, separator).length;
   }
   return starts;
 }
@@ -91,10 +87,7 @@ function sourceParagraphsForPage(originalContent, currentPage, separator = state
   const paged = currentPage > 0 && pages.length > 1;
   const pageNo = paged ? Math.min(currentPage, pages.length) : 1;
   const pageText = paged ? pages[pageNo - 1] || '' : String(originalContent || '');
-  return pageText
-    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
-    .map(p => p.trim())
-    .filter(p => p.length > 0)
+  return splitInlineUnits(pageText, separator)
     .map((block, k) => ({
       id: globalParagraphId(pageNo, k),
       key: paraMatchKey(block)
@@ -1213,7 +1206,7 @@ function onNovelLoaded(data) {
     : 0;
   state.missingParagraphIds = [];
   if (state.fullMode) {
-    state.pageStartIds = computePageStartIds(data.originalContent);
+    state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
   }
 
   fillWindowFromNovel(data);
@@ -1272,7 +1265,14 @@ function watchPageFlips(originalContent) {
       const active = state.inlineContainer && state.inlineContainer.isConnected;
       const pageChanged = page !== lastPage;
       lastPage = page;
-      const stale = state.inlineTransEls && state.inlineTransEls.length && (!active || pageChanged);
+      const currentKeys = sourceParagraphsForPage(originalContent, page, state.inlineSeparator)
+        .map(item => item.key);
+      const renderedKeys = (state.inlineTransEls || [])
+        .map(el => el.previousElementSibling)
+        .filter(Boolean)
+        .map(el => paraMatchKey(el.textContent));
+      const stale = state.inlineTransEls && state.inlineTransEls.length
+        && (!active || pageChanged || !currentKeys.includes(renderedKeys[0] || ''));
       if (!stale) return;
 
       // Translations hidden by the user: keep them hidden across page
