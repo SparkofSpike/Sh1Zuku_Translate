@@ -1216,8 +1216,6 @@ function onNovelLoaded(data) {
   state.missingParagraphIds = [];
   if (state.fullMode) {
     state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
-  } else if (state.pageStartIds.length === 0) {
-    state.pageStartIds = computePageStartIds(data.originalContent, state.inlineSeparator);
   }
 
   fillWindowFromNovel(data);
@@ -1314,6 +1312,7 @@ function watchPageFlips(originalContent) {
         // demand. Never let previous-page translations pile up on top.
         restoreOriginalHtml();
         state.streamingText = '';
+        state.inlineContainer = null;
       }
     }, 300);
   });
