@@ -403,6 +403,13 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
 // script computes the per-page id offset from originalContent so it can
 // render each page's translations as the user flips to it — the SSE
 // stream keeps running while the user reads/flips (never interrupted).
+function splitSourceUnits(text, separator = 'p') {
+  return String(text || '')
+    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 function buildFullSource(fullText, separator = 'p') {
   const pages = fullText
     .split(/\[newpage\]/i)
@@ -412,10 +419,7 @@ function buildFullSource(fullText, separator = 'p') {
   const numbered = [];
   let id = 1;
   for (const page of pages) {
-    const paras = page
-      .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
+    const paras = splitSourceUnits(page, separator);
     for (const para of paras) {
       numbered.push(`[${id}] ${para}`);
       id++;
@@ -429,10 +433,7 @@ function buildFullSource(fullText, separator = 'p') {
 // novels in inline mode so the model's JSON Lines ids map 1:1 onto the
 // DOM paragraphs. Also the base for the per-page numbering below.
 function numberAllParagraphs(fullText, separator = 'p') {
-  return fullText
-    .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0)
+  return splitSourceUnits(fullText, separator)
     .map((p, i) => `[${i + 1}] ${p}`)
     .join('\n\n');
 }

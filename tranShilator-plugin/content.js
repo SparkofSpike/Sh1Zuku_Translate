@@ -63,7 +63,7 @@ function computePageStartIds(originalContent) {
   for (const page of pages) {
     starts.push(id);
     const count = page
-      .split(/\n{2,}/)
+      .split(state.inlineSeparator === 'p-br' ? /\n+/ : /\n{2,}/)
       .map((p) => p.trim())
       .filter((p) => p.length > 0).length;
     id += count;
@@ -1408,6 +1408,24 @@ function onStreamToken(token) {
 
 function onStreamDone(data) {
   if (!state.translating) return; // cancelled — ignore
+
+  // The backend's done event contains the authoritative complete response.
+  // Keep it when a proxy/client delivered tokens out of order or the final
+  // token notification was lost.
+  if (data && typeof data.translatedText === 'string'
+      && data.translatedText.trim().length > 0) {
+    // Cached responses and some proxies may deliver the final event without
+    // all token events. Prefer the authoritative complete payload whenever
+    // it is present; it is the only safe basis for completion validation.
+    state.streamingText = data.translatedText;
+  }
+  if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
+    renderInlineStreaming();
+  } else if (state.transBody) {
+    if (state.numberedRequest) renderPanelFromJsonLines();
+    else if (state.mode === 'paged') renderPagedStreaming();
+    else state.transBody.textContent = state.streamingText;
+  }
 
   // A stream can close cleanly even when the model skipped a JSON line or
   // emitted an id twice. Treat that as incomplete instead of telling the
