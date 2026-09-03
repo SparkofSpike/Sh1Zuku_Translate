@@ -8,9 +8,14 @@
         <div
           class="announcement-markdown"
           :class="{ collapsed: !isExpanded(announcement.id) }"
+          :ref="(el) => setContentEl(announcement.id, el)"
           v-html="renderMarkdown(announcement.content)"
         ></div>
-        <button class="announcement-toggle" @click="toggleExpanded(announcement.id)">
+        <button
+          v-if="overlongIds.has(announcement.id)"
+          class="announcement-toggle"
+          @click="toggleExpanded(announcement.id)"
+        >
           {{ isExpanded(announcement.id) ? '收起' : '展开' }}
         </button>
       </article>
@@ -20,15 +25,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import type { Announcement } from '../types'
 import { renderMarkdown } from '../utils/markdown'
 
-defineProps<{
+const props = defineProps<{
   announcements: Announcement[]
 }>()
 
 const expandedIds = ref<Set<number>>(new Set())
+const overlongIds = ref<Set<number>>(new Set())
+const contentEls = new Map<number, HTMLElement>()
+
+function setContentEl(id: number, el: unknown) {
+  if (el instanceof HTMLElement) contentEls.set(id, el)
+  else contentEls.delete(id)
+}
 
 function isExpanded(id: number) {
   return expandedIds.value.has(id)
@@ -40,6 +52,26 @@ function toggleExpanded(id: number) {
   else next.add(id)
   expandedIds.value = next
 }
+
+// 折叠态下内容高度超出 max-height（即被裁掉）的公告记作过长：默认折叠并显示「展开」按钮
+function measureOverlong() {
+  const next = new Set<number>()
+  contentEls.forEach((el, id) => {
+    // 留 1px 余量避免 max-height 像素取整造成误判；真正溢出时至少会差一整行
+    if (el.scrollHeight - el.clientHeight > 1) next.add(id)
+  })
+  overlongIds.value = next
+}
+
+watch(
+  () => props.announcements,
+  () => {
+    // 公告数据变化时回到全部折叠，重新测量哪些过长
+    expandedIds.value = new Set()
+    nextTick(measureOverlong)
+  },
+  { immediate: true }
+)
 
 function formatDate(value: string) {
   return value.replace('T', ' ').slice(0, 16)
@@ -151,29 +183,30 @@ function formatDate(value: string) {
   text-decoration: underline;
 }
 
+.announcement-markdown.collapsed {
+  /* 默认折叠为 3 行（line-height 1.6），避免过长公告撑高页面 */
+  max-height: 4.8em;
+  overflow: hidden;
+}
+
 .announcement-toggle {
-  display: none;
+  display: inline-block;
   margin-top: 5px;
   padding: 0;
+  border: 0;
   background: transparent;
   color: #666;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.announcement-toggle:hover {
+  color: #333;
 }
 
 .empty-text {
   margin: 0;
   color: #999;
   font-size: 13px;
-}
-
-@media (max-width: 720px) {
-  .announcement-markdown.collapsed {
-    max-height: 4.8em;
-    overflow: hidden;
-  }
-
-  .announcement-toggle {
-    display: inline-block;
-  }
 }
 </style>
