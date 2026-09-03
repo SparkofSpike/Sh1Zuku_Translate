@@ -201,6 +201,8 @@ function formatDate(value: string) {
 }
 
 .announcement-toggle:hover {
+  /* 覆盖全局 button:hover 的深色背景，保持文本按钮样式 */
+  background: transparent;
   color: #333;
 }
 
