@@ -7,7 +7,10 @@
         <time>{{ formatDate(announcement.createdAt) }}</time>
         <div
           class="announcement-markdown"
-          :class="{ collapsed: !isExpanded(announcement.id) }"
+          :class="{
+            collapsed: !isExpanded(announcement.id),
+            truncated: overlongIds.has(announcement.id) && !isExpanded(announcement.id),
+          }"
           :ref="(el) => setContentEl(announcement.id, el)"
           v-html="renderMarkdown(announcement.content)"
         ></div>
@@ -184,9 +187,26 @@ function formatDate(value: string) {
 }
 
 .announcement-markdown.collapsed {
-  /* 默认折叠为 3 行（line-height 1.6），避免过长公告撑高页面 */
-  max-height: 4.8em;
+  /* 默认折叠为 5 行（line-height 1.6），避免过长公告撑高页面 */
+  max-height: 8em;
   overflow: hidden;
+}
+
+.announcement-markdown.truncated {
+  position: relative;
+}
+
+/* 折叠截断处右下角追加省略号，提示内容未完 */
+.announcement-markdown.truncated::after {
+  content: '……';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 0 2px;
+  background: #fff;
+  color: #777;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .announcement-toggle {
