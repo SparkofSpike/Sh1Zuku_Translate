@@ -3,10 +3,17 @@
     <h2 style="margin-top:0; font-weight:600;">注册</h2>
     <form @submit.prevent="submit">
       <input v-model.trim="username" type="text" placeholder="用户名" style="margin-bottom:12px;" />
-      <input v-model.trim="email" type="email" placeholder="邮箱" style="margin-bottom:12px;" />
-      <input v-model="password" type="password" placeholder="密码" style="margin-bottom:16px;" />
+      <input v-model.trim="email" type="email" placeholder="邮箱（需真实可收信，注册后将发送验证码）" style="margin-bottom:12px;" />
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <input v-model.trim="code" type="text" inputmode="numeric" maxlength="6" placeholder="邮箱验证码" style="flex:1; min-width:0;" />
+        <button type="button" style="white-space:nowrap;" @click="sendCode" :disabled="sending || countdown > 0">
+          {{ countdown > 0 ? countdown + 's 后重发' : (sending ? '发送中...' : '发送验证码') }}
+        </button>
+      </div>
+      <input v-model="password" type="password" placeholder="密码（至少 6 位）" style="margin-bottom:16px;" />
       <button type="submit" style="width:100%;">注册</button>
     </form>
+    <p v-if="message" style="color:#2b8a3e; margin-top:12px;">{{ message }}</p>
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
   </div>
 
@@ -45,14 +52,16 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import { onUnmounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import api from '../api'
+import api, { sendEmailCode } from '../api'
 
 const username = ref('')
 const email = ref('')
+const code = ref('')
 const password = ref('')
 const error = ref('')
+const message = ref('')
 const router = useRouter()
 
 const showTerms = ref(false)
@@ -60,12 +69,64 @@ const reachedBottom = ref(false)
 const agreed = ref(false)
 const termsBody = ref(null)
 
-function submit() {
-  if (!username.value || !email.value || !password.value) {
-    error.value = '请填写完整信息'
+const sending = ref(false)
+const countdown = ref(0)
+let countdownTimer = null
+
+onUnmounted(() => {
+  if (countdownTimer) clearInterval(countdownTimer)
+})
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+async function sendCode() {
+  if (!isValidEmail(email.value)) {
+    error.value = '请先输入正确的邮箱地址'
     return
   }
   error.value = ''
+  message.value = ''
+  sending.value = true
+  try {
+    await sendEmailCode(email.value)
+    message.value = '验证码已发送，请查收邮件'
+    startCountdown()
+  } catch (e) {
+    error.value = e.response?.data?.error || '验证码发送失败'
+  } finally {
+    sending.value = false
+  }
+}
+
+function startCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer)
+  countdown.value = 60
+  countdownTimer = setInterval(() => {
+    countdown.value -= 1
+    if (countdown.value <= 0) {
+      countdown.value = 0
+      if (countdownTimer) clearInterval(countdownTimer)
+    }
+  }, 1000)
+}
+
+function submit() {
+  if (!username.value || !email.value || !code.value || !password.value) {
+    error.value = '请填写完整信息（用户名、邮箱、验证码、密码）'
+    return
+  }
+  if (!isValidEmail(email.value)) {
+    error.value = '邮箱格式不正确'
+    return
+  }
+  if (password.value.length < 6) {
+    error.value = '密码至少 6 位'
+    return
+  }
+  error.value = ''
+  message.value = ''
   showTerms.value = true
   reachedBottom.value = false
   agreed.value = false
@@ -96,7 +157,8 @@ async function register() {
     await api.post('/auth/register', {
       username: username.value,
       email: email.value,
-      password: password.value
+      password: password.value,
+      code: code.value
     })
     router.push('/login')
   } catch (e) {

@@ -38,6 +38,7 @@ onMounted(async () => {
     try {
       const res = await api.get('/auth/me')
       authStore.setAdmin(res.data.isAdmin)
+      authStore.setEmailVerified(!!res.data.emailVerified)
     } catch (e) {
       // Token expired or revoked: clear it and leave protected pages.
       authStore.logout()

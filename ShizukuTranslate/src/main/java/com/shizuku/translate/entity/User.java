@@ -24,6 +24,10 @@ public class User {
     private String email;
     @Column(nullable = false)
     private String passwordHash;
+    /** True once the address in {@code email} has been confirmed by a verification code.
+     *  Nullable wrapper on purpose: existing rows stay NULL (treated as unverified) and
+     *  Hibernate's schema update does not need a NOT-NULL default for a new column. */
+    private Boolean emailVerified;
     /** Personal model API key; null/blank falls back to the server DeepSeek configuration. */
     @Column(length = 255)
     private String aiApiKey;

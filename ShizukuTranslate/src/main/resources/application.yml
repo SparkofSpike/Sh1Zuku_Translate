@@ -41,6 +41,17 @@ app:
     secret: ${JWT_SECRET:}
     issuer: ${JWT_ISSUER:shizuku-translate}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  mail:
+    # SMTP settings for email verification codes. Leave host blank to disable
+    # email sending; registration / email verification then fail with a clear
+    # "mail service not configured" error. Production fills these through
+    # environment variables in the scheduled-task launcher script.
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:}
+    ssl: ${MAIL_SSL:true}
   cors:
     allowed-origin-patterns: ${CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:5173,http://localhost:5566,chrome-extension://*}
   stream:

@@ -1,5 +1,13 @@
 <template>
-  <div class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
+  <div v-if="authStore.emailVerified === false" class="card verify-gate">
+    <h2 style="margin-top:0; font-weight:600;">邮箱尚未认证</h2>
+    <p class="verify-desc">为了保障服务稳定、防止账号被滥用，使用翻译功能前需要先完成邮箱认证。</p>
+    <p class="verify-desc">认证只需要一分钟，不会影响你的历史记录与模型配置；浏览器插件同样需要账号完成邮箱认证后才能使用。</p>
+    <router-link to="/profile" style="text-decoration:none;">
+      <button style="margin-top:8px;">去「个人」页面认证邮箱</button>
+    </router-link>
+  </div>
+  <div v-else class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
     <div class="card translation-card">
       <div class="open-source-banner">
@@ -119,7 +127,9 @@ import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
 import SseTranslateResult from '../components/SseTranslateResult.vue'
 import AnnouncementPanel from '../components/AnnouncementPanel.vue'
+import { useAuthStore } from '../stores/auth'
 
+const authStore = useAuthStore()
 const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
@@ -171,6 +181,13 @@ interface ModelProfileOption {
 }
 
 onMounted(async () => {
+  try {
+    const me = await api.get('/auth/me')
+    authStore.setAdmin(!!me.data.isAdmin)
+    authStore.setEmailVerified(!!me.data.emailVerified)
+  } catch (e) {
+    console.error('无法获取认证状态', e)
+  }
   try {
     const res = await api.get('/presets')
     presetOptions.value = res.data || []
@@ -453,6 +470,17 @@ async function translate() {
 
 .translate-layout.has-announcements {
   grid-template-columns: minmax(0, 800px) minmax(180px, 240px);
+}
+
+.verify-gate {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.verify-desc {
+  color: var(--color-muted, #666);
+  margin: 8px 0;
 }
 
 .translation-card {

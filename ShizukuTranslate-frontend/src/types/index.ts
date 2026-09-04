@@ -35,6 +35,7 @@ export interface RegisterRequest {
   username: string
   password: string
   email?: string
+  code?: string
 }
 
 export interface UserInfo {
@@ -42,6 +43,7 @@ export interface UserInfo {
   username: string
   email: string
   isAdmin: boolean
+  emailVerified?: boolean
 }
 
 export interface HistoryRecord {

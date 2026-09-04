@@ -109,4 +109,12 @@ export function translateStream(
   return controller
 }
 
+export function sendEmailCode(email: string) {
+  return api.post('/auth/email/send-code', { email })
+}
+
+export function verifyEmail(email: string, code: string) {
+  return api.post('/auth/email/verify', { email, code })
+}
+
 export default api

@@ -1,11 +1,13 @@
 package com.shizuku.translate.service;
 
+import com.shizuku.translate.config.AppConfig;
 import com.shizuku.translate.config.DeepSeekConfig;
 import com.shizuku.translate.dto.LoginRequest;
 import com.shizuku.translate.dto.RegisterRequest;
 import com.shizuku.translate.entity.AiModelProfile;
 import com.shizuku.translate.entity.PersonalModelApiKey;
 import com.shizuku.translate.exception.BusinessException;
+import com.shizuku.translate.exception.EmailNotVerifiedException;
 import com.shizuku.translate.integration.AiModelClient.AiModelConfig;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.repository.AiModelProfileRepository;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -31,6 +34,8 @@ public class UserService {
     private final AiModelProfileRepository modelProfileRepository;
     private final com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository;
     private final ObjectMapper objectMapper;
+    private final EmailVerificationService emailVerificationService;
+    private final AppConfig.AppProperties appProperties;
 
     public UserService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
@@ -38,7 +43,9 @@ public class UserService {
                        DeepSeekConfig.DeepSeekProperties deepSeekProperties,
                        AiModelProfileRepository modelProfileRepository,
                        com.shizuku.translate.repository.PersonalModelApiKeyRepository personalModelApiKeyRepository,
-                       ObjectMapper objectMapper) {
+                       ObjectMapper objectMapper,
+                       EmailVerificationService emailVerificationService,
+                       AppConfig.AppProperties appProperties) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
@@ -46,22 +53,68 @@ public class UserService {
         this.modelProfileRepository = modelProfileRepository;
         this.personalModelApiKeyRepository = personalModelApiKeyRepository;
         this.objectMapper = objectMapper;
+        this.emailVerificationService = emailVerificationService;
+        this.appProperties = appProperties;
     }
 
     public void register(RegisterRequest request) {
         String username = request.getUsername().trim();
-        String email = request.getEmail().trim();
+        String email = request.getEmail().trim().toLowerCase(Locale.ROOT);
         if (userRepository.existsByUsernameIgnoreCase(username)) {
             throw new RuntimeException("Username already exists");
         }
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new RuntimeException("Email already registered");
         }
+        // Registration is only allowed with a code freshly sent to this address,
+        // which is what stops fake-mailbox (e.g. abcde@qq.com) registrations.
+        emailVerificationService.verify(email, request.getCode());
         User user = new User();
         user.setUsername(username);
         user.setEmail(email);
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setEmailVerified(true);
         userRepository.save(user);
+    }
+
+    /**
+     * Verify (or change and verify) the logged-in user's account email.
+     * Existing accounts created before email verification are unverified:
+     * verifying the current address unlocks the account; verifying a new
+     * address also updates it.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public void verifyEmail(String username, String newEmail, String code) {
+        User user = findByUsername(username);
+        String email = newEmail.trim().toLowerCase(Locale.ROOT);
+        boolean changed = !email.equalsIgnoreCase(user.getEmail());
+        if (changed && userRepository.existsByEmailIgnoreCase(email)) {
+            throw new BusinessException("该邮箱已被其他账号使用");
+        }
+        emailVerificationService.verify(email, code);
+        user.setEmail(email);
+        user.setEmailVerified(true);
+        userRepository.save(user);
+    }
+
+    /** Whether the account may consume paid features. Admins are always exempt. */
+    public boolean isEmailVerified(String username) {
+        if (appProperties.isAdmin(username)) {
+            return true;
+        }
+        User user = findByUsername(username);
+        return Boolean.TRUE.equals(user.getEmailVerified());
+    }
+
+    /**
+     * Gate for paid features (translation endpoints, extension API-key
+     * creation). Throws {@link EmailNotVerifiedException} (HTTP 403) when
+     * the account has not verified its email. Admins are exempt.
+     */
+    public void requireEmailVerified(String username) {
+        if (!isEmailVerified(username)) {
+            throw new EmailNotVerifiedException("邮箱尚未认证，请先在「个人」页面完成邮箱认证后再使用翻译功能");
+        }
     }
 
     public String login(LoginRequest request) {

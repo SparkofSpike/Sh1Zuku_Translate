@@ -4,10 +4,41 @@
       <h2 class="page-title">个人</h2>
       <div class="account-summary">
         <p><strong>用户名：</strong>{{ profile.username }}</p>
-        <p><strong>邮箱：</strong>{{ profile.email }}</p>
+        <p>
+          <strong>邮箱：</strong>{{ profile.email }}
+          <span v-if="profile.emailVerified" class="badge badge-ok">✓ 已认证</span>
+          <span v-else-if="profile.email" class="badge badge-warn">未认证</span>
+        </p>
         <p><strong>注册时间：</strong>{{ profile.createdAt || '未知' }}</p>
       </div>
 
+      <div v-if="!profile.emailVerified || showEmailForm" class="email-verify">
+        <div class="section-heading">
+          <div>
+            <h3>邮箱认证</h3>
+            <p class="hint">发送验证码到上方邮箱并填写后即可完成认证。未认证账号无法使用翻译功能（网页与插件）；如需更换邮箱，直接修改邮箱地址后重新认证即可。</p>
+          </div>
+        </div>
+        <div class="email-row">
+          <input v-model.trim="emailInput" type="email" placeholder="邮箱地址" />
+          <button class="btn-sm" type="button" @click="sendVerifyCode" :disabled="sendingCode || countdown > 0">
+            {{ countdown > 0 ? countdown + 's 后重发' : (sendingCode ? '发送中...' : '发送验证码') }}
+          </button>
+        </div>
+        <div class="email-row">
+          <input v-model.trim="verifyCode" type="text" inputmode="numeric" maxlength="6" placeholder="验证码" />
+          <button class="btn-sm btn-primary" type="button" @click="submitVerify" :disabled="verifying">
+            {{ verifying ? '提交中...' : '验证并保存' }}
+          </button>
+        </div>
+        <p v-if="emailMessage" class="success" style="margin:6px 0 0;">{{ emailMessage }}</p>
+        <p v-if="emailError" class="error" style="margin:6px 0 0;">{{ emailError }}</p>
+        <p class="field-hint" style="margin:6px 0 0;">验证码 10 分钟内有效。若原邮箱已无法收信，请直接在上方改为新邮箱后再发送验证码。</p>
+      </div>
+      <div v-else class="email-actions">
+        <span class="muted">邮箱已验证。</span>
+        <button class="btn-sm" type="button" @click="startEditEmail">修改邮箱</button>
+      </div>
       <div class="usage-highlight">
         <span class="usage-label">累计 Token 用量</span>
         <strong>{{ formatNumber(usage.totalTokens) }}</strong>
@@ -132,8 +163,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import api from '../api'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import api, { sendEmailCode, verifyEmail } from '../api'
+import { useAuthStore } from '../stores/auth'
+
+const authStore = useAuthStore()
 
 const PROFILE_SELECTION_KEY = 'modelProfileId'
 const DEFAULT_BASE_URLS = {
@@ -141,7 +175,14 @@ const DEFAULT_BASE_URLS = {
   anthropic: 'https://api.anthropic.com/v1'
 }
 
-const profile = ref({ username: '', email: '', createdAt: '' })
+const profile = ref({ username: '', email: '', createdAt: '', emailVerified: false })
+const emailInput = ref('')
+const verifyCode = ref('')
+const sendingCode = ref(false)
+const verifying = ref(false)
+const countdown = ref(0)
+const showEmailForm = ref(false)
+let countdownTimer = null
 const modelProfiles = ref([])
 const selectedProfileId = ref(readSelectedProfileId())
 const formVisible = ref(false)
@@ -227,8 +268,83 @@ async function loadProfile() {
   try {
     const res = await api.get('/auth/profile')
     profile.value = res.data
+    if (!emailInput.value) emailInput.value = res.data.email || ''
   } catch (e) {
     error.value = e.response?.data?.error || '加载个人资料失败'
+  }
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+const emailMessage = ref('')
+const emailError = ref('')
+function startEditEmail() {
+  emailInput.value = profile.value.email || ''
+  showEmailForm.value = true
+  emailMessage.value = ''
+  emailError.value = ''
+}
+
+function startCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer)
+  countdown.value = 60
+  countdownTimer = setInterval(() => {
+    countdown.value -= 1
+    if (countdown.value <= 0) {
+      countdown.value = 0
+      if (countdownTimer) clearInterval(countdownTimer)
+    }
+  }, 1000)
+}
+
+onUnmounted(() => {
+  if (countdownTimer) clearInterval(countdownTimer)
+})
+
+async function sendVerifyCode() {
+  if (!isValidEmail(emailInput.value)) {
+    emailError.value = '请先输入正确的邮箱地址'
+    return
+  }
+  emailError.value = ''
+  emailMessage.value = ''
+  sendingCode.value = true
+  try {
+    await sendEmailCode(emailInput.value)
+    emailMessage.value = '验证码已发送，请查收邮件'
+    startCountdown()
+  } catch (e) {
+    emailError.value = e.response?.data?.error || '验证码发送失败'
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+async function submitVerify() {
+  if (!isValidEmail(emailInput.value)) {
+    emailError.value = '请先输入正确的邮箱地址'
+    return
+  }
+  if (!verifyCode.value.trim()) {
+    emailError.value = '请填写邮箱中收到的验证码'
+    return
+  }
+  emailError.value = ''
+  emailMessage.value = ''
+  verifying.value = true
+  try {
+    await verifyEmail(emailInput.value, verifyCode.value.trim())
+    authStore.setEmailVerified(true)
+    await loadProfile()
+    showEmailForm.value = false
+    verifyCode.value = ''
+    emailMessage.value = '邮箱认证成功，现在可以使用翻译功能了'
+  } catch (e) {
+    emailError.value = e.response?.data?.error || '邮箱认证失败'
+  } finally {
+    verifying.value = false
   }
 }
 
@@ -460,6 +576,14 @@ onMounted(() => {
 .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .configured, .success { color: #2b8a3e; font-size: 14px; }
 .error { color: #e03131; font-size: 14px; }
+.badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+.badge-ok { background: #e6f4ea; color: #2b8a3e; }
+.badge-warn { background: #fff4e5; color: #e8590c; }
+.email-verify { margin-top: 16px; padding: 14px 16px; border: 1px solid #f0d9a8; border-radius: 8px; background: #fdfaf3; }
+.email-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.email-row input { flex: 1; min-width: 0; }
+.email-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 10px 14px; background: #f5f5f5; border-radius: 8px; }
+.email-actions button { flex-shrink: 0; }
 .new-key { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .new-key code { flex: 1; padding: 8px 12px; overflow-wrap: anywhere; background: #f5f5f5; border-radius: 6px; }
 .key-list { margin-top: 18px; }

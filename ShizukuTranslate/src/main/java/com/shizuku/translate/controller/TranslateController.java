@@ -8,6 +8,7 @@ import com.shizuku.translate.dto.SseStatusEvent;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.service.TranslationService;
+import com.shizuku.translate.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -34,13 +35,16 @@ public class TranslateController {
 
     private final TranslationService translationService;
     private final ObjectMapper objectMapper;
+    private final UserService userService;
     private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor translationStreamExecutor;
 
     public TranslateController(TranslationService translationService,
                                ObjectMapper objectMapper,
+                               UserService userService,
                                @Qualifier("translationStreamExecutor") org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor translationStreamExecutor) {
         this.translationService = translationService;
         this.objectMapper = objectMapper;
+        this.userService = userService;
         this.translationStreamExecutor = translationStreamExecutor;
     }
 
@@ -48,6 +52,7 @@ public class TranslateController {
     public ResponseEntity<TranslateResponse> translateImage(@RequestPart("image") MultipartFile image,
                                                               @RequestPart("request") @Valid TranslateRequest request,
                                                               Principal principal, HttpServletRequest httpRequest) throws IOException {
+        userService.requireEmailVerified(principal.getName());
         return ResponseEntity.ok(translationService.translateImage(principal.getName(), request, image, isPluginRequest(httpRequest)));
     }
 
@@ -55,6 +60,7 @@ public class TranslateController {
     public ResponseEntity<TranslateResponse> translate(@Valid @RequestBody TranslateRequest request,
                                                        Principal principal,
                                                        HttpServletRequest httpRequest) {
+        userService.requireEmailVerified(principal.getName());
         TranslateResponse response = translationService.translate(
                 principal.getName(), request, isPluginRequest(httpRequest));
         return ResponseEntity.ok(response);
@@ -66,6 +72,9 @@ public class TranslateController {
                                       HttpServletRequest httpRequest) {
         String username = principal.getName();
         boolean pluginRequest = isPluginRequest(httpRequest);
+        // Paid-feature gate: must run before the emitter is created so the
+        // failure surfaces as a normal HTTP 403 response instead of a stream.
+        userService.requireEmailVerified(username);
         // Long model pre-fill plus generation can exceed five minutes. Keep
         // the SSE request alive long enough for the upstream inactivity
         // timeout; the client can still cancel it at any time.

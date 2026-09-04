@@ -12,7 +12,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific terminology, plus an optional custom prompt.
 - **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload an image and choose **model processing** with `deepseek-v4-flash-vision-exp` or **OCR processing** through the PaddleOCR worker. Word/PDF files are not supported yet.
-- **Accounts and access control** with JWT login, API keys for the browser extension, and administrator-only usage and announcement management.
+- **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
 - **Markdown announcements** rendered in the web application. Announcement content is stored as Markdown and raw HTML is not executed.
@@ -294,6 +294,11 @@ Sh1Zuku_Translate/
 | `DEEPSEEK_API_KEY` | Server-wide DeepSeek key. Required when using the site-provided DeepSeek models or when a DeepSeek profile has no personal key. |
 | `JWT_SECRET` | **Required in every deployment.** Use a strong random value; blank and known weak defaults are rejected, so the backend will not start without it. |
 | `JWT_ISSUER` | JWT issuer claim. Default: `shizuku-translate`. |
+| `MAIL_HOST` | SMTP host for verification-code emails. Leave blank to disable sending (registration and email verification then fail with a clear error). |
+| `MAIL_PORT` | SMTP port. Default: `465` (SSL). |
+| `MAIL_USERNAME` / `MAIL_PASSWORD` | SMTP account credentials. |
+| `MAIL_FROM` | From address for verification emails. Defaults to `MAIL_USERNAME`. |
+| `MAIL_SSL` | Use implicit SSL/TLS (true) or STARTTLS (false). Default: `true`. |
 | `CORS_ALLOWED_ORIGIN_PATTERNS` | Comma-separated allowed browser origins. Default: localhost frontend/backend origins. |
 | `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
 | `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
@@ -315,6 +320,12 @@ Other runtime defaults in `application.yml`:
 - Translation cache cleanup: entries older than 30 days are removed daily at 03:00.
 - Administrator usernames: configured by `app.admin-usernames` in `application.yml`.
 
+### Email verification
+
+Registration requires a six-digit code delivered to the address by email, which prevents throwaway (fake-mailbox) accounts from registering and draining the server's token budget. Accounts created before this feature was enabled are unverified (`email_verified` is NULL for existing rows); they keep their history and settings but receive HTTP 403 from the translation endpoints and from extension API-key creation until they verify the address on the profile page. The profile page can also change the account email, which sends a code to the new address and only then switches and verifies it. Configured administrator usernames are exempt from the verification gate.
+
+Codes are stored hashed in memory, expire after 10 minutes, are single-use, and are invalidated after five failed attempts. Sending is rate limited with a 60-second resend cooldown, a daily cap per address, a per-IP window cap, and a global hourly cap.
+
 ### Persistence and token usage
 
 The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, announcements, translation cache entries, survey records, and token usage logs.
@@ -327,10 +338,12 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 
 | Route | Access | Purpose |
 |---|---|---|
-| `POST /auth/register` | Public | Register an account. |
+| `POST /auth/register` | Public | Register an account. Requires a verification code sent to the email address, so the address must be reachable; new accounts are created email-verified. |
+| `POST /auth/email/send-code` | Public | Send a six-digit verification code to an email address (rate limited per address and IP). |
+| `POST /auth/email/verify` | Authenticated | Verify the code for the account address; also updates the account when the address changed. |
 | `POST /auth/login` | Public | Return a JWT. |
-| `GET /auth/me` | Authenticated | Return the current username and administrator status. |
-| `GET /auth/profile` | Authenticated | Return profile and masked model configuration information. |
+| `GET /auth/me` | Authenticated | Return the current username, administrator status, and email-verification status. |
+| `GET /auth/profile` | Authenticated | Return profile (including `emailVerified`) and masked model configuration information. |
 | `GET /auth/model-profiles` | Authenticated or extension API key | List the current user's model profiles. Extension requests omit key previews. |
 | `POST /auth/model-profiles/detect` | Authenticated | Proxy a provider `/models` request for optional model-name detection. |
 | `POST /auth/model-profiles` | Authenticated | Create a model profile. |
@@ -339,15 +352,15 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `PUT /auth/profile/model` | Authenticated | Legacy single-profile configuration endpoint. |
 | `PUT /auth/profile/ai-key` | Authenticated | Legacy personal API key endpoint. |
 | `GET /auth/usage` | Authenticated | Return the current user's token usage summary and charts. |
-| `POST /auth/api-key` | Authenticated | Generate a browser-extension API key. |
+| `POST /auth/api-key` | Authenticated + email verified | Generate a browser-extension API key. |
 | `GET /auth/api-keys` | Authenticated | List the user's extension API keys. |
 | `DELETE /auth/api-key/{id}` | Authenticated | Revoke an extension API key. |
-| `POST /translate` | Authenticated or extension API key | Perform a non-streaming translation. |
-| `POST /translate/stream` | Authenticated or extension API key | Stream a translation over SSE. |
+| `POST /translate` | Authenticated or extension API key + email verified | Perform a non-streaming translation. Unverified accounts receive HTTP 403. |
+| `POST /translate/stream` | Authenticated or extension API key + email verified | Stream a translation over SSE. Unverified accounts receive HTTP 403. |
 | `GET /translations` | Authenticated | List the current user's translation history. |
 | `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
 | `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
-| `POST /translate/image` | Authenticated | Translate an uploaded image with the visual model-processing mode. |
+| `POST /translate/image` | Authenticated + email verified | Translate an uploaded image with the visual model-processing mode. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order. |

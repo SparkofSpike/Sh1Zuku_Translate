@@ -28,6 +28,7 @@ async function login() {
     authStore.setToken(res.data.token)
     const me = await api.get('/auth/me')
     authStore.setAdmin(!!me.data.isAdmin)
+    authStore.setEmailVerified(!!me.data.emailVerified)
     router.push('/')
   } catch (e) {
     error.value = e.response?.data?.error || '登录失败'

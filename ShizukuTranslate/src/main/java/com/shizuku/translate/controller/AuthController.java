@@ -1,10 +1,13 @@
 package com.shizuku.translate.controller;
 
 import com.shizuku.translate.config.AppConfig;
+import com.shizuku.translate.dto.EmailCodeRequest;
+import com.shizuku.translate.dto.EmailVerifyRequest;
 import com.shizuku.translate.dto.LoginRequest;
 import com.shizuku.translate.dto.RegisterRequest;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.service.ApiKeyService;
+import com.shizuku.translate.service.EmailVerificationService;
 import com.shizuku.translate.service.UserService;
 import com.shizuku.translate.service.UsageService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,23 +30,52 @@ public class AuthController {
     private final AppConfig.AppProperties appProperties;
     private final ApiKeyService apiKeyService;
     private final UsageService usageService;
+    private final EmailVerificationService emailVerificationService;
 
     public AuthController(UserService userService,
                           AppConfig.AppProperties appProperties,
                           ApiKeyService apiKeyService,
                           UsageService usageService,
-                          com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                          com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                          EmailVerificationService emailVerificationService) {
         this.userService = userService;
         this.appProperties = appProperties;
         this.apiKeyService = apiKeyService;
         this.usageService = usageService;
         this.objectMapper = objectMapper;
+        this.emailVerificationService = emailVerificationService;
     }
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
         userService.register(request);
         return ResponseEntity.ok(Map.of("message", "Registration successful"));
+    }
+
+    /** Send a verification code to an email address (registration or account email verification). */
+    @PostMapping("/email/send-code")
+    public ResponseEntity<?> sendEmailCode(@Valid @RequestBody EmailCodeRequest request,
+                                           HttpServletRequest httpRequest) {
+        emailVerificationService.sendCode(request.getEmail(), clientIp(httpRequest));
+        return ResponseEntity.ok(Map.of("message", "验证码已发送，请查收邮件"));
+    }
+
+    /** Verify (or change and verify) the logged-in user's account email. */
+    @PostMapping("/email/verify")
+    public ResponseEntity<?> verifyEmail(Principal principal, @Valid @RequestBody EmailVerifyRequest request) {
+        if (principal == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "未登录"));
+        }
+        userService.verifyEmail(principal.getName(), request.getEmail(), request.getCode());
+        return ResponseEntity.ok(Map.of("message", "邮箱认证成功"));
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (StringUtils.hasText(forwarded)) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     @PostMapping("/login")
@@ -59,7 +91,8 @@ public class AuthController {
         }
         String username = principal.getName();
         boolean isAdmin = appProperties.isAdmin(username);
-        return ResponseEntity.ok(Map.of("username", username, "isAdmin", isAdmin));
+        return ResponseEntity.ok(Map.of("username", username, "isAdmin", isAdmin,
+                "emailVerified", userService.isEmailVerified(username)));
     }
 
     /** User profile (requires JWT login) */
@@ -72,6 +105,7 @@ public class AuthController {
         var data = new java.util.LinkedHashMap<String, Object>();
         data.put("username", user.getUsername());
         data.put("email", user.getEmail());
+        data.put("emailVerified", userService.isEmailVerified(principal.getName()));
         data.put("hasAiApiKey", user.getAiApiKey() != null && !user.getAiApiKey().isBlank());
         boolean pluginRequest = StringUtils.hasText(request.getHeader("X-API-Key"))
                 || StringUtils.hasText(request.getParameter("api_key"));
@@ -221,6 +255,7 @@ public class AuthController {
     @PostMapping("/api-key")
     public ResponseEntity<?> createApiKey(Principal principal, @RequestBody Map<String, String> body) {
         String username = principal.getName();
+        userService.requireEmailVerified(username);
         String name = body.getOrDefault("name", "unnamed");
         var created = apiKeyService.createApiKey(username, name);
         var key = created.entity();
