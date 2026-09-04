@@ -134,7 +134,18 @@ const sourceText = ref('')
 const model = ref('deepseek-v4-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
 const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-v4-flash'))
-const modelOptions = ref([
+
+interface ModelOption {
+  key: string
+  /** 个人模型配置 id；站方模型选项为 null */
+  id: number | null
+  model: string
+  label: string
+  /** 仅个人模型配置选项携带：`profile:{id}`，用于从旧版 localStorage 记录恢复选择 */
+  profileKey?: string
+}
+
+const modelOptions = ref<ModelOption[]>([
   { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
   { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
   { key: 'site:deepseek-v4-flash-vision-exp', id: null as number | null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp' }
