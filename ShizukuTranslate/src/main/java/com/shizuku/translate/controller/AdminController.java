@@ -52,6 +52,12 @@ public class AdminController {
         return ResponseEntity.ok(announcementService.create(request));
     }
 
+    @GetMapping("/announcements/{id}/acknowledgements")
+    public ResponseEntity<?> announcementAcknowledgements(@PathVariable Long id, Principal principal) {
+        checkAdmin(principal);
+        return ResponseEntity.ok(announcementService.acknowledgements(id));
+    }
+
     @DeleteMapping("/announcements/{id}")
     public ResponseEntity<?> deleteAnnouncement(@PathVariable Long id, Principal principal) {
         checkAdmin(principal);

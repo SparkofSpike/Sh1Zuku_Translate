@@ -59,7 +59,21 @@ export interface Announcement {
   id: number
   title: string
   content: string
+  requireConfirmation?: boolean
   createdAt: string
+}
+
+export interface AnnouncementAcknowledgement {
+  username: string
+  email: string
+  acknowledgedAt: string
+}
+
+export interface AnnouncementAcknowledgementSummary {
+  announcementId: number
+  requireConfirmation: boolean
+  total: number
+  users: AnnouncementAcknowledgement[]
 }
 
 export interface UsageSummary {

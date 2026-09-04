@@ -21,17 +21,47 @@
     <main class="app-main">
       <router-view />
     </main>
+    <AnnouncementConfirmDialog
+      v-if="pendingAnnouncements.length"
+      :announcements="pendingAnnouncements"
+      @confirmed="onAnnouncementConfirmed"
+    />
   </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useAuthStore } from './stores/auth'
 import { useRouter } from 'vue-router'
 import api from './api'
+import AnnouncementConfirmDialog from './components/AnnouncementConfirmDialog.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
+const pendingAnnouncements = ref([])
+
+// 登录用户每次进入站点时拉取需要确认的公告；确认后（或登出）即清除，不再自动弹出。
+watch(
+  () => authStore.token,
+  async (token) => {
+    if (!token) {
+      pendingAnnouncements.value = []
+      return
+    }
+    try {
+      const res = await api.get('/announcements/pending')
+      pendingAnnouncements.value = res.data || []
+    } catch (e) {
+      // Token 失效/过期或网络错误：本次会话不弹确认框，交由 /auth/me 流程处理登出。
+      pendingAnnouncements.value = []
+    }
+  },
+  { immediate: true }
+)
+
+function onAnnouncementConfirmed(id) {
+  pendingAnnouncements.value = pendingAnnouncements.value.filter((a) => a.id !== id)
+}
 
 onMounted(async () => {
   if (authStore.token) {

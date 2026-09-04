@@ -25,11 +25,20 @@ public class Announcement {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    /** True when every user must confirm this announcement once before it stops popping up.
+     *  Nullable wrapper on purpose: existing rows stay NULL (treated as not required) and
+     *  Hibernate's schema update does not need a NOT-NULL default for a new column. */
+    private Boolean requireConfirmation;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+    }
+
+    public boolean requiresConfirmation() {
+        return Boolean.TRUE.equals(requireConfirmation);
     }
 }

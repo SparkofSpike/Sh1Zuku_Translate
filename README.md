@@ -363,12 +363,15 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /translate/image` | Authenticated + email verified | Translate an uploaded image with the visual model-processing mode. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
-| `GET /announcements` | Public | Return announcements in reverse chronological order. |
+| `GET /announcements` | Public | Return announcements in reverse chronological order; each item includes `requireConfirmation`. |
+| `GET /announcements/pending` | Authenticated | Return announcements flagged as requiring confirmation that the current user has not confirmed yet. |
+| `POST /announcements/{id}/acknowledge` | Authenticated | Record that the current user confirmed the announcement (idempotent). |
 | `POST /survey` | Authenticated | Submit translation and experience feedback. |
 | `GET /stats/users` | Authenticated | Return the registered-user count. |
 | `GET /admin/usage` | Administrator | Return global token totals, charts, and per-user summaries. |
 | `GET /admin/usage/users/{userId}` | Administrator | Return one user's token log. |
-| `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text. |
+| `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text; `requireConfirmation: true` makes every user confirm it once before it stops popping up. |
+| `GET /admin/announcements/{id}/acknowledgements` | Administrator | List the users who confirmed an announcement, newest first, plus a total count. |
 | `POST /plugin/logs` | Authenticated or extension API key | Submit browser-extension error reports. |
 | `GET /plugin/logs` | Authenticated | List the current user's reports; administrators see all reports. |
 | `DELETE /admin/announcements/{id}` | Administrator | Delete an announcement. |

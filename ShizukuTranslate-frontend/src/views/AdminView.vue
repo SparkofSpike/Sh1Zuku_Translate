@@ -93,6 +93,10 @@
         <div v-else-if="content.trim()" class="announcement-markdown markdown-preview" v-html="renderMarkdown(content)"></div>
         <p v-else class="markdown-preview-empty">暂无内容可预览</p>
       </div>
+      <label class="ack-checkbox">
+        <input type="checkbox" v-model="requireConfirmation" />
+        <span>需要用户确认：用户访问网站时将弹出此公告，点击确认后不再自动弹出</span>
+      </label>
       <button @click="publish" :disabled="publishing">{{ publishing ? '发布中...' : '发布公告' }}</button>
       <p v-if="success" class="success">{{ success }}</p>
 
@@ -102,11 +106,14 @@
       <div v-else-if="announcements.length" class="announcement-list">
         <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
           <div class="announcement-content">
-            <h4>{{ announcement.title }}</h4>
+            <h4>{{ announcement.title }}<span v-if="announcement.requireConfirmation" class="badge">需确认</span></h4>
             <time>{{ formatDate(announcement.createdAt) }}</time>
             <div class="announcement-markdown" v-html="renderMarkdown(announcement.content)"></div>
           </div>
-          <button class="btn-sm btn-remove" @click="removeAnnouncement(announcement.id)">删除</button>
+          <div class="announcement-actions">
+            <button v-if="announcement.requireConfirmation" class="btn-sm btn-detail" @click="showAcknowledgements(announcement)">确认情况</button>
+            <button class="btn-sm btn-remove" @click="removeAnnouncement(announcement.id)">删除</button>
+          </div>
         </article>
       </div>
       <p v-else class="muted">暂无公告</p>
@@ -135,6 +142,32 @@
           </table>
         </div>
         <p v-else class="muted">暂无 token 使用日志</p>
+      </section>
+    </div>
+
+    <div v-if="ackModal" class="modal-backdrop" @click.self="ackModal = null">
+      <section class="modal card">
+        <div class="page-heading">
+          <div>
+            <h3>「{{ ackModal.title }}」已确认用户</h3>
+            <p class="muted">共 {{ ackModal.total }} 人已确认</p>
+          </div>
+          <button class="btn-sm btn-remove" @click="ackModal = null">关闭</button>
+        </div>
+        <div v-if="ackLoading" class="muted">加载中...</div>
+        <template v-else>
+          <div v-if="ackModal.users.length" class="table-wrap log-table">
+            <table>
+              <thead><tr><th>用户名</th><th>邮箱</th><th>确认时间</th></tr></thead>
+              <tbody><tr v-for="ack in ackModal.users" :key="ack.username + ack.acknowledgedAt">
+                <td><strong>{{ ack.username }}</strong></td>
+                <td>{{ ack.email }}</td>
+                <td>{{ formatDate(ack.acknowledgedAt) }}</td>
+              </tr></tbody>
+            </table>
+          </div>
+          <p v-else class="muted">暂无用户确认此公告</p>
+        </template>
       </section>
     </div>
   </div>
@@ -189,11 +222,14 @@ const detailLoading = ref(false)
 const error = ref('')
 const title = ref('')
 const content = ref('')
+const requireConfirmation = ref(false)
 const editorMode = ref('write')
 const announcements = ref([])
 const loading = ref(true)
 const publishing = ref(false)
 const success = ref('')
+const ackModal = ref(null)  // { title, total, users } | null
+const ackLoading = ref(false)
 
 async function loadUsage() {
   usageLoading.value = true
@@ -235,11 +271,33 @@ async function publish() {
   publishing.value = true
   error.value = ''
   try {
-    await api.post('/admin/announcements', { title: title.value, content: content.value })
-    title.value = ''; content.value = ''; editorMode.value = 'write'; success.value = '公告发布成功'
+    await api.post('/admin/announcements', {
+      title: title.value,
+      content: content.value,
+      requireConfirmation: requireConfirmation.value
+    })
+    title.value = ''; content.value = ''; requireConfirmation.value = false; editorMode.value = 'write'; success.value = '公告发布成功'
     await loadAnnouncements()
   } catch (e) { error.value = e.response?.data?.error || '发布失败' }
   finally { publishing.value = false }
+}
+
+async function showAcknowledgements(announcement) {
+  ackLoading.value = true
+  ackModal.value = { title: announcement.title, total: 0, users: [] }
+  try {
+    const res = await api.get('/admin/announcements/' + announcement.id + '/acknowledgements')
+    ackModal.value = {
+      title: announcement.title,
+      total: res.data.total || 0,
+      users: res.data.users || []
+    }
+  } catch (e) {
+    error.value = e.response?.data?.error || '加载确认列表失败'
+    ackModal.value = null
+  } finally {
+    ackLoading.value = false
+  }
 }
 
 async function removeAnnouncement(id) {
@@ -294,7 +352,8 @@ th.sortable { cursor: pointer; user-select: none; transition: color .15s; }th.so
 th.sorted { color: #222; font-weight: 600; }
 .btn-refresh, .btn-detail { background: #fff; color: #333; border-color: #bbb; }.btn-refresh:hover, .btn-detail:hover { background: #eee; }
 .markdown-editor { margin: 12px 0 12px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }.markdown-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid #eee; background: #fafafa; }.markdown-tab { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #666; font-size: 13px; }.markdown-tab:hover { background: #f0f0f0; color: #222; }.markdown-tab.active { border-bottom-color: #222; color: #222; font-weight: 600; }.markdown-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; margin: 0; border: 0; border-radius: 0; resize: vertical; }.announcement-markdown.markdown-preview { min-height: 140px; margin: 0; padding: 10px 12px; }.markdown-preview-empty { min-height: 140px; margin: 0; padding: 10px 12px; color: #999; font-size: 13px; }.section-title { margin: 0 0 12px; }.announcement-list { display: flex; flex-direction: column; }.announcement-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }.announcement-content { min-width: 0; flex: 1; }.announcement-item h4 { margin: 0; font-size: 15px; }.announcement-item time { color: #999; font-size: 12px; }.announcement-markdown { margin: 7px 0 0; color: #555; overflow-wrap: anywhere; }.announcement-markdown :deep(p), .announcement-markdown :deep(ul), .announcement-markdown :deep(ol), .announcement-markdown :deep(blockquote), .announcement-markdown :deep(pre) { margin: 0 0 7px; }.announcement-markdown :deep(p:last-child), .announcement-markdown :deep(ul:last-child), .announcement-markdown :deep(ol:last-child), .announcement-markdown :deep(blockquote:last-child), .announcement-markdown :deep(pre:last-child) { margin-bottom: 0; }.announcement-markdown :deep(ul), .announcement-markdown :deep(ol) { padding-left: 20px; }.announcement-markdown :deep(blockquote) { padding-left: 10px; border-left: 3px solid #ddd; color: #777; }.announcement-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; font-size: 12px; }.announcement-markdown :deep(pre) { padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: #f5f5f5; }.announcement-markdown :deep(pre code) { padding: 0; background: transparent; }.announcement-markdown :deep(a) { color: #444; text-decoration: underline; }
+.ack-checkbox { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #555; font-size: 13px; cursor: pointer; }.ack-checkbox input { width: auto; margin: 0; }.badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 10px; background: #fff3bf; color: #9a6700; font-size: 11px; font-weight: 600; vertical-align: middle; }.announcement-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .success { color: #2b8a3e; }.error { color: #e03131; }.detail-summary { display: flex; gap: 18px; margin: 14px 0; color: #777; font-size: 13px; }.detail-summary strong { color: #222; font-size: 20px; }.log-table { max-height: 390px; overflow-y: auto; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.42); }.modal { width: min(900px, 100%); max-height: calc(100vh - 40px); overflow: auto; margin: 0; box-shadow: 0 16px 50px rgba(0,0,0,.25); }
-@media (max-width: 720px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.charts-grid { grid-template-columns: 1fr; }.model-row { grid-template-columns: 1fr 1.2fr auto; }.announcement-item { flex-direction: column; gap: 8px; } }
+@media (max-width: 720px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.charts-grid { grid-template-columns: 1fr; }.model-row { grid-template-columns: 1fr 1.2fr auto; }.announcement-item { flex-direction: column; gap: 8px; }.announcement-actions { flex-direction: row; justify-content: flex-end; } }
 </style>
