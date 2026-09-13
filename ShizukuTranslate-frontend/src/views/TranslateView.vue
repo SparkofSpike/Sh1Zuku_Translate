@@ -27,6 +27,7 @@
       :loading="ocrLoading"
       :polish="ocrPolish"
       :threshold="ocrThreshold"
+      :mode="imageProcessingMode"
       @ocr="doOcr"
       @clear="clearImages"
       @remove="removeImageAt"

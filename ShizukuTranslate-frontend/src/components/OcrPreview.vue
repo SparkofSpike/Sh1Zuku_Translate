@@ -12,22 +12,29 @@
         <span v-if="previews.length > 1" class="ocr-preview-index">{{ index + 1 }}</span>
       </div>
     </div>
-    <div class="ocr-preview-actions">
-      <button class="btn-sm btn-remove" @click="$emit('clear')">
-        {{ previews.length > 1 ? '移除全部' : '移除' }}
-      </button>
-      <button class="btn-sm btn-primary" @click="$emit('ocr')" :disabled="loading">
-        {{ loading ? '识别中...' : (previews.length > 1 ? `PaddleOCR（${previews.length} 张）` : 'PaddleOCR') }}
-      </button>
-    </div>
-    <label style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-      <input type="checkbox" :checked="polish" @change="$emit('update:polish', ($event.target as HTMLInputElement).checked)">
-      修复分段
-    </label>
-    <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;">
-      <span>置信度:</span>
-      <input type="range" min="0.1" max="0.9" step="0.05" :value="threshold" @input="$emit('update:threshold', parseFloat(($event.target as HTMLInputElement).value))" style="width:100px;">
-      <input type="number" min="0.1" max="0.9" step="0.05" :value="threshold" @input="$emit('update:threshold', parseFloat(($event.target as HTMLInputElement).value))" style="width:55px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+    <!-- OCR-only controls. With model processing the images go straight to the visual
+         model, so segment repair and confidence would only be noise. -->
+    <template v-if="mode === 'ocr'">
+      <div class="ocr-preview-actions">
+        <button class="btn-sm btn-remove" @click="$emit('clear')">
+          {{ previews.length > 1 ? '移除全部' : '移除' }}
+        </button>
+        <button class="btn-sm btn-primary" @click="$emit('ocr')" :disabled="loading">
+          {{ loading ? '识别中...' : (previews.length > 1 ? `PaddleOCR（${previews.length} 张）` : 'PaddleOCR') }}
+        </button>
+      </div>
+      <label style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" :checked="polish" @change="$emit('update:polish', ($event.target as HTMLInputElement).checked)">
+        修复分段
+      </label>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;">
+        <span>置信度:</span>
+        <input type="range" min="0.1" max="0.9" step="0.05" :value="threshold" @input="$emit('update:threshold', parseFloat(($event.target as HTMLInputElement).value))" style="width:100px;">
+        <input type="number" min="0.1" max="0.9" step="0.05" :value="threshold" @input="$emit('update:threshold', parseFloat(($event.target as HTMLInputElement).value))" style="width:55px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+      </div>
+    </template>
+    <div v-else-if="previews.length > 1" class="ocr-preview-actions">
+      <button class="btn-sm btn-remove" @click="$emit('clear')">移除全部</button>
     </div>
   </div>
 </template>
@@ -38,6 +45,8 @@ defineProps<{
   loading: boolean
   polish: boolean
   threshold: number
+  /** `model` keeps only the thumbnails: those images are translated directly. */
+  mode: 'model' | 'ocr'
 }>()
 
 defineEmits<{
