@@ -94,6 +94,27 @@ public class AppConfig {
             return code;
         }
 
+        /** Language-specific guidance for the given target language, or null when none is set. */
+        public String targetLanguageNotes(String code) {
+            for (LanguageItem item : getTargetLanguages()) {
+                if (item.getCode() != null && item.getCode().equalsIgnoreCase(code)) {
+                    return item.getPromptNotes();
+                }
+            }
+            return null;
+        }
+
+        /** Work-specific notes for a series (matched by preset name), or null when none is set. */
+        public String seriesNotes(String series) {
+            if (glossary == null || series == null) return null;
+            for (GlossarySeriesItem item : glossary) {
+                if (series.equals(item.getSeries())) {
+                    return item.getNotes();
+                }
+            }
+            return null;
+        }
+
         public static class PresetItem {
             private String name;
             private String prompt;
@@ -106,10 +127,18 @@ public class AppConfig {
         public static class LanguageItem {
             private String code;
             private String label;
+            /**
+             * Language-specific translation guidance (e.g. how Vietnamese pronouns work).
+             * Appended to the system prompt only when this language is the target, so guidance
+             * for one language can never leak into another.
+             */
+            private String promptNotes;
             public String getCode() { return code; }
             public void setCode(String code) { this.code = code; }
             public String getLabel() { return label; }
             public void setLabel(String label) { this.label = label; }
+            public String getPromptNotes() { return promptNotes; }
+            public void setPromptNotes(String promptNotes) { this.promptNotes = promptNotes; }
         }
 
         public static class TranslationProperties {
@@ -124,9 +153,18 @@ public class AppConfig {
         /** Seed data for the glossary tables; {@code series} matches a preset name. */
         public static class GlossarySeriesItem {
             private String series;
+            /**
+             * Work-specific translation notes that have nothing to do with the target language,
+             * such as how two characters address each other in this particular work (a pairing
+             * may speak as equals even when their ages would normally imply a senior/junior
+             * register). Injected whenever a preset with this name is selected.
+             */
+            private String notes;
             private List<GlossaryConceptItem> concepts;
             public String getSeries() { return series; }
             public void setSeries(String series) { this.series = series; }
+            public String getNotes() { return notes; }
+            public void setNotes(String notes) { this.notes = notes; }
             public List<GlossaryConceptItem> getConcepts() { return concepts; }
             public void setConcepts(List<GlossaryConceptItem> concepts) { this.concepts = concepts; }
         }
