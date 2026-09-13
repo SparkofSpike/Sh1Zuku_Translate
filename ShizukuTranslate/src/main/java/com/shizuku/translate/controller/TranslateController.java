@@ -23,6 +23,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.security.Principal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,12 +50,24 @@ public class TranslateController {
         this.translationStreamExecutor = translationStreamExecutor;
     }
 
+    /**
+     * Image translation. {@code images} carries one or more files (the web UI uploads several pages
+     * at once); the singular {@code image} field is still accepted for older clients.
+     */
     @PostMapping("/translate/image")
-    public ResponseEntity<TranslateResponse> translateImage(@RequestPart("image") MultipartFile image,
-                                                              @RequestPart("request") @Valid TranslateRequest request,
-                                                              Principal principal, HttpServletRequest httpRequest) throws IOException {
+    public ResponseEntity<TranslateResponse> translateImage(@RequestPart(value = "images", required = false) List<MultipartFile> images,
+                                                             @RequestPart(value = "image", required = false) MultipartFile legacyImage,
+                                                             @RequestPart("request") @Valid TranslateRequest request,
+                                                             Principal principal, HttpServletRequest httpRequest) throws IOException {
         userService.requireEmailVerified(principal.getName());
-        return ResponseEntity.ok(translationService.translateImage(principal.getName(), request, image, isPluginRequest(httpRequest)));
+        List<MultipartFile> files = new ArrayList<>();
+        if (images != null) {
+            files.addAll(images);
+        }
+        if (legacyImage != null && !legacyImage.isEmpty()) {
+            files.add(legacyImage);
+        }
+        return ResponseEntity.ok(translationService.translateImages(principal.getName(), request, files, isPluginRequest(httpRequest)));
     }
 
     @PostMapping("/translate")

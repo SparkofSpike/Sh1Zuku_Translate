@@ -24,9 +24,10 @@ export function ocrImage(file: File, polish: boolean = true, threshold: number =
   })
 }
 
-export function translateImage(file: File, request: TranslateRequest) {
+export function translateImages(files: File[], request: TranslateRequest) {
   const formData = new FormData()
-  formData.append('image', file)
+  // Repeated `images` fields: the backend appends them to one multimodal request in this order.
+  for (const file of files) formData.append('images', file)
   formData.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
   return api.post<TranslateResponse>('/translate/image', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 }

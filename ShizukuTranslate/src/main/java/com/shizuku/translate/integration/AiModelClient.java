@@ -13,6 +13,7 @@ import org.springframework.web.client.RestClient;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Base64;
 import java.util.List;
@@ -38,9 +39,14 @@ public class AiModelClient {
     }
 
     public DeepSeekResult chatWithImage(String systemPrompt, String userMessage, byte[] image, String mediaType, AiModelConfig config) {
+        return chatWithImages(systemPrompt, userMessage, List.of(new ImagePayload(image, mediaType)), config);
+    }
+
+    /** Sends one or more images in a single multimodal request. */
+    public DeepSeekResult chatWithImages(String systemPrompt, String userMessage, List<ImagePayload> images, AiModelConfig config) {
         if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
         RestClient client = clientFor(config);
-        Map<String, Object> request = buildVisionRequest(systemPrompt, userMessage, image, mediaType, config);
+        Map<String, Object> request = buildVisionRequest(systemPrompt, userMessage, images, config);
         Map<String, Object> response = client.post().uri("/chat/completions")
                 .headers(headers -> addAuth(headers, config)).body(request).retrieve().body(Map.class);
         if (response == null) throw new RuntimeException("模型返回为空");
@@ -50,23 +56,42 @@ public class AiModelClient {
     /** Builds the OpenAI-compatible multimodal body used by the DeepSeek vision-capable models. */
     static Map<String, Object> buildVisionRequest(String systemPrompt, String userMessage,
                                                    byte[] image, String mediaType, AiModelConfig config) {
+        return buildVisionRequest(systemPrompt, userMessage, List.of(new ImagePayload(image, mediaType)), config);
+    }
+
+    /**
+     * Multi-image variant: every image joins the same user message in upload order, so the
+     * model can translate consecutive pages with shared context instead of page by page.
+     */
+    static Map<String, Object> buildVisionRequest(String systemPrompt, String userMessage,
+                                                   List<ImagePayload> images, AiModelConfig config) {
         if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
-        if (image == null || image.length == 0) throw new IllegalArgumentException("图片不能为空");
-        String detectedMediaType = detectImageMediaType(image);
-        Map<String, Object> imagePart = Map.of("type", "image_url", "image_url", Map.of(
-                "url", "data:" + detectedMediaType + ";base64," + Base64.getEncoder().encodeToString(image)));
-        Map<String, Object> textPart = Map.of("type", "text", "text", userMessage == null ? "" : userMessage);
+        if (images == null || images.isEmpty()) throw new IllegalArgumentException("图片不能为空");
+        List<Map<String, Object>> content = new ArrayList<>();
+        content.add(Map.of("type", "text", "text", userMessage == null ? "" : userMessage));
+        for (ImagePayload image : images) {
+            if (image == null || image.data() == null || image.data().length == 0) {
+                throw new IllegalArgumentException("图片不能为空");
+            }
+            // The uploaded bytes decide the media type; declared types and file names lie often enough.
+            String detectedMediaType = detectImageMediaType(image.data());
+            content.add(Map.of("type", "image_url", "image_url", Map.of(
+                    "url", "data:" + detectedMediaType + ";base64," + Base64.getEncoder().encodeToString(image.data()))));
+        }
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
         request.put("temperature", 0.3);
         request.put("max_tokens", 100000);
         request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", List.of(textPart, imagePart))));
+                Map.of("role", "user", "content", content)));
         if ("enabled".equalsIgnoreCase(config.getThinkingType())) {
             request.put("thinking", Map.of("type", "enabled"));
         }
         return request;
     }
+
+    /** One image plus its declared media type; the actual bytes decide what gets sent. */
+    public record ImagePayload(byte[] data, String mediaType) {}
 
     private static String detectImageMediaType(byte[] image) {
         if (image.length >= 8

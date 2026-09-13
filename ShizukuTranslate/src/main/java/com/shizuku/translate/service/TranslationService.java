@@ -27,7 +27,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -57,15 +59,34 @@ public class TranslationService {
         this.usageService = usageService;
     }
 
+    /** Images travel in a single multimodal call, so this bound also caps the token cost per request. */
+    private static final int MAX_IMAGES_PER_REQUEST = 10;
+
     @Transactional
-    public TranslateResponse translateImage(String username, TranslateRequest request, MultipartFile image, boolean hideCustomPrompt) throws java.io.IOException {
+    public TranslateResponse translateImages(String username, TranslateRequest request, List<MultipartFile> images,
+                                             boolean hideCustomPrompt) throws java.io.IOException {
+        if (images == null || images.isEmpty()) {
+            throw new com.shizuku.translate.exception.BusinessException("请至少上传一张图片");
+        }
+        if (images.size() > MAX_IMAGES_PER_REQUEST) {
+            throw new com.shizuku.translate.exception.BusinessException(
+                    "一次最多处理 " + MAX_IMAGES_PER_REQUEST + " 张图片");
+        }
         User user = userService.findByUsername(username);
         AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
         if (!config.isVisual()) throw new com.shizuku.translate.exception.BusinessException("只有视觉模型才能使用模型处理");
+        List<AiModelClient.ImagePayload> payloads = new ArrayList<>();
+        for (MultipartFile image : images) {
+            if (image == null || image.isEmpty()) continue;
+            payloads.add(new AiModelClient.ImagePayload(image.getBytes(), image.getContentType()));
+        }
+        if (payloads.isEmpty()) {
+            throw new com.shizuku.translate.exception.BusinessException("请至少上传一张图片");
+        }
         String systemPrompt = promptTemplateService.buildSystemPrompt(PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
                 request.getPresets(), request.getCustomPrompt());
-        DeepSeekResult result = aiModelClient.chatWithImage(systemPrompt, request.getSourceText(), image.getBytes(),
-                image.getContentType() == null ? "image/png" : image.getContentType(), config);
+        DeepSeekResult result = aiModelClient.chatWithImages(systemPrompt,
+                buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config);
         usageService.record(user, config, result.getUsage());
         TranslationRecord record = new TranslationRecord();
         record.setUser(user); record.setSourceText(request.getSourceText() == null ? "" : request.getSourceText()); record.setTranslatedText(result.getContent());
@@ -74,6 +95,20 @@ public class TranslationService {
         TranslateResponse response = new TranslateResponse(); response.setId(record.getId());
         response.setTranslatedText(result.getContent()); response.setModel(config.getModel()); response.setCreatedAt(record.getCreatedAt());
         response.setTokenUsage(result.getUsage()); return response;
+    }
+
+    /**
+     * Multi-image uploads are consecutive pages of one work, so the model is told to merge them
+     * into a single continuous translation instead of treating each page as a separate document.
+     */
+    private static String buildImageUserMessage(String sourceText, int imageCount) {
+        String text = sourceText == null ? "" : sourceText;
+        if (imageCount <= 1) {
+            return text;
+        }
+        String hint = "（本次共 " + imageCount + " 张图片，属于同一部作品的连续页面，"
+                + "请按上传顺序合并为一段完整译文，不要逐张分开输出。）";
+        return text.isBlank() ? hint : text + "\n\n" + hint;
     }
 
     @Transactional

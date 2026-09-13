@@ -11,7 +11,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific terminology, plus an optional custom prompt.
-- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload an image and choose **model processing** with `deepseek-flash` or **OCR processing** through the PaddleOCR worker. Word/PDF files are not supported yet.
+- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once and choose **model processing** with `deepseek-flash` (all pages are translated in one multimodal call, in upload order) or **OCR processing** through the PaddleOCR worker (pages are recognised one at a time and joined afterwards). Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
@@ -314,7 +314,7 @@ Other runtime defaults in `application.yml`:
 - DeepSeek thinking mode: disabled by default; requests may override it.
 - OCR worker URL: `http://localhost:5557`.
 - H2 file database: `./data/translatordb`.
-- Multipart limits: 20 MB per file and 25 MB per request.
+- Multipart limits: 20 MB per file and 60 MB per request (a multi-image upload arrives as one request).
 - Translation cache cleanup: entries older than 30 days are removed daily at 03:00.
 - Administrator usernames: configured by `app.admin-usernames` in `application.yml`.
 
@@ -358,7 +358,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /translations` | Authenticated | List the current user's translation history. |
 | `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
 | `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
-| `POST /translate/image` | Authenticated + email verified | Translate an uploaded image with the visual model-processing mode. |
+| `POST /translate/image` | Authenticated + email verified | Translate one or more uploaded images in a single multimodal call. Send repeatable `images` fields (up to 10); the singular `image` field is still accepted for older clients. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order; each item includes `requireConfirmation`. |

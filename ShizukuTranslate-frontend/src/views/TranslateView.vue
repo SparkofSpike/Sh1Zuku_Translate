@@ -22,13 +22,14 @@
       <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
 
     <OcrPreview
-      v-if="ocrPreview"
-      :preview="ocrPreview"
+      v-if="ocrPreviews.length"
+      :previews="ocrPreviews"
       :loading="ocrLoading"
       :polish="ocrPolish"
       :threshold="ocrThreshold"
       @ocr="doOcr"
-      @clear="clearOcr"
+      @clear="clearImages"
+      @remove="removeImageAt"
       @update:polish="ocrPolish = $event"
       @update:threshold="ocrThreshold = $event"
     />
@@ -54,6 +55,7 @@
         ref="fileInput"
         type="file"
         accept="image/*,.txt,.md,text/plain,text/markdown"
+        multiple
         style="display:none"
         @change="onPickFile"
       />
@@ -67,7 +69,7 @@
         <input type="checkbox" v-model="streamingEnabled" />
         流式输出
       </label>
-      <label v-if="pendingImageFile" style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
+      <label v-if="pendingImageFiles.length" style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         图片处理：
         <select v-model="imageProcessingMode" style="width:auto;">
           <option value="model">模型处理</option>
@@ -120,7 +122,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
-import api, { ocrImage, translateImage, translateStream } from '../api'
+import api, { ocrImage, translateImages, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
 import OcrPreview from '../components/OcrPreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
@@ -177,13 +179,14 @@ const streamingResult = ref<TranslateResponse | null>(null)
 let cancelFn: (() => void) | null = null
 
 // OCR related
-const ocrPreview = ref<string | null>(null)
+const ocrPreviews = ref<string[]>([])
 const ocrLoading = ref(false)
 const ocrError = ref('')
 const ocrPolish = ref(false)
 const ocrThreshold = ref(0.3)
-const pendingOcrFile = ref<File | null>(null)
-const pendingImageFile = ref<File | null>(null)
+const pendingImageFiles = ref<File[]>([])
+/** Mirrors TranslationService.MAX_IMAGES_PER_REQUEST; keep the two in sync. */
+const MAX_IMAGES = 10
 const imageProcessingMode = ref<'model' | 'ocr'>('model')
 
 // Inline upload (button + drag & drop)
@@ -287,8 +290,8 @@ function handleModelChange() {
 
 function onPickFile(e: Event) {
   const target = e.target as HTMLInputElement
-  const file = target.files?.[0]
-  if (file) handleAttachment(file)
+  const files = Array.from(target.files || [])
+  if (files.length) handleAttachments(files)
   target.value = ''
 }
 
@@ -305,63 +308,95 @@ function onDragLeave() {
 function onDropFile(e: DragEvent) {
   dragDepth = 0
   dragActive.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (file) handleAttachment(file)
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length) handleAttachments(files)
 }
 
 function onTextareaPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
   if (!items) return
+  const images: File[] = []
   for (const item of items) {
     if (item.type.startsWith('image/')) {
       const file = item.getAsFile()
-      if (file) {
-        e.preventDefault()
-        handleAttachment(file)
-        return
-      }
+      if (file) images.push(file)
     }
   }
+  if (images.length) {
+    e.preventDefault()
+    handleAttachments(images)
+  }
 }
 
-function handleAttachment(file: File) {
-  if (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.md')) {
+function handleAttachments(files: File[]) {
+  const isText = (f: File) => /\.(txt|md)$/i.test(f.name)
+  const textFiles = files.filter(isText)
+  const imageFiles = files.filter(f => !isText(f))
+  if (textFiles.length) {
+    // A text attachment replaces the textarea; the last one wins so selecting several
+    // documents at once cannot silently concatenate unrelated texts.
     const reader = new FileReader()
     reader.onload = () => { sourceText.value = String(reader.result || '') }
-    reader.readAsText(file)
+    reader.readAsText(textFiles[textFiles.length - 1])
+  }
+  if (imageFiles.length) handleImageFiles(imageFiles)
+}
+
+function handleImageFiles(files: File[]) {
+  ocrError.value = ''
+  const room = MAX_IMAGES - pendingImageFiles.value.length
+  if (room <= 0) {
+    ocrError.value = `一次最多上传 ${MAX_IMAGES} 张图片`
     return
   }
-  handleImageFile(file)
-}
-
-function handleImageFile(file: File) {
-  ocrError.value = ''
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    ocrPreview.value = e.target?.result as string
+  const accepted = files.slice(0, room)
+  if (accepted.length < files.length) {
+    ocrError.value = `一次最多上传 ${MAX_IMAGES} 张图片，已保留前 ${MAX_IMAGES} 张`
   }
-  reader.readAsDataURL(file)
-  pendingOcrFile.value = file
-  pendingImageFile.value = file
+  for (const file of accepted) {
+    pendingImageFiles.value.push(file)
+    const slot = ocrPreviews.value.length
+    ocrPreviews.value.push('')
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      // Resolve the slot by file identity, so deleting a thumbnail while another
+      // read is still in flight cannot shift the previews out of order.
+      const index = pendingImageFiles.value.indexOf(file)
+      if (index >= 0) ocrPreviews.value[index] = e.target?.result as string
+      else ocrPreviews.value.splice(slot, 1)
+    }
+    reader.readAsDataURL(file)
+  }
 }
 
-function clearOcr() {
-  ocrPreview.value = null
-  pendingOcrFile.value = null
-  pendingImageFile.value = null
+function removeImageAt(index: number) {
+  pendingImageFiles.value.splice(index, 1)
+  ocrPreviews.value.splice(index, 1)
+}
+
+function clearImages() {
+  pendingImageFiles.value = []
+  ocrPreviews.value = []
   ocrError.value = ''
 }
 
 async function doOcr() {
-  if (!pendingOcrFile.value) return
+  const files = pendingImageFiles.value.slice()
+  if (!files.length) return
   ocrLoading.value = true
   ocrError.value = ''
   try {
-    const res = await ocrImage(pendingOcrFile.value, ocrPolish.value, ocrThreshold.value)
-    const text = res.data.text
-    if (text) {
-      sourceText.value = text
-      clearOcr()
+    // The OCR worker runs single-threaded (Paddle predictors cannot be shared across
+    // threads), so pages go one at a time and are joined in upload order afterwards.
+    const pages: string[] = []
+    for (const file of files) {
+      const res = await ocrImage(file, ocrPolish.value, ocrThreshold.value)
+      const text = res.data.text?.trim()
+      if (text) pages.push(text)
+    }
+    if (pages.length) {
+      sourceText.value = pages.join('\n\n')
+      clearImages()
     } else {
       ocrError.value = '未识别到文字'
     }
@@ -380,22 +415,22 @@ function cancel() {
 }
 
 async function translate() {
-  if (!sourceText.value.trim() && !pendingImageFile.value) return
-  if (pendingImageFile.value && imageProcessingMode.value === 'model') {
+  if (!sourceText.value.trim() && !pendingImageFiles.value.length) return
+  if (pendingImageFiles.value.length && imageProcessingMode.value === 'model') {
     try {
       const request = { sourceText: sourceText.value, model: model.value, modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined }
-      const response = await translateImage(pendingImageFile.value, request)
+      const response = await translateImages(pendingImageFiles.value, request)
       result.value = response.data
       useStreaming.value = false
-      clearOcr()
+      clearImages()
       return
     } catch (e: any) {
       error.value = e.response?.data?.error || e.message || '图片模型处理失败'
       return
     }
   }
-  if (pendingImageFile.value && imageProcessingMode.value === 'ocr') {
+  if (pendingImageFiles.value.length && imageProcessingMode.value === 'ocr') {
     await doOcr()
     if (!sourceText.value.trim()) return
   }

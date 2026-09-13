@@ -73,6 +73,41 @@ class AiModelClientVisionTest {
                 () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {1}, "image/bmp", flash));
     }
 
+    @Test
+    void multipleImagesJoinOneUserMessageInOrder() {
+        AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
+                "deepseek", "key", "https://api.deepseek.com/v1",
+                "deepseek-flash", "disabled");
+
+        List<AiModelClient.ImagePayload> images = List.of(
+                new AiModelClient.ImagePayload(
+                        new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/png"),
+                new AiModelClient.ImagePayload(
+                        new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff}, "image/jpeg"));
+
+        Map<String, Object> request = AiModelClient.buildVisionRequest("system", "接着上文继续翻译", images, config);
+
+        List<Map<String, Object>> content = contentParts(messages(request).get(1));
+        assertEquals(3, content.size());
+        assertEquals("text", content.get(0).get("type"));
+        assertEquals("接着上文继续翻译", content.get(0).get("text"));
+        assertEquals("image_url", content.get(1).get("type"));
+        assertEquals("image_url", content.get(2).get("type"));
+        // Upload order is preserved so pages stay in reading order for the model.
+        assertEquals("data:image/png;base64,iVBORw0KGgo=", imageUrl(content.get(1)).get("url"));
+        assertEquals("data:image/jpeg;base64,/9j/", imageUrl(content.get(2)).get("url"));
+    }
+
+    @Test
+    void emptyImageListIsRejected() {
+        AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
+                "deepseek", "key", "https://api.deepseek.com/v1",
+                "deepseek-flash", "disabled");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> AiModelClient.buildVisionRequest("system", "text", List.of(), config));
+    }
+
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> messages(Map<String, Object> request) {
         return (List<Map<String, Object>>) request.get("messages");

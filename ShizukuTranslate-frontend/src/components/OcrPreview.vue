@@ -1,10 +1,23 @@
 <template>
   <div class="ocr-preview">
-    <img :src="preview" alt="上传的图片" />
+    <div class="ocr-preview-grid">
+      <div v-for="(item, index) in previews" :key="index" class="ocr-preview-item">
+        <img :src="item" :alt="`上传的图片 ${index + 1}`" />
+        <button
+          class="ocr-preview-remove"
+          type="button"
+          title="移除这张"
+          @click="$emit('remove', index)"
+        >×</button>
+        <span v-if="previews.length > 1" class="ocr-preview-index">{{ index + 1 }}</span>
+      </div>
+    </div>
     <div class="ocr-preview-actions">
-      <button class="btn-sm btn-remove" @click="$emit('clear')">移除</button>
+      <button class="btn-sm btn-remove" @click="$emit('clear')">
+        {{ previews.length > 1 ? '移除全部' : '移除' }}
+      </button>
       <button class="btn-sm btn-primary" @click="$emit('ocr')" :disabled="loading">
-        {{ loading ? '识别中...' : 'PaddleOCR' }}
+        {{ loading ? '识别中...' : (previews.length > 1 ? `PaddleOCR（${previews.length} 张）` : 'PaddleOCR') }}
       </button>
     </div>
     <label style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -21,7 +34,7 @@
 
 <script setup lang="ts">
 defineProps<{
-  preview: string
+  previews: string[]
   loading: boolean
   polish: boolean
   threshold: number
@@ -30,6 +43,7 @@ defineProps<{
 defineEmits<{
   (e: 'ocr'): void
   (e: 'clear'): void
+  (e: 'remove', index: number): void
   (e: 'update:polish', value: boolean): void
   (e: 'update:threshold', value: number): void
 }>()
@@ -39,11 +53,50 @@ defineEmits<{
 .ocr-preview {
   max-width: 100%;
 }
-.ocr-preview img {
-  max-height: 300px;
-  max-width: 100%;
+.ocr-preview-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.ocr-preview-item {
+  position: relative;
+  flex: 0 0 auto;
+}
+.ocr-preview-item img {
+  display: block;
+  max-height: 150px;
+  max-width: 150px;
+  min-width: 64px;
+  min-height: 64px;
+  object-fit: cover;
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  background: #f1f3f5;
+}
+.ocr-preview-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #e03131;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ocr-preview-index {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-size: 11px;
 }
 .ocr-preview-actions {
   margin-top: 10px;
