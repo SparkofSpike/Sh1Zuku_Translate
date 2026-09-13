@@ -226,24 +226,22 @@ cd ..\ShizukuTranslate
 mvn clean package -DskipTests
 ```
 
-The repository's local deployment workflow is:
+The deployment workflows are:
 
-```powershell
-cd ..
-python tools/ship.py
-```
+**GitHub Actions** (`.github/workflows/deploy.yml`, started manually with `gh workflow run deploy.yml`): builds the frontend and backend on a hosted runner, backs up the live jar and configuration file, uploads the jar, syncs `deepseek.api.default-model` from the repository `application.yml`, restarts the `shizuku-backend` systemd unit, verifies the release, and rolls back automatically when any step fails.
 
-`tools/ship.py` uses the server, SSH, and Windows paths hard-coded at the top of the script. Unless `--skip-pull` is supplied, it pulls the latest Git revision, installs frontend dependencies with `npm ci`, builds the frontend, copies the generated assets into the backend static directory, packages the backend and OCR worker, uploads the deployment package over SSH, and restarts the remote backend task. The script also packages `.github/workflows/deploy.ps1` when present.
-
-Useful options:
+**Local script** (`tools/ship.py`, a local-only tool not tracked in Git):
 
 ```text
-python tools/ship.py --skip-pull
-python tools/ship.py --upload-only
-python tools/ship.py --help
+python tools/ship.py                # full release: pull, build, upload, reconfigure, restart, verify
+python tools/ship.py --recon        # read-only status of the production host
+python tools/ship.py --no-build     # upload the existing target/translator.jar
+python tools/ship.py --no-restart   # upload only
+python tools/ship.py --rollback     # restore the most recent backup and restart
+python tools/ship.py --skip-pull    # skip git pull
 ```
 
-`--upload-only` expects an existing `deploy_package/` and still performs remote upload/restart. The deployment script requires the configured local SSH key and access to the target Windows server; review its server settings before using it for another environment. The workflow has remote side effects and is not a portable local-only build command.
+`ship.py` reads credentials from `SHIZUKU_HOST` / `SHIZUKU_USER` / `SHIZUKU_PWD` / `SHIZUKU_KEY`, then from `D:\CodeWhaleData\secrets\shizuku_server.json`, then from `~/.ssh/id_rsa`. Both workflows target a Debian host running systemd units `shizuku-backend` (port 5566) and `shizuku-ocr` (port 5557); the nginx virtual host on port 80 proxies to 5566. Both have remote side effects and are not portable local-only build commands.
 
 ## Project structure
 
@@ -282,7 +280,7 @@ Sh1Zuku_Translate/
 │   └── updatechecking/         # .NET updater source project
 └── tools/                      # Local-only tooling (git-ignored)
     ├── build_extension.py      # Generates extension build metadata
-    └── ship.py                 # Local build, packaging, upload, and restart workflow
+    └── ship.py                 # Local build, packaging, upload, and systemd restart workflow
 ```
 
 ## Configuration
