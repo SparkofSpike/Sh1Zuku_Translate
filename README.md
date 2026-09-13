@@ -68,7 +68,7 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 
 | Layer | Technology |
 |---|---|
-| Web frontend | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios |
+| Web frontend | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios, vue-i18n |
 | Backend | Java 21 source/target, Spring Boot 3.2.0, Spring Data JPA, H2, Spring Security, JWT |
 | OCR worker | Python, Flask, PaddleOCR with the Japanese model |
 | AI integration | DeepSeek API, OpenAI-compatible chat completions, Anthropic Messages API |
@@ -331,7 +331,7 @@ Codes are stored hashed in memory, expire after 10 minutes, are single-use, and 
 
 ### Persistence and token usage
 
-The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, announcements, translation cache entries, survey records, and token usage logs.
+The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, announcements, translation cache entries, survey records, token usage logs, and the terminology glossary (`glossary_concepts` / `glossary_terms`).
 
 Live model responses that report token usage are logged with the provider, model, input tokens, output tokens, total tokens, source type, estimate flag, and timestamp. Cache hits return cached translations without creating a new live provider usage event. On startup, the historical migration service can backfill cache usage and estimate older translation records that do not contain provider usage data; estimated entries are marked separately in the administrator log view.
 
@@ -358,15 +358,15 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /auth/api-key` | Authenticated + email verified | Generate a browser-extension API key. |
 | `GET /auth/api-keys` | Authenticated | List the user's extension API keys. |
 | `DELETE /auth/api-key/{id}` | Authenticated | Revoke an extension API key. |
-| `POST /translate` | Authenticated or extension API key + email verified | Perform a non-streaming translation. Unverified accounts receive HTTP 403. |
-| `POST /translate/stream` | Authenticated or extension API key + email verified | Stream a translation over SSE. Unverified accounts receive HTTP 403. |
+| `POST /translate` | Authenticated or extension API key + email verified | Perform a non-streaming translation. Unverified accounts receive HTTP 403. Accepts an optional `targetLanguage` tag. |
+| `POST /translate/stream` | Authenticated or extension API key + email verified | Stream a translation over SSE. Unverified accounts receive HTTP 403. Accepts an optional `targetLanguage` tag. |
 | `GET /translations` | Authenticated | List the current user's translation history. |
 | `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
 | `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
 | `POST /translate/image` | Authenticated + email verified | Translate one or more uploaded images in a single multimodal call. Send repeatable `images` fields (up to 10); the singular `image` field is still accepted for older clients. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
-| `GET /translation/languages` | Public | Return the configured target languages (`code` + `label`), so the UI reads the list from configuration instead of hardcoding it. |
+| `GET /translation/languages` | Public | Return the configured target languages (`code` + `label`). A translate request may carry one of these codes as `targetLanguage`; a missing or unrecognised value falls back to `app.translation.default-target-language`, so older clients are unaffected. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order; each item includes `requireConfirmation`. |
 | `GET /announcements/pending` | Authenticated | Return announcements flagged as requiring confirmation that the current user has not confirmed yet. |
 | `POST /announcements/{id}/acknowledge` | Authenticated | Record that the current user confirmed the announcement (idempotent). |
