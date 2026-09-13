@@ -84,7 +84,7 @@ public class TranslationService {
             throw new com.shizuku.translate.exception.BusinessException("请至少上传一张图片");
         }
         String systemPrompt = promptTemplateService.buildSystemPrompt(PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
-                request.getPresets(), request.getCustomPrompt());
+                request.getPresets(), request.getCustomPrompt(), request.getTargetLanguage());
         DeepSeekResult result = aiModelClient.chatWithImages(systemPrompt,
                 buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config);
         usageService.record(user, config, result.getUsage());
@@ -119,7 +119,8 @@ public class TranslationService {
         String systemPrompt = promptTemplateService.buildSystemPrompt(
                 PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
                 request.getPresets(),
-                request.getCustomPrompt()
+                request.getCustomPrompt(),
+                request.getTargetLanguage()
         );
         AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
 
@@ -189,7 +190,8 @@ public class TranslationService {
         String systemPrompt = promptTemplateService.buildSystemPrompt(
                 PromptTemplateService.DEFAULT_STREAM_PROMPT,
                 request.getPresets(),
-                request.getCustomPrompt()
+                request.getCustomPrompt(),
+                request.getTargetLanguage()
         );
 
         AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());

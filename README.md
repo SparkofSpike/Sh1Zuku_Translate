@@ -1,6 +1,6 @@
 # ShizukuTranslate
 
-ShizukuTranslate is an AI translation service for Japanese and Korean novels. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
+ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese novels. The source language is detected by the model and the target language is chosen per request (`zh-CN` by default, `vi` supported), so one work can be read in more than one language. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
 
 ## Features
 
@@ -10,7 +10,7 @@ ShizukuTranslate is an AI translation service for Japanese and Korean novels. Th
 - **Personal model profiles** with reusable provider API keys: one personal API key can be shared by multiple model profiles. The profile page can proxy provider model-list detection and still permits manual model names when detection is unavailable.
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
-- **Preset prompts** for series-specific terminology, plus an optional custom prompt.
+- **Preset prompts** for series-specific style rules, plus a **terminology glossary**. Each glossed concept stores one spelling per language (Japanese, Korean, Chinese, Vietnamese), and the request's target language decides which spelling is rendered into the prompt — the right-hand side is always the target language, so another language's output can never leak in. Adding a language is a configuration change under `app.translation.target-languages`, not a code change. An optional custom prompt is appended last.
 - **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once and choose **model processing** with `deepseek-flash` (all pages are translated in one multimodal call, in upload order) or **OCR processing** through the PaddleOCR worker (pages are recognised one at a time and joined afterwards). Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
@@ -259,7 +259,7 @@ Sh1Zuku_Translate/
 │   │   ├── security/           # JWT and API-key authentication filters
 │   │   └── service/            # Translation, OCR, user, survey, usage, and announcement services
 │   └── src/main/resources/
-│       ├── application.yml     # Runtime settings and prompt presets
+│       ├── application.yml     # Runtime settings, target languages, glossary, presets
 │       └── static/              # Copied production frontend assets
 ├── ShizukuTranslate-frontend/  # Vue 3 and TypeScript frontend
 │   └── src/
@@ -317,6 +317,9 @@ Other runtime defaults in `application.yml`:
 - Multipart limits: 20 MB per file and 60 MB per request (a multi-image upload arrives as one request).
 - Translation cache cleanup: entries older than 30 days are removed daily at 03:00.
 - Administrator usernames: configured by `app.admin-usernames` in `application.yml`.
+- Target languages: `app.translation.target-languages` (currently `zh-CN` and `vi`), with `app.translation.default-target-language` as the fallback. A translate request may carry `targetLanguage`; a missing or unrecognised value falls back to the default, so older clients keep behaving exactly as before.
+- Series terminology: `app.glossary` seeds the `glossary_concepts` and `glossary_terms` tables. Seeding runs per series and only when that series has no concepts yet, so edits made later (for example through a future admin UI) survive a restart. A preset whose name matches a `series` injects that series' terms into the system prompt.
+- Glossaries are anchored on concepts, not language pairs: a nickname and a full name are deliberately separate concepts because they translate differently, and each concept carries one spelling per language. Japanese proper nouns are not rendered with Sino-Vietnamese readings; Vietnamese readers use the romanised name as-is (`Iroha`, `Kaguya`, `Yachiyo`), which is what the `vi` column holds.
 
 ### Email verification
 

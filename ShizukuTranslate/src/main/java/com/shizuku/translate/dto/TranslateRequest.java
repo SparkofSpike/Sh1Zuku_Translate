@@ -18,6 +18,11 @@ public class TranslateRequest {
     private String thinkingType;
     /** Skip reading an existing translation cache entry, but still write the new result. */
     private boolean skipCache;
+    /**
+     * Target language tag (e.g. {@code zh-CN}, {@code vi}). Null or unrecognised values fall back
+     * to the server default instead of failing the request.
+     */
+    private String targetLanguage;
 
     public String getSourceText() { return sourceText; }
     public void setSourceText(String sourceText) { this.sourceText = sourceText; }
@@ -33,5 +38,7 @@ public class TranslateRequest {
     public void setThinkingType(String thinkingType) { this.thinkingType = thinkingType; }
     public boolean isSkipCache() { return skipCache; }
     public void setSkipCache(boolean skipCache) { this.skipCache = skipCache; }
+    public String getTargetLanguage() { return targetLanguage; }
+    public void setTargetLanguage(String targetLanguage) { this.targetLanguage = targetLanguage; }
 
 }
