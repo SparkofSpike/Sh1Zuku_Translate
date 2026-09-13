@@ -47,7 +47,7 @@ public class AiModelClient {
         return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config));
     }
 
-    /** Builds the OpenAI-compatible multimodal body used by DeepSeek Vision. */
+    /** Builds the OpenAI-compatible multimodal body used by the DeepSeek vision-capable models. */
     static Map<String, Object> buildVisionRequest(String systemPrompt, String userMessage,
                                                    byte[] image, String mediaType, AiModelConfig config) {
         if (!config.isVisual()) throw new IllegalArgumentException("当前模型不具备视觉能力");
@@ -373,7 +373,17 @@ public class AiModelClient {
         public String getModel() { return model; }
         public String getThinkingType() { return thinkingType; }
         public boolean isAnthropic() { return "anthropic".equals(provider); }
-        public boolean isVisual() { return "deepseek".equals(provider) && "deepseek-v4-flash-vision-exp".equalsIgnoreCase(model); }
+        /**
+         * Whether this config accepts image input. DeepSeek merged the retired
+         * deepseek-v4-flash and deepseek-v4-flash-vision-exp names into the natively
+         * multimodal deepseek-flash (V4.1 Flash); the retired vision name is still
+         * accepted because the API keeps routing it to that model.
+         */
+        public boolean isVisual() {
+            return "deepseek".equals(provider)
+                    && ("deepseek-flash".equalsIgnoreCase(model)
+                        || "deepseek-v4-flash-vision-exp".equalsIgnoreCase(model));
+        }
     }
 
     public static class DeepSeekResult {

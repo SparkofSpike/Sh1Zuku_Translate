@@ -131,9 +131,17 @@ import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
 const sourceText = ref('')
-const model = ref('deepseek-v4-flash')
+const model = ref('deepseek-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
-const selectedModelKey = ref(localStorage.getItem('modelSelection') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-v4-flash'))
+
+// DeepSeek retired deepseek-v4-flash / deepseek-v4-flash-vision-exp in favor of the
+// merged deepseek-flash, so browsers still holding an old site key are migrated here;
+// otherwise the picker would show no selection after the list change.
+function normalizeSiteSelection(key: string): string {
+  return key.startsWith('site:deepseek-v4-flash') ? 'site:deepseek-flash' : key
+}
+
+const selectedModelKey = ref(normalizeSiteSelection(localStorage.getItem('modelSelection') || '') || (modelProfileId.value ? `profile:${modelProfileId.value}` : 'site:deepseek-flash'))
 
 interface ModelOption {
   key: string
@@ -146,9 +154,8 @@ interface ModelOption {
 }
 
 const modelOptions = ref<ModelOption[]>([
-  { key: 'site:deepseek-v4-flash', id: null as number | null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
-  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
-  { key: 'site:deepseek-v4-flash-vision-exp', id: null as number | null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp' }
+  { key: 'site:deepseek-flash', id: null as number | null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
+  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' }
 ])
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
@@ -209,9 +216,8 @@ onMounted(async () => {
     const res = await api.get('/auth/model-profiles')
     const profiles = res.data || []
     modelOptions.value = [
-      { key: 'site:deepseek-v4-flash', id: null, model: 'deepseek-v4-flash', label: '站方/deepseek-v4-flash' },
+      { key: 'site:deepseek-flash', id: null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
       { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
-      { key: 'site:deepseek-v4-flash-vision-exp', id: null, model: 'deepseek-v4-flash-vision-exp', label: '站方/deepseek-v4-flash-vision-exp' },
       ...profiles.flatMap((item: ModelProfileOption & { provider: string }) => {
         const models = Array.isArray(item.models) && item.models.length ? item.models : [item.model]
         return models.map(modelName => ({
@@ -227,7 +233,7 @@ onMounted(async () => {
       ? modelProfileId.value
       : null
     const storedProfileKey = storedProfileId ? 'profile:' + storedProfileId : ''
-    const storedSelection = localStorage.getItem('modelSelection') || ''
+    const storedSelection = normalizeSiteSelection(localStorage.getItem('modelSelection') || '')
     const profileSelectionIsValid = storedProfileKey
       && modelOptions.value.some(option => option.key === storedProfileKey || option.profileKey === storedProfileKey)
     const savedSelectionIsValid = modelOptions.value.some(option => option.key === storedSelection)

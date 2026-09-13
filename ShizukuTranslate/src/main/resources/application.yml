@@ -27,8 +27,10 @@ deepseek:
   api:
     key: ${DEEPSEEK_API_KEY}
     base-url: https://api.deepseek.com/v1
-    default-model: deepseek-v4-flash
-    # Supported site models: deepseek-v4-flash, deepseek-v4-pro, and deepseek-v4-flash-vision-exp.
+    default-model: deepseek-flash
+    # Supported site models: deepseek-flash (DeepSeek-V4.1-Flash, natively multimodal) and
+    # deepseek-v4-pro. The retired names deepseek-v4-flash and deepseek-v4-flash-vision-exp
+    # still resolve, but the API serves them with V4.1 Flash.
     # DeepSeek v4 thinking mode: enabled=AI 推理（慢 ~6x）/ disabled=关闭（快），插件可请求级覆盖
     thinking-type: disabled
 

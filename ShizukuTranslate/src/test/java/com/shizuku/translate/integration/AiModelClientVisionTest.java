@@ -16,13 +16,13 @@ class AiModelClientVisionTest {
     void visionModelBuildsUserContentWithTextAndBase64Image() {
         AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",
-                "deepseek-v4-flash-vision-exp", "disabled");
+                "deepseek-flash", "disabled");
 
         Map<String, Object> request = AiModelClient.buildVisionRequest(
                 "Translate the image.", "Keep the formatting.",
                 new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/jpeg", config);
 
-        assertEquals("deepseek-v4-flash-vision-exp", request.get("model"));
+        assertEquals("deepseek-flash", request.get("model"));
         assertFalse(request.containsKey("thinking"));
 
         List<Map<String, Object>> messages = messages(request);
@@ -42,7 +42,7 @@ class AiModelClientVisionTest {
     void visionModelCanEnableThinking() {
         AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",
-                "deepseek-v4-flash-vision-exp", "enabled");
+                "deepseek-flash", "enabled");
 
         Map<String, Object> request = AiModelClient.buildVisionRequest(
                 "system", null, new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff}, "image/png", config);
@@ -52,20 +52,25 @@ class AiModelClientVisionTest {
     }
 
     @Test
-    void onlyVisionModelIsAcceptedForImageRequests() {
+    void onlyVisualSiteModelsAreAcceptedForImageRequests() {
         AiModelClient.AiModelConfig flash = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",
-                "deepseek-v4-flash", "disabled");
-        AiModelClient.AiModelConfig vision = new AiModelClient.AiModelConfig(
+                "deepseek-flash", "disabled");
+        AiModelClient.AiModelConfig pro = new AiModelClient.AiModelConfig(
+                "deepseek", "key", "https://api.deepseek.com/v1",
+                "deepseek-v4-pro", "disabled");
+        AiModelClient.AiModelConfig retiredVision = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",
                 "deepseek-v4-flash-vision-exp", "disabled");
 
-        assertFalse(flash.isVisual());
-        assertTrue(vision.isVisual());
+        assertTrue(flash.isVisual());
+        assertFalse(pro.isVisual());
+        // The retired name still resolves to V4.1 Flash upstream, so saved profiles keep working.
+        assertTrue(retiredVision.isVisual());
         assertThrows(IllegalArgumentException.class,
-                () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/png", flash));
+                () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/png", pro));
         assertThrows(IllegalArgumentException.class,
-                () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {1}, "image/bmp", vision));
+                () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {1}, "image/bmp", flash));
     }
 
     @SuppressWarnings("unchecked")

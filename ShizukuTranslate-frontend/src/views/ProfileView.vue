@@ -215,7 +215,7 @@ function selectProfile(id) {
   selectedProfileId.value = id
   if (id === null) {
     localStorage.removeItem(PROFILE_SELECTION_KEY)
-    localStorage.setItem('modelSelection', 'site:deepseek-v4-flash')
+    localStorage.setItem('modelSelection', 'site:deepseek-flash')
   } else {
     localStorage.setItem(PROFILE_SELECTION_KEY, String(id))
     localStorage.setItem('modelSelection', 'profile:' + id)

@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedPresets = [];
   let savedModel = '';
   let savedModelProfileId = '';
-  const defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'];
+  const defaultModels = ['deepseek-flash', 'deepseek-v4-pro'];
 
   function backendPermissionOrigin(backendUrl) {
     try {
@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ...defaultModels.map(model => ({
         key: 'site:' + model,
         profileId: '0',
-        model,          label: '站方/' + model
+        model,          label: '站方/' + model + (model === 'deepseek-flash' ? '（视觉）' : '')
       })),
       ...profileList.flatMap(profile => {
         const models = Array.isArray(profile.models) && profile.models.length ? profile.models : [profile.model];
