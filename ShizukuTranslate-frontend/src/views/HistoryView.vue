@@ -1,25 +1,28 @@
 <template>
   <div style="max-width: 800px; margin: 20px auto;">
-    <h2>翻译历史</h2>
+    <h2>{{ t('history.title') }}</h2>
     <div v-if="records.length">
       <div v-for="item in records" :key="item.id" style="border-bottom:1px solid #eee; padding:10px;">
-        <div><strong>时间：</strong>{{ item.createdAt }}</div>
-        <div><strong>模型：</strong>{{ item.model }}</div>
-        <router-link :to="'/history/' + item.id">查看详情</router-link>
+        <div><strong>{{ t('history.time') }}</strong>{{ item.createdAt }}</div>
+        <div><strong>{{ t('history.model') }}</strong>{{ item.model }}</div>
+        <router-link :to="'/history/' + item.id">{{ t('history.viewDetail') }}</router-link>
       </div>
       <div style="margin-top:10px;">
-        <button :disabled="page === 0" @click="prevPage">上一页</button>
-        <span>第 {{ page + 1 }} 页</span>
-        <button :disabled="!hasMore" @click="nextPage">下一页</button>
+        <button :disabled="page === 0" @click="prevPage">{{ t('history.prev') }}</button>
+        <span>{{ t('history.page', { page: page + 1 }) }}</span>
+        <button :disabled="!hasMore" @click="nextPage">{{ t('history.next') }}</button>
       </div>
     </div>
-    <p v-else>暂无记录</p>
+    <p v-else>{{ t('history.empty') }}</p>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api from '../api'
+
+const { t } = useI18n()
 
 const records = ref([])
 const page = ref(0)

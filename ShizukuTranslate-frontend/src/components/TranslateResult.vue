@@ -1,19 +1,22 @@
 <template>
   <div style="margin-top: 24px;">
     <div style="display:flex; align-items:center; gap:12px;">
-      <h3 style="margin:0; font-weight:600;">翻译结果</h3>
-      <button @click="copyResult" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">复制</button>
+      <h3 style="margin:0; font-weight:600;">{{ t('components.translateResult.heading') }}</h3>
+      <button @click="copyResult" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
     </div>
     <pre style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
 
     <div v-if="result.tokenUsage" style="margin-top: 12px; color:#777; font-size:13px;">
-      Token 用量：输入 {{ result.tokenUsage.promptTokens }} | 输出 {{ result.tokenUsage.completionTokens }} | 合计 {{ result.tokenUsage.totalTokens }}
+      {{ t('components.translateResult.tokenUsage', { prompt: result.tokenUsage.promptTokens, completion: result.tokenUsage.completionTokens, total: result.tokenUsage.totalTokens }) }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { TranslateResponse } from '../types'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   result: TranslateResponse

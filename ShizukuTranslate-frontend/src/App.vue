@@ -2,19 +2,22 @@
   <div>
     <header style="border-bottom: 1px solid #eee; padding: 0 24px;">
       <div style="max-width: 800px; margin: 0 auto; display: flex; align-items: center; height: 56px;">
-        <router-link to="/" class="nav-item">翻译</router-link>
-        <router-link to="/history" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">历史</router-link>
-        <router-link to="/admin" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">管理</router-link>
-        <router-link to="/logs" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">日志</router-link>
-        <router-link to="/about" class="nav-item" style="margin-left: 24px;">关于</router-link>
+        <router-link to="/" class="nav-item">{{ t('nav.translate') }}</router-link>
+        <router-link to="/history" v-if="authStore.token" class="nav-item" style="margin-left: 24px;">{{ t('nav.history') }}</router-link>
+        <router-link to="/admin" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">{{ t('nav.admin') }}</router-link>
+        <router-link to="/logs" v-if="authStore.isAdmin" class="nav-item" style="margin-left: 24px;">{{ t('nav.logs') }}</router-link>
+        <router-link to="/about" class="nav-item" style="margin-left: 24px;">{{ t('nav.about') }}</router-link>
         <div style="flex:1;"></div>
+        <select v-model="locale" class="locale-select" :title="t('nav.language')">
+          <option v-for="item in SUPPORTED_LOCALES" :key="item.code" :value="item.code">{{ item.label }}</option>
+        </select>
         <template v-if="!authStore.token">
-          <router-link to="/login" class="nav-item">登录</router-link>
-          <router-link to="/register" class="nav-item" style="margin-left: 16px;">注册</router-link>
+          <router-link to="/login" class="nav-item" style="margin-left: 16px;">{{ t('nav.login') }}</router-link>
+          <router-link to="/register" class="nav-item" style="margin-left: 16px;">{{ t('nav.register') }}</router-link>
         </template>
         <template v-else>
-          <router-link to="/profile" class="nav-item" style="margin-left: 16px;">个人</router-link>
-          <button @click="logout" style="margin-left: 16px; padding: 6px 16px;">登出</button>
+          <router-link to="/profile" class="nav-item" style="margin-left: 16px;">{{ t('nav.profile') }}</router-link>
+          <button @click="logout" style="margin-left: 16px; padding: 6px 16px;">{{ t('nav.logout') }}</button>
         </template>
       </div>
     </header>
@@ -31,10 +34,17 @@
 
 <script setup>
 import { onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { SUPPORTED_LOCALES, setLocale } from './i18n'
 import { useAuthStore } from './stores/auth'
 import { useRouter } from 'vue-router'
 import api from './api'
 import AnnouncementConfirmDialog from './components/AnnouncementConfirmDialog.vue'
+
+const { t, locale } = useI18n()
+
+// Selecting a language updates the i18n instance, <html lang> and localStorage together.
+watch(locale, (value) => setLocale(value))
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -95,6 +105,16 @@ function logout() {
 }
 .nav-item:hover { color: #000; border-bottom-color: #000; text-decoration: none; }
 .router-link-exact-active { color: #000 !important; border-bottom-color: #000 !important; }
+
+.locale-select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 14px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
 
 .app-main {
   max-width: 1240px;

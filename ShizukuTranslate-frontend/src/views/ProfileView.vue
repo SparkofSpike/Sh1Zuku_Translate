@@ -1,58 +1,58 @@
 <template>
   <div class="profile-grid">
     <section class="card model-card">
-      <h2 class="page-title">个人</h2>
+      <h2 class="page-title">{{ t('nav.profile') }}</h2>
       <div class="account-summary">
-        <p><strong>用户名：</strong>{{ profile.username }}</p>
+        <p><strong>{{ t('profile.account.username') }}</strong>{{ profile.username }}</p>
         <p>
-          <strong>邮箱：</strong>{{ profile.email }}
-          <span v-if="profile.emailVerified" class="badge badge-ok">✓ 已认证</span>
-          <span v-else-if="profile.email" class="badge badge-warn">未认证</span>
+          <strong>{{ t('profile.account.email') }}</strong>{{ profile.email }}
+          <span v-if="profile.emailVerified" class="badge badge-ok">{{ t('profile.badge.verified') }}</span>
+          <span v-else-if="profile.email" class="badge badge-warn">{{ t('profile.badge.unverified') }}</span>
         </p>
-        <p><strong>注册时间：</strong>{{ profile.createdAt || '未知' }}</p>
+        <p><strong>{{ t('profile.account.createdAt') }}</strong>{{ profile.createdAt || t('common.unknown') }}</p>
       </div>
 
       <div v-if="!profile.emailVerified || showEmailForm" class="email-verify">
         <div class="section-heading">
           <div>
-            <h3>邮箱认证</h3>
-            <p class="hint">发送验证码到上方邮箱并填写后即可完成认证。未认证账号无法使用翻译功能（网页与插件）；如需更换邮箱，直接修改邮箱地址后重新认证即可。</p>
+            <h3>{{ t('profile.emailVerify.title') }}</h3>
+            <p class="hint">{{ t('profile.emailVerify.hint') }}</p>
           </div>
         </div>
         <div class="email-row">
-          <input v-model.trim="emailInput" type="email" placeholder="邮箱地址" />
+          <input v-model.trim="emailInput" type="email" :placeholder="t('profile.emailVerify.emailPlaceholder')" />
           <button class="btn-sm" type="button" @click="sendVerifyCode" :disabled="sendingCode || countdown > 0">
-            {{ countdown > 0 ? countdown + 's 后重发' : (sendingCode ? '发送中...' : '发送验证码') }}
+            {{ countdown > 0 ? t('profile.emailVerify.resendIn', { seconds: countdown }) : (sendingCode ? t('profile.emailVerify.sending') : t('profile.emailVerify.sendCode')) }}
           </button>
         </div>
         <div class="email-row">
-          <input v-model.trim="verifyCode" type="text" inputmode="numeric" maxlength="6" placeholder="验证码" />
+          <input v-model.trim="verifyCode" type="text" inputmode="numeric" maxlength="6" :placeholder="t('profile.emailVerify.codePlaceholder')" />
           <button class="btn-sm btn-primary" type="button" @click="submitVerify" :disabled="verifying">
-            {{ verifying ? '提交中...' : '验证并保存' }}
+            {{ verifying ? t('profile.emailVerify.submitting') : t('profile.emailVerify.submit') }}
           </button>
         </div>
         <p v-if="emailMessage" class="success" style="margin:6px 0 0;">{{ emailMessage }}</p>
         <p v-if="emailError" class="error" style="margin:6px 0 0;">{{ emailError }}</p>
-        <p class="field-hint" style="margin:6px 0 0;">验证码 10 分钟内有效。若原邮箱已无法收信，请直接在上方改为新邮箱后再发送验证码。</p>
+        <p class="field-hint" style="margin:6px 0 0;">{{ t('profile.emailVerify.validityHint') }}</p>
       </div>
       <div v-else class="email-actions">
-        <span class="muted">邮箱已验证。</span>
-        <button class="btn-sm" type="button" @click="startEditEmail">修改邮箱</button>
+        <span class="muted">{{ t('profile.emailVerify.verified') }}</span>
+        <button class="btn-sm" type="button" @click="startEditEmail">{{ t('profile.emailVerify.changeEmail') }}</button>
       </div>
       <div class="usage-highlight">
-        <span class="usage-label">累计 Token 用量</span>
+        <span class="usage-label">{{ t('profile.usage.label') }}</span>
         <strong>{{ formatNumber(usage.totalTokens) }}</strong>
-        <span class="usage-meta">输入 {{ formatNumber(usage.promptTokens) }} · 输出 {{ formatNumber(usage.completionTokens) }} · {{ usage.requestCount }} 次调用</span>
+        <span class="usage-meta">{{ t('profile.usage.meta', { input: formatNumber(usage.promptTokens), output: formatNumber(usage.completionTokens), count: usage.requestCount }) }}</span>
       </div>
 
       <hr />
 
       <div class="section-heading">
         <div>
-          <h3>模型配置</h3>
-          <p class="hint">可以保存多条配置，在网页翻译和浏览器插件中分别选择。</p>
+          <h3>{{ t('profile.model.title') }}</h3>
+          <p class="hint">{{ t('profile.model.hint') }}</p>
         </div>
-        <button class="btn-sm btn-primary" @click="startCreate">新增配置</button>
+        <button class="btn-sm btn-primary" @click="startCreate">{{ t('profile.model.add') }}</button>
       </div>
 
       <div class="profile-list">
@@ -62,10 +62,10 @@
           @click="selectProfile(null)"
         >
           <div class="profile-main">
-            <strong>站方</strong>
-            <span class="profile-meta">使用站方提供的 DeepSeek API Key</span>
+            <strong>{{ t('profile.model.site') }}</strong>
+            <span class="profile-meta">{{ t('profile.model.siteMeta') }}</span>
           </div>
-          <span v-if="selectedProfileId === null" class="selected-label">当前选择</span>
+          <span v-if="selectedProfileId === null" class="selected-label">{{ t('profile.model.selected') }}</span>
         </div>
 
         <div
@@ -78,64 +78,64 @@
           <div class="profile-main">
             <strong>{{ item.name }}</strong>
             <span class="profile-meta">{{ providerLabel(item.provider) }}/{{ item.model }}</span>
-            <span class="profile-key">{{ item.hasApiKey ? 'API Key：' + item.apiKeyPreview : 'API Key：使用站方 Key' }}</span>
+            <span class="profile-key">{{ t('profile.model.apiKeyPrefix') + (item.hasApiKey ? item.apiKeyPreview : t('profile.model.usingSiteKey')) }}</span>
           </div>
           <div class="profile-actions">
-            <span v-if="selectedProfileId === item.id" class="selected-label">当前选择</span>
-            <button class="btn-sm btn-remove" @click.stop="startEdit(item)">编辑</button>
-            <button class="btn-sm btn-remove" @click.stop="deleteProfile(item.id)">删除</button>
+            <span v-if="selectedProfileId === item.id" class="selected-label">{{ t('profile.model.selected') }}</span>
+            <button class="btn-sm btn-remove" @click.stop="startEdit(item)">{{ t('common.edit') }}</button>
+            <button class="btn-sm btn-remove" @click.stop="deleteProfile(item.id)">{{ t('common.delete') }}</button>
           </div>
         </div>
       </div>
 
-      <p v-if="!modelProfiles.length" class="empty-hint">还没有个人模型配置，当前使用站方。</p>
+      <p v-if="!modelProfiles.length" class="empty-hint">{{ t('profile.model.empty') }}</p>
 
       <div v-if="formVisible" class="profile-form">
-        <h4>{{ editingId ? '编辑模型配置' : '新增模型配置' }}</h4>
-        <label class="field-label">配置名称</label>
+        <h4>{{ editingId ? t('profile.model.editTitle') : t('profile.model.createTitle') }}</h4>
+        <label class="field-label">{{ t('profile.form.name') }}</label>
         <input v-model.trim="form.name" type="text" />
 
-        <label class="field-label">协议</label>
+        <label class="field-label">{{ t('profile.form.provider') }}</label>
         <select v-model="form.provider" @change="handleProviderChange">
           <option value="deepseek">DeepSeek</option>
-          <option value="openai">OpenAI 兼容</option>
-          <option value="anthropic">Anthropic 兼容</option>
+          <option value="openai">{{ t('profile.provider.openai') }}</option>
+          <option value="anthropic">{{ t('profile.provider.anthropic') }}</option>
         </select>
 
-        <label class="field-label">模型名称</label>
+        <label class="field-label">{{ t('profile.form.modelName') }}</label>
         <div class="model-input-row">
-          <input v-model.trim="manualModel" type="text" placeholder="输入模型名称" @keydown.enter.prevent="addManualModel" />
-          <button class="btn-sm" type="button" @click="addManualModel">添加</button>
-          <button class="btn-sm" type="button" @click="detectModels" :disabled="detecting">{{ detecting ? '检测中...' : '自动检测' }}</button>
+          <input v-model.trim="manualModel" type="text" :placeholder="t('profile.form.modelPlaceholder')" @keydown.enter.prevent="addManualModel" />
+          <button class="btn-sm" type="button" @click="addManualModel">{{ t('profile.form.addModel') }}</button>
+          <button class="btn-sm" type="button" @click="detectModels" :disabled="detecting">{{ detecting ? t('profile.form.detecting') : t('profile.form.detect') }}</button>
         </div>
         <div v-if="form.models.length" class="selected-models">
           <span v-for="model in form.models" :key="model" class="selected-model">
             {{ model }}
-            <button type="button" class="remove-model" @click="removeModel(model)" :aria-label="'移除 ' + model">×</button>
+            <button type="button" class="remove-model" @click="removeModel(model)" :aria-label="t('profile.form.removeModel', { model })">×</button>
           </span>
         </div>
         <div v-if="detectedModels.length" class="detected-models">
-          <span class="field-hint detected-title">检测到的模型（可多选）：</span>
+          <span class="field-hint detected-title">{{ t('profile.form.detectedTitle') }}</span>
           <label v-for="model in detectedModels" :key="model" class="model-option">
             <input v-model="form.models" type="checkbox" :value="model" />
             <span>{{ model }}</span>
           </label>
         </div>
-        <p class="field-hint">可以同时勾选多个模型；保存后每个模型会建立一条独立配置。</p>
+        <p class="field-hint">{{ t('profile.form.multiHint') }}</p>
 
         <template v-if="form.provider !== 'deepseek'">
-          <label class="field-label">Base URL</label>
+          <label class="field-label">{{ t('profile.form.baseUrl') }}</label>
           <input v-model.trim="form.baseUrl" class="base-url-input" type="url" :placeholder="baseUrlPlaceholder" />
         </template>
 
-        <label class="field-label">API Key</label>
-        <input v-model.trim="form.apiKey" type="password" :placeholder="editingId ? '留空保持当前 Key' : 'DeepSeek 可留空使用站方 Key'" />
-        <p v-if="editingId && editingProfile?.hasApiKey" class="configured">当前 Key：{{ editingProfile.apiKeyPreview }}</p>
+        <label class="field-label">{{ t('profile.form.apiKey') }}</label>
+        <input v-model.trim="form.apiKey" type="password" :placeholder="editingId ? t('profile.form.apiKeyKeep') : t('profile.form.apiKeyOptional')" />
+        <p v-if="editingId && editingProfile?.hasApiKey" class="configured">{{ t('profile.form.currentKeyPrefix') }}{{ editingProfile.apiKeyPreview }}</p>
 
         <div class="actions">
-          <button @click="saveProfile" :disabled="saving">{{ saving ? '保存中...' : '保存配置' }}</button>
-          <button class="btn-sm btn-remove" @click="cancelForm">取消</button>
-          <button v-if="editingId && form.provider === 'deepseek' && editingProfile?.hasApiKey" class="btn-sm btn-remove" @click="clearProfileKey">清除 Key</button>
+          <button @click="saveProfile" :disabled="saving">{{ saving ? t('profile.form.saving') : t('profile.form.save') }}</button>
+          <button class="btn-sm btn-remove" @click="cancelForm">{{ t('common.cancel') }}</button>
+          <button v-if="editingId && form.provider === 'deepseek' && editingProfile?.hasApiKey" class="btn-sm btn-remove" @click="clearProfileKey">{{ t('profile.form.clearKey') }}</button>
         </div>
       </div>
 
@@ -144,18 +144,18 @@
     </section>
 
     <section class="card plugin-card">
-      <h3 class="section-title">插件 API Key</h3>
-      <p class="hint">用于浏览器插件调用翻译接口，生成后请妥善保存（只显示一次）。</p>
-      <button @click="createPluginKey">生成插件 Key</button>
+      <h3 class="section-title">{{ t('profile.plugin.title') }}</h3>
+      <p class="hint">{{ t('profile.plugin.hint') }}</p>
+      <button @click="createPluginKey">{{ t('profile.plugin.generate') }}</button>
       <div v-if="newKey" class="new-key">
         <code>{{ newKey }}</code>
-        <button class="btn-sm btn-primary" @click="copyKey">复制</button>
+        <button class="btn-sm btn-primary" @click="copyKey">{{ t('common.copy') }}</button>
       </div>
       <div v-if="keys.length" class="key-list">
         <div v-for="key in keys" :key="key.id" class="key-row">
           <span>{{ key.name }}</span>
           <span class="muted">{{ key.keyPrefix }}</span>
-          <button class="btn-sm btn-remove" @click="deleteKey(key.id)">删除</button>
+          <button class="btn-sm btn-remove" @click="deleteKey(key.id)">{{ t('common.delete') }}</button>
         </div>
       </div>
     </section>
@@ -164,10 +164,12 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api, { sendEmailCode, verifyEmail } from '../api'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
+const { t } = useI18n()
 
 const PROFILE_SELECTION_KEY = 'modelProfileId'
 const DEFAULT_BASE_URLS = {
@@ -220,12 +222,12 @@ function selectProfile(id) {
     localStorage.setItem(PROFILE_SELECTION_KEY, String(id))
     localStorage.setItem('modelSelection', 'profile:' + id)
   }
-  message.value = id === null ? '已选择站方' : '已选择个人模型配置'
+  message.value = id === null ? t('profile.model.selectedSite') : t('profile.model.selectedPersonal')
   error.value = ''
 }
 
 function providerLabel(provider) {
-  return provider === 'anthropic' ? 'Anthropic 兼容' : provider === 'openai' ? 'OpenAI 兼容' : 'DeepSeek'
+  return provider === 'anthropic' ? t('profile.provider.anthropic') : provider === 'openai' ? t('profile.provider.openai') : t('profile.provider.deepseek')
 }
 
 function handleProviderChange() {
@@ -270,7 +272,7 @@ async function loadProfile() {
     profile.value = res.data
     if (!emailInput.value) emailInput.value = res.data.email || ''
   } catch (e) {
-    error.value = e.response?.data?.error || '加载个人资料失败'
+    error.value = e.response?.data?.error || t('profile.errors.loadProfile')
   }
 }
 
@@ -305,7 +307,7 @@ onUnmounted(() => {
 
 async function sendVerifyCode() {
   if (!isValidEmail(emailInput.value)) {
-    emailError.value = '请先输入正确的邮箱地址'
+    emailError.value = t('profile.errors.enterValidEmail')
     return
   }
   emailError.value = ''
@@ -313,10 +315,10 @@ async function sendVerifyCode() {
   sendingCode.value = true
   try {
     await sendEmailCode(emailInput.value)
-    emailMessage.value = '验证码已发送，请查收邮件'
+    emailMessage.value = t('profile.emailVerify.codeSent')
     startCountdown()
   } catch (e) {
-    emailError.value = e.response?.data?.error || '验证码发送失败'
+    emailError.value = e.response?.data?.error || t('profile.errors.codeSendFailed')
   } finally {
     sendingCode.value = false
   }
@@ -324,11 +326,11 @@ async function sendVerifyCode() {
 
 async function submitVerify() {
   if (!isValidEmail(emailInput.value)) {
-    emailError.value = '请先输入正确的邮箱地址'
+    emailError.value = t('profile.errors.enterValidEmail')
     return
   }
   if (!verifyCode.value.trim()) {
-    emailError.value = '请填写邮箱中收到的验证码'
+    emailError.value = t('profile.errors.enterCode')
     return
   }
   emailError.value = ''
@@ -340,9 +342,9 @@ async function submitVerify() {
     await loadProfile()
     showEmailForm.value = false
     verifyCode.value = ''
-    emailMessage.value = '邮箱认证成功，现在可以使用翻译功能了'
+    emailMessage.value = t('profile.emailVerify.success')
   } catch (e) {
-    emailError.value = e.response?.data?.error || '邮箱认证失败'
+    emailError.value = e.response?.data?.error || t('profile.errors.verifyFailed')
   } finally {
     verifying.value = false
   }
@@ -359,13 +361,13 @@ async function loadModelProfiles() {
       selectProfile(null)
     }
   } catch (e) {
-    error.value = e.response?.data?.error || '加载模型配置失败'
+    error.value = e.response?.data?.error || t('profile.errors.loadProfiles')
   }
 }
 
 async function detectModels() {
   if (!form.value.apiKey && !editingProfile.value?.hasApiKey) {
-    error.value = '请先填写 API Key 后再检测模型'
+    error.value = t('profile.errors.apiKeyRequired')
     return
   }
   detecting.value = true
@@ -379,10 +381,10 @@ async function detectModels() {
     })
     detectedModels.value = Array.isArray(res.data) ? res.data : []
     form.value.models = [...new Set(form.value.models)]
-    if (!detectedModels.value.length) message.value = '供应商未返回模型列表，请手动填写'
-    else message.value = '已检测到 ' + detectedModels.value.length + ' 个模型，请勾选需要保存的模型'
+    if (!detectedModels.value.length) message.value = t('profile.model.noModels')
+    else message.value = t('profile.model.detected', { count: detectedModels.value.length })
   } catch (e) {
-    error.value = e.response?.data?.error || '模型检测失败，可手动填写模型名称'
+    error.value = e.response?.data?.error || t('profile.errors.detectFailed')
   } finally {
     detecting.value = false
   }
@@ -392,7 +394,7 @@ async function saveProfile() {
   form.value.models = form.value.models.filter(model => model && model.trim())
   if (!form.value.models.length && form.value.model) form.value.models = [form.value.model.trim()]
   if (!form.value.models.length) {
-    error.value = '请至少添加一个模型名称'
+    error.value = t('profile.errors.modelRequired')
     return
   }
   saving.value = true
@@ -418,9 +420,9 @@ async function saveProfile() {
     if (createdProfiles[0]?.id) selectProfile(createdProfiles[0].id)
     form.value.apiKey = ''
     formVisible.value = false
-    message.value = '模型配置已保存'
+    message.value = t('profile.model.saved')
   } catch (e) {
-    error.value = e.response?.data?.error || '保存模型配置失败'
+    error.value = e.response?.data?.error || t('profile.errors.saveFailed')
   } finally {
     saving.value = false
   }
@@ -457,21 +459,21 @@ async function clearProfileKey() {
     })
     await loadModelProfiles()
     cancelForm()
-    message.value = 'Key 已清除，将使用站方'
+    message.value = t('profile.model.keyCleared')
   } catch (e) {
-    error.value = e.response?.data?.error || '清除 Key 失败'
+    error.value = e.response?.data?.error || t('profile.errors.clearKeyFailed')
   }
 }
 
 async function deleteProfile(id) {
-  if (!window.confirm('确定删除这条模型配置吗？')) return
+  if (!window.confirm(t('profile.model.confirmDelete'))) return
   try {
     await api.delete('/auth/model-profiles/' + id)
     if (selectedProfileId.value === id) selectProfile(null)
     await loadModelProfiles()
-    message.value = '模型配置已删除'
+    message.value = t('profile.model.deleted')
   } catch (e) {
-    error.value = e.response?.data?.error || '删除模型配置失败'
+    error.value = e.response?.data?.error || t('profile.errors.deleteFailed')
   }
 }
 
@@ -480,7 +482,7 @@ async function loadUsage() {
     const res = await api.get('/auth/usage')
     usage.value = res.data
   } catch (e) {
-    error.value = e.response?.data?.error || '加载用量失败'
+    error.value = e.response?.data?.error || t('profile.errors.loadUsage')
   }
 }
 
@@ -490,16 +492,16 @@ async function createPluginKey() {
     newKey.value = res.data.keyValue
     await loadKeys()
   } catch (e) {
-    error.value = e.response?.data?.error || '生成失败'
+    error.value = e.response?.data?.error || t('profile.errors.generateFailed')
   }
 }
 
 async function copyKey() {
   try {
     await navigator.clipboard.writeText(newKey.value)
-    message.value = '已复制'
+    message.value = t('common.copied')
   } catch (e) {
-    error.value = '复制失败，请手动选择复制'
+    error.value = t('profile.errors.copyFailed')
   }
 }
 
@@ -508,7 +510,7 @@ async function loadKeys() {
     const res = await api.get('/auth/api-keys')
     keys.value = res.data.apiKeys || []
   } catch (e) {
-    error.value = e.response?.data?.error || '加载插件 Key 失败'
+    error.value = e.response?.data?.error || t('profile.errors.loadKeys')
   }
 }
 
@@ -517,7 +519,7 @@ async function deleteKey(id) {
     await api.delete('/auth/api-key/' + id)
     await loadKeys()
   } catch (e) {
-    error.value = e.response?.data?.error || '删除失败'
+    error.value = e.response?.data?.error || t('profile.errors.deleteKeyFailed')
   }
 }
 

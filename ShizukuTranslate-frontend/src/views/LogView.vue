@@ -3,22 +3,22 @@
     <section class="card log-card">
       <div class="page-heading">
         <div>
-          <h2>插件日志</h2>
-          <p class="muted">浏览器插件提交的错误报告</p>
+          <h2>{{ t('admin.logs.title') }}</h2>
+          <p class="muted">{{ t('admin.logs.subtitle') }}</p>
         </div>
-        <button class="btn-sm btn-remove" @click="fetchLogs">刷新</button>
+        <button class="btn-sm btn-remove" @click="fetchLogs">{{ t('common.refresh') }}</button>
       </div>
 
-      <div v-if="loading" class="muted">加载中...</div>
+      <div v-if="loading" class="muted">{{ t('admin.loading') }}</div>
       <template v-else>
         <div v-if="logs.length" class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>提交者</th>
-                <th>版本</th>
-                <th>提交时间</th>
-                <th class="message-heading">错误信息</th>
+                <th>{{ t('admin.logs.submitter') }}</th>
+                <th>{{ t('admin.logs.version') }}</th>
+                <th>{{ t('admin.logs.submittedAt') }}</th>
+                <th class="message-heading">{{ t('admin.logs.errorMessage') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -31,12 +31,12 @@
             </tbody>
           </table>
         </div>
-        <p v-else class="muted">暂无日志</p>
+        <p v-else class="muted">{{ t('admin.logs.empty') }}</p>
 
         <div v-if="logs.length" class="log-pagination">
-          <button class="btn-sm btn-remove" :disabled="page === 0" @click="prevPage">上一页</button>
-          <span>第 {{ page + 1 }} 页</span>
-          <button class="btn-sm btn-remove" :disabled="!hasMore" @click="nextPage">下一页</button>
+          <button class="btn-sm btn-remove" :disabled="page === 0" @click="prevPage">{{ t('admin.logs.prev') }}</button>
+          <span>{{ t('admin.logs.page', { page: page + 1 }) }}</span>
+          <button class="btn-sm btn-remove" :disabled="!hasMore" @click="nextPage">{{ t('admin.logs.next') }}</button>
         </div>
       </template>
 
@@ -47,7 +47,10 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api from '../api'
+
+const { t } = useI18n()
 
 const logs = ref([])
 const page = ref(0)
@@ -65,7 +68,7 @@ async function fetchLogs() {
     logs.value = res.data.content || []
     hasMore.value = !res.data.last
   } catch (e) {
-    error.value = e.response?.data?.error || '加载日志失败'
+    error.value = e.response?.data?.error || t('admin.errors.loadLogs')
   } finally {
     loading.value = false
   }

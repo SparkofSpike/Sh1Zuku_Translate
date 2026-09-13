@@ -1,6 +1,6 @@
 <template>
   <aside class="announcement-panel">
-    <h3 class="announcement-heading">公告</h3>
+    <h3 class="announcement-heading">{{ t('components.announcementPanel.heading') }}</h3>
     <div v-if="announcements.length" class="announcement-list">
       <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
         <h4>{{ announcement.title }}</h4>
@@ -19,18 +19,21 @@
           class="announcement-toggle"
           @click="toggleExpanded(announcement.id)"
         >
-          {{ isExpanded(announcement.id) ? '收起' : '展开' }}
+          {{ isExpanded(announcement.id) ? t('components.announcementPanel.collapse') : t('components.announcementPanel.expand') }}
         </button>
       </article>
     </div>
-    <p v-else class="empty-text">暂无公告</p>
+    <p v-else class="empty-text">{{ t('components.announcementPanel.empty') }}</p>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Announcement } from '../types'
 import { renderMarkdown } from '../utils/markdown'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   announcements: Announcement[]

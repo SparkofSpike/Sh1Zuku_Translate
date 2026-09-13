@@ -1,25 +1,25 @@
 <template>
   <div v-if="authStore.emailVerified === false" class="card verify-gate">
-    <h2 style="margin-top:0; font-weight:600;">邮箱尚未认证</h2>
-    <p class="verify-desc">为了保障服务稳定、防止账号被滥用，使用翻译功能前需要先完成邮箱认证。</p>
-    <p class="verify-desc">认证只需要一分钟，不会影响你的历史记录与模型配置；浏览器插件同样需要账号完成邮箱认证后才能使用。</p>
+    <h2 style="margin-top:0; font-weight:600;">{{ t('translate.emailGate.title') }}</h2>
+    <p class="verify-desc">{{ t('translate.emailGate.desc1') }}</p>
+    <p class="verify-desc">{{ t('translate.emailGate.desc2') }}</p>
     <router-link to="/profile" style="text-decoration:none;">
-      <button style="margin-top:8px;">去「个人」页面认证邮箱</button>
+      <button style="margin-top:8px;">{{ t('translate.emailGate.action') }}</button>
     </router-link>
   </div>
   <div v-else class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
     <div class="card translation-card">
       <div class="open-source-banner">
-        项目已开源：<a
+        {{ t('translate.openSource.lead') }}<a
           href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
           target="_blank"
           rel="noopener noreferrer"
-        >Sh1Zuku_Translate</a>（https://github.com/SparkofSpike/Sh1Zuku_Translate），你们的star和follow是我更新的动力！
-        <br />浏览器插件正在锐意研发中，预计九月初正式可用……
+        >Sh1Zuku_Translate</a>{{ t('translate.openSource.tail') }}
+        <br />{{ t('translate.openSource.plugin') }}
       </div>
 
-      <h2 style="margin-top:0; font-weight:600;">小说翻译</h2>
+      <h2 style="margin-top:0; font-weight:600;">{{ t('translate.heading') }}</h2>
 
     <OcrPreview
       v-if="ocrPreviews.length"
@@ -47,11 +47,11 @@
     >
       <textarea
         v-model="sourceText"
-        placeholder="粘贴原文，或拖入 TXT / MD / 图片，也可点击右下角按钮上传..."
+        :placeholder="t('translate.placeholder')"
         rows="10"
         @paste="onTextareaPaste"
       ></textarea>
-      <button class="upload-btn" type="button" title="上传图片 / TXT / MD" @click="fileInput?.click()">📎 上传</button>
+      <button class="upload-btn" type="button" :title="t('translate.upload.title')" @click="fileInput?.click()">{{ t('translate.upload.label') }}</button>
       <input
         ref="fileInput"
         type="file"
@@ -64,25 +64,26 @@
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:16px;">
       <select v-model="selectedModelKey" @change="handleModelChange" style="width:auto; min-width:240px;">
-        <option v-for="option in modelOptions" :key="option.key" :value="option.key">{{ option.label }}</option>
+        <option v-for="option in modelOptions" :key="option.key" :value="option.key">{{ optionLabel(option) }}</option>
       </select>
       <select
         v-if="languageOptions.length"
         v-model="targetLanguage"
-        title="目标语言"
+        :title="t('translate.targetLanguage')"
         style="width:auto; min-width:160px;"
+        @change="userOverrodeTarget = true"
       >
         <option v-for="lang in languageOptions" :key="lang.code" :value="lang.code">{{ lang.label }}</option>
       </select>
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
-        流式输出
+        {{ t('translate.streaming') }}
       </label>
       <label v-if="pendingImageFiles.length" style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
-        图片处理：
+        {{ t('translate.imageMode.label') }}
         <select v-model="imageProcessingMode" style="width:auto;">
-          <option value="model">模型处理</option>
-          <option value="ocr">OCR处理</option>
+          <option value="model">{{ t('translate.imageMode.model') }}</option>
+          <option value="ocr">{{ t('translate.imageMode.ocr') }}</option>
         </select>
       </label>
     </div>
@@ -95,7 +96,7 @@
 
     <textarea
       v-model="customPrompt"
-      placeholder="自定义附加Prompt（可选）"
+      :placeholder="t('translate.customPrompt')"
       rows="3"
       style="margin-top:16px;"
     ></textarea>
@@ -109,7 +110,7 @@
         borderColor: status === 'idle' ? undefined : '#e03131',
       }"
     >
-      {{ status === 'idle' ? '开始翻译' : '取消翻译' }}
+      {{ status === 'idle' ? t('translate.start') : t('translate.cancel') }}
     </button>
 
     <p v-if="statusText" class="translate-status">{{ statusText }}</p>
@@ -130,6 +131,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { currentLocale } from '../i18n'
 import axios from 'axios'
 import api, { ocrImage, translateImages, translateStream } from '../api'
 import type { Announcement, LanguageOption, TranslateResponse } from '../types'
@@ -141,6 +144,7 @@ import AnnouncementPanel from '../components/AnnouncementPanel.vue'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
+const { t, locale } = useI18n()
 const sourceText = ref('')
 const model = ref('deepseek-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
@@ -168,18 +172,27 @@ const modelOptions = ref<ModelOption[]>([
   { key: 'site:deepseek-flash', id: null as number | null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
   { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' }
 ])
+
+/** Site models carry a prefix that has to follow the UI language, so it is applied at render time. */
+function optionLabel(option: ModelOption) {
+  return option.id === null ? `${t('translate.siteModelPrefix')}/${option.model}` : option.label
+}
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
 
 /**
- * Target language for the translation. Persisted locally so the choice survives a reload.
- * Defaults to the backend's default until `/translation/languages` answers.
+ * Target language for the translation. Persisted locally so the choice survives a reload; until
+ * the user overrides it, it follows the interface language.
  */
 const TARGET_LANGUAGE_KEY = 'targetLanguage'
-const targetLanguage = ref(localStorage.getItem(TARGET_LANGUAGE_KEY) || 'zh-CN')
+const userOverrodeTarget = ref(!!localStorage.getItem(TARGET_LANGUAGE_KEY))
+const targetLanguage = ref(localStorage.getItem(TARGET_LANGUAGE_KEY) || currentLocale())
 const languageOptions = ref<LanguageOption[]>([])
 watch(targetLanguage, value => localStorage.setItem(TARGET_LANGUAGE_KEY, value))
+watch(locale, value => {
+  if (!userOverrodeTarget.value) targetLanguage.value = value
+})
 const announcements = ref<Announcement[]>([])
 
 const result = ref<TranslateResponse | null>(null)
@@ -193,11 +206,11 @@ const status = ref<'idle' | 'preparing' | 'ai-processing'>('idle')
  * the status message the browser extension shows in its popup.
  */
 const statusText = computed(() => {
-  if (status.value === 'preparing') return '正在连接服务器…'
+  if (status.value === 'preparing') return t('translate.status.preparing')
   if (status.value === 'ai-processing') {
     return streamingText.value
-      ? `AI 正在翻译…（已接收 ${streamingText.value.length} 字）`
-      : 'AI 正在翻译…'
+      ? t('translate.status.translatingWithCount', { count: streamingText.value.length })
+      : t('translate.status.translating')
   }
   return ''
 })
@@ -390,12 +403,12 @@ function handleImageFiles(files: File[]) {
   ocrError.value = ''
   const room = MAX_IMAGES - pendingImageFiles.value.length
   if (room <= 0) {
-    ocrError.value = `一次最多上传 ${MAX_IMAGES} 张图片`
+    ocrError.value = t('translate.errors.tooManyImages', { max: MAX_IMAGES })
     return
   }
   const accepted = files.slice(0, room)
   if (accepted.length < files.length) {
-    ocrError.value = `一次最多上传 ${MAX_IMAGES} 张图片，已保留前 ${MAX_IMAGES} 张`
+    ocrError.value = t('translate.errors.tooManyImagesKept', { max: MAX_IMAGES })
   }
   for (const file of accepted) {
     pendingImageFiles.value.push(file)
@@ -442,10 +455,10 @@ async function doOcr() {
       sourceText.value = pages.join('\n\n')
       clearImages()
     } else {
-      ocrError.value = '未识别到文字'
+      ocrError.value = t('translate.errors.noText')
     }
   } catch (e: any) {
-    const msg = e.response?.data?.error || e.message || 'OCR 请求失败'
+    const msg = e.response?.data?.error || e.message || t('translate.errors.ocrFailed')
     ocrError.value = msg
   } finally {
     ocrLoading.value = false
@@ -471,7 +484,7 @@ async function translate() {
       clearImages()
       return
     } catch (e: any) {
-      error.value = e.response?.data?.error || e.message || '图片模型处理失败'
+      error.value = e.response?.data?.error || e.message || t('translate.errors.imageModelFailed')
       return
     }
   }
@@ -548,7 +561,7 @@ async function translate() {
     } catch (e: unknown) {
       if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
       const err = e as { response?: { data?: { error?: string } } }
-      error.value = err.response?.data?.error || '翻译失败'
+      error.value = err.response?.data?.error || t('translate.errors.translateFailed')
     } finally {
       status.value = 'idle'
       cancelFn = null

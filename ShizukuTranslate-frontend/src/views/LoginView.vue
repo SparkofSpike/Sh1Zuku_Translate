@@ -1,10 +1,10 @@
 <template>
   <div class="card small-card">
-    <h2 style="margin-top:0; font-weight:600;">登录</h2>
+    <h2 style="margin-top:0; font-weight:600;">{{ t('nav.login') }}</h2>
     <form @submit.prevent="login">
-      <input v-model.trim="username" type="text" placeholder="用户名或邮箱" style="margin-bottom:16px;" />
-      <input v-model="password" type="password" placeholder="密码" style="margin-bottom:16px;" />
-      <button type="submit" style="width:100%;">登录</button>
+      <input v-model.trim="username" type="text" :placeholder="t('auth.login.usernameOrEmail')" style="margin-bottom:16px;" />
+      <input v-model="password" type="password" :placeholder="t('auth.password')" style="margin-bottom:16px;" />
+      <button type="submit" style="width:100%;">{{ t('nav.login') }}</button>
     </form>
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
   </div>
@@ -12,9 +12,12 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
+
+const { t } = useI18n()
 
 const username = ref('')
 const password = ref('')
@@ -31,7 +34,7 @@ async function login() {
     authStore.setEmailVerified(!!me.data.emailVerified)
     router.push('/')
   } catch (e) {
-    error.value = e.response?.data?.error || '登录失败'
+    error.value = e.response?.data?.error || t('auth.errors.loginFailed')
   }
 }
 </script>

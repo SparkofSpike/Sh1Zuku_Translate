@@ -1,17 +1,17 @@
 <template>
   <div class="card small-card">
-    <h2 style="margin-top:0; font-weight:600;">注册</h2>
+    <h2 style="margin-top:0; font-weight:600;">{{ t('nav.register') }}</h2>
     <form @submit.prevent="submit">
-      <input v-model.trim="username" type="text" placeholder="用户名" style="margin-bottom:12px;" />
-      <input v-model.trim="email" type="email" placeholder="邮箱（需真实可收信，注册后将发送验证码）" style="margin-bottom:12px;" />
+      <input v-model.trim="username" type="text" :placeholder="t('auth.username')" style="margin-bottom:12px;" />
+      <input v-model.trim="email" type="email" :placeholder="t('auth.register.emailPlaceholder')" style="margin-bottom:12px;" />
       <div style="display:flex; gap:8px; margin-bottom:12px;">
-        <input v-model.trim="code" type="text" inputmode="numeric" maxlength="6" placeholder="邮箱验证码" style="flex:1; min-width:0;" />
+        <input v-model.trim="code" type="text" inputmode="numeric" maxlength="6" :placeholder="t('auth.register.codePlaceholder')" style="flex:1; min-width:0;" />
         <button type="button" style="white-space:nowrap;" @click="sendCode" :disabled="sending || countdown > 0">
-          {{ countdown > 0 ? countdown + 's 后重发' : (sending ? '发送中...' : '发送验证码') }}
+          {{ countdown > 0 ? t('auth.register.resendIn', { seconds: countdown }) : (sending ? t('auth.register.sending') : t('auth.register.sendCode')) }}
         </button>
       </div>
-      <input v-model="password" type="password" placeholder="密码（至少 6 位）" style="margin-bottom:16px;" />
-      <button type="submit" style="width:100%;">注册</button>
+      <input v-model="password" type="password" :placeholder="t('auth.register.passwordPlaceholder')" style="margin-bottom:16px;" />
+      <button type="submit" style="width:100%;">{{ t('nav.register') }}</button>
     </form>
     <p v-if="message" style="color:#2b8a3e; margin-top:12px;">{{ message }}</p>
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
@@ -20,32 +20,32 @@
   <!-- 使用条约模态框 -->
   <div v-if="showTerms" class="modal-mask" @click.self="closeTerms">
     <div class="modal">
-      <h2 style="margin-top:0; font-weight:600;">使用条约</h2>
+      <h2 style="margin-top:0; font-weight:600;">{{ t('auth.terms.title') }}</h2>
       <div class="terms-body" ref="termsBody" @scroll="onScroll">
-        <h3>使用协议</h3>
+        <h3>{{ t('auth.terms.heading') }}</h3>
         <ol>
-          <li>在公众平台发布本服务的翻译结果时，应无疑义地、显著地标明“AI翻译”、“机翻”等标签。</li>
-          <li>在公众平台发布本服务的翻译结果时，应无疑义地、显著地标明“AI翻译”、“机翻”等标签。</li>
-          <li>在公众平台发布本服务的翻译结果时，应无疑义地、显著地标明“AI翻译”、“机翻”等标签。</li>
-          <li>禁止对本服务进行反向工程、破解、攻击或其他干扰服务正常运行的行为。</li>
-          <li>禁止滥用本服务进行高频、超大容量请求，影响他人正常使用。</li>
-          <li>本服务基于大语言模型自动生成翻译结果，不保证译文的准确性、完整性、适用性或合法性。因信赖或使用翻译结果所产生的任何直接或间接损失，本服务不承担任何责任。</li>
-          <li>本服务通过第三方 API 提供翻译能力，因第三方模型行为（包括但不限于拒绝翻译、内容截断、模型输出不当等）引发的问题，本服务不承担连带责任。</li>
-          <li>本服务有权根据运营需要，暂停或终止部分或全部服务，并在合理范围内提前通知用户。</li>
-          <li>违反本协议的，服务器管理员有权暂停或终止其账号，且对其IP地址区段进行封禁。</li>
-          <li>服务器管理员（Sh1Zuku）保留本条款的所有解释权与修订权。</li>
-          <li>使用本网站进行翻译活动被视为您完全阅读、充分理解并同意本协议的行为。</li>
+          <li>{{ t('auth.terms.item1') }}</li>
+          <li>{{ t('auth.terms.item2') }}</li>
+          <li>{{ t('auth.terms.item3') }}</li>
+          <li>{{ t('auth.terms.item4') }}</li>
+          <li>{{ t('auth.terms.item5') }}</li>
+          <li>{{ t('auth.terms.item6') }}</li>
+          <li>{{ t('auth.terms.item7') }}</li>
+          <li>{{ t('auth.terms.item8') }}</li>
+          <li>{{ t('auth.terms.item9') }}</li>
+          <li>{{ t('auth.terms.item10') }}</li>
+          <li>{{ t('auth.terms.item11') }}</li>
         </ol>
       </div>
       <div style="margin-top:12px;">
         <label style="display:flex; align-items:center; gap:6px; font-size:14px;">
           <input type="checkbox" v-model="agreed" :disabled="!reachedBottom" style="width:auto;" />
-          我已了解并同意以上所有内容
+          {{ t('auth.terms.agree') }}
         </label>
       </div>
       <div style="margin-top:16px; display:flex; gap:12px; justify-content:flex-end;">
-        <button class="btn-sm btn-remove" @click="closeTerms">取消</button>
-        <button class="btn-sm btn-primary" :disabled="!agreed" @click="confirmRegister">同意并注册</button>
+        <button class="btn-sm btn-remove" @click="closeTerms">{{ t('common.cancel') }}</button>
+        <button class="btn-sm btn-primary" :disabled="!agreed" @click="confirmRegister">{{ t('auth.terms.agreeAndRegister') }}</button>
       </div>
     </div>
   </div>
@@ -53,8 +53,11 @@
 
 <script setup>
 import { onUnmounted, ref, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import api, { sendEmailCode } from '../api'
+
+const { t } = useI18n()
 
 const username = ref('')
 const email = ref('')
@@ -83,7 +86,7 @@ function isValidEmail(value) {
 
 async function sendCode() {
   if (!isValidEmail(email.value)) {
-    error.value = '请先输入正确的邮箱地址'
+    error.value = t('auth.errors.enterValidEmail')
     return
   }
   error.value = ''
@@ -91,10 +94,10 @@ async function sendCode() {
   sending.value = true
   try {
     await sendEmailCode(email.value)
-    message.value = '验证码已发送，请查收邮件'
+    message.value = t('auth.register.codeSent')
     startCountdown()
   } catch (e) {
-    error.value = e.response?.data?.error || '验证码发送失败'
+    error.value = e.response?.data?.error || t('auth.errors.codeSendFailed')
   } finally {
     sending.value = false
   }
@@ -114,15 +117,15 @@ function startCountdown() {
 
 function submit() {
   if (!username.value || !email.value || !code.value || !password.value) {
-    error.value = '请填写完整信息（用户名、邮箱、验证码、密码）'
+    error.value = t('auth.errors.incomplete')
     return
   }
   if (!isValidEmail(email.value)) {
-    error.value = '邮箱格式不正确'
+    error.value = t('auth.errors.emailFormat')
     return
   }
   if (password.value.length < 6) {
-    error.value = '密码至少 6 位'
+    error.value = t('auth.errors.passwordTooShort')
     return
   }
   error.value = ''
@@ -162,7 +165,7 @@ async function register() {
     })
     router.push('/login')
   } catch (e) {
-    error.value = e.response?.data?.error || '注册失败'
+    error.value = e.response?.data?.error || t('auth.errors.registerFailed')
   }
 }
 </script>

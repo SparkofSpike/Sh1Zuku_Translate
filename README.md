@@ -11,6 +11,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
 - **Preset prompts** for series-specific style rules, plus a **terminology glossary**. Each glossed concept stores one spelling per language (Japanese, Korean, Chinese, Vietnamese), and the request's target language decides which spelling is rendered into the prompt — the right-hand side is always the target language, so another language's output can never leak in. Adding a language is a configuration change under `app.translation.target-languages`, not a code change. An optional custom prompt is appended last.
+- **Interface languages** (Simplified Chinese and Vietnamese) through vue-i18n. The interface language also sets the default translation target, so a reader who switches the site to Vietnamese gets Vietnamese output without touching the language picker; the picker itself stays available as an override.
 - **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once and choose **model processing** with `deepseek-flash` (all pages are translated in one multimodal call, in upload order) or **OCR processing** through the PaddleOCR worker (pages are recognised one at a time and joined afterwards). Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
@@ -265,6 +266,7 @@ Sh1Zuku_Translate/
 │   └── src/
 │       ├── api/                # Axios API client and SSE streaming
 │       ├── components/         # OCR, preset, result, and announcement components
+│       ├── i18n/               # vue-i18n setup plus per-language message packs
 │       ├── router/              # Vue Router routes and auth guards
 │       ├── stores/              # Pinia stores
 │       ├── types/              # TypeScript interfaces

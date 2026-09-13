@@ -1,22 +1,25 @@
 <template>
   <div class="card">
     <div v-if="detail">
-      <h2>翻译详情</h2>
-      <div><strong>原文：</strong><pre>{{ detail.sourceText }}</pre></div>
-      <div><strong>译文：</strong><pre>{{ detail.translatedText }}</pre></div>
-      <div><strong>模型：</strong>{{ detail.model }}</div>
-      <div><strong>自定义 Prompt：</strong>{{ detail.customPrompt || '默认' }}</div>
-      <div><strong>时间：</strong>{{ detail.createdAt }}</div>
-      <router-link to="/history" style="display:inline-block; margin-top:16px;">← 返回列表</router-link>
+      <h2>{{ t('history.detail.title') }}</h2>
+      <div><strong>{{ t('history.detail.source') }}</strong><pre>{{ detail.sourceText }}</pre></div>
+      <div><strong>{{ t('history.detail.translated') }}</strong><pre>{{ detail.translatedText }}</pre></div>
+      <div><strong>{{ t('history.detail.model') }}</strong>{{ detail.model }}</div>
+      <div><strong>{{ t('history.detail.customPrompt') }}</strong>{{ detail.customPrompt || t('history.detail.default') }}</div>
+      <div><strong>{{ t('history.detail.time') }}</strong>{{ detail.createdAt }}</div>
+      <router-link to="/history" style="display:inline-block; margin-top:16px;">{{ t('history.detail.back') }}</router-link>
     </div>
-    <p v-else>加载中...</p>
+    <p v-else>{{ t('history.detail.loading') }}</p>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import api from '../api'
+
+const { t } = useI18n()
 
 const route = useRoute()
 const detail = ref(null)

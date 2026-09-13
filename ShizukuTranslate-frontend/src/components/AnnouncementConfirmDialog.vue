@@ -1,9 +1,9 @@
 <template>
   <div class="modal-backdrop">
-    <section class="modal card ack-dialog" role="dialog" aria-modal="true" aria-label="待确认公告">
+    <section class="modal card ack-dialog" role="dialog" aria-modal="true" :aria-label="t('components.announcementConfirmDialog.dialogLabel')">
       <header class="ack-header">
-        <h3>公告</h3>
-        <p class="muted">有 {{ announcements.length }} 条公告需要您阅读并确认，确认后不再自动弹出</p>
+        <h3>{{ t('components.announcementConfirmDialog.heading') }}</h3>
+        <p class="muted">{{ t('components.announcementConfirmDialog.intro', { count: announcements.length }) }}</p>
       </header>
 
       <div class="ack-body">
@@ -17,7 +17,7 @@
             :disabled="confirmingId === announcement.id"
             @click="confirm(announcement)"
           >
-            {{ confirmingId === announcement.id ? '确认中...' : '我已阅读并确认' }}
+            {{ confirmingId === announcement.id ? t('components.announcementConfirmDialog.confirming') : t('components.announcementConfirmDialog.acknowledge') }}
           </button>
         </article>
       </div>
@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Announcement } from '../types'
 import { renderMarkdown } from '../utils/markdown'
 import api from '../api'
@@ -34,6 +35,8 @@ import api from '../api'
 defineProps<{
   announcements: Announcement[]
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'confirmed', announcementId: number): void
@@ -53,7 +56,7 @@ async function confirm(announcement: Announcement) {
   } catch (err) {
     const axiosError = err as { response?: { data?: { error?: string } } }
     errorId.value = announcement.id
-    errorText.value = axiosError.response?.data?.error || '确认失败，请重试'
+    errorText.value = axiosError.response?.data?.error || t('components.announcementConfirmDialog.confirmFailed')
   } finally {
     confirmingId.value = null
   }

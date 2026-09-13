@@ -1,6 +1,6 @@
 <template>
   <div style="margin-top: 16px;">
-    <p style="margin-bottom: 6px; font-size:14px; color:#555;">附加预设（可多选）</p>
+    <p style="margin-bottom: 6px; font-size:14px; color:#555;">{{ t('components.presetSelector.label') }}</p>
     <div class="presets-group">
       <label v-for="preset in options" :key="preset">
         <input type="checkbox" :value="preset" :checked="modelValue.includes(preset)" @change="togglePreset(preset)" />
@@ -11,6 +11,10 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 const props = defineProps<{
   options: string[]
   modelValue: string[]

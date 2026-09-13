@@ -3,33 +3,33 @@
     <section class="card admin-card">
       <div class="page-heading">
         <div>
-          <h2>管理员面板</h2>
-          <p class="muted">模型调用用量概览</p>
+          <h2>{{ t('admin.heading') }}</h2>
+          <p class="muted">{{ t('admin.subtitle') }}</p>
         </div>
-        <button class="btn-sm btn-refresh" @click="loadUsage">刷新数据</button>
+        <button class="btn-sm btn-refresh" @click="loadUsage">{{ t('admin.refreshData') }}</button>
       </div>
 
-      <div v-if="usageLoading" class="muted">加载用量中...</div>
+      <div v-if="usageLoading" class="muted">{{ t('admin.loadingUsage') }}</div>
       <template v-else>
         <div class="metric-grid">
-          <div class="metric"><span>总 Token</span><strong>{{ formatNumber(usage.totalTokens) }}</strong></div>
-          <div class="metric"><span>输入 Token</span><strong>{{ formatNumber(usage.promptTokens) }}</strong></div>
-          <div class="metric"><span>输出 Token</span><strong>{{ formatNumber(usage.completionTokens) }}</strong></div>
-          <div class="metric"><span>调用次数</span><strong>{{ formatNumber(usage.requestCount) }}</strong></div>
+          <div class="metric"><span>{{ t('admin.metrics.totalTokens') }}</span><strong>{{ formatNumber(usage.totalTokens) }}</strong></div>
+          <div class="metric"><span>{{ t('admin.metrics.promptTokens') }}</span><strong>{{ formatNumber(usage.promptTokens) }}</strong></div>
+          <div class="metric"><span>{{ t('admin.metrics.completionTokens') }}</span><strong>{{ formatNumber(usage.completionTokens) }}</strong></div>
+          <div class="metric"><span>{{ t('admin.metrics.requestCount') }}</span><strong>{{ formatNumber(usage.requestCount) }}</strong></div>
         </div>
 
         <div class="charts-grid">
           <div class="chart-panel">
-            <h3>近 14 日用量</h3>
+            <h3>{{ t('admin.chart.daily') }}</h3>
             <div class="bar-chart">
-              <div v-for="day in usage.daily" :key="day.date" class="bar-column" :title="`${day.date}: ${formatNumber(day.totalTokens)} Token`">
+              <div v-for="day in usage.daily" :key="day.date" class="bar-column" :title="t('admin.chart.barTitle', { date: day.date, tokens: formatNumber(day.totalTokens) })">
                 <div class="bar-track"><div class="bar-fill" :style="{ height: barHeight(day.totalTokens) + '%' }"></div></div>
                 <span>{{ shortDate(day.date) }}</span>
               </div>
             </div>
           </div>
           <div class="chart-panel">
-            <h3>模型用量</h3>
+            <h3>{{ t('admin.chart.model') }}</h3>
             <div v-if="usage.byModel?.length" class="model-chart">
               <div v-for="item in usage.byModel" :key="item.provider + item.model" class="model-row">
                 <div class="model-name"><span>{{ item.model }}</span><small>{{ providerLabel(item.provider) }}</small></div>
@@ -37,18 +37,18 @@
                 <strong>{{ formatNumber(item.totalTokens) }}</strong>
               </div>
             </div>
-            <p v-else class="muted">暂无模型调用记录</p>
+            <p v-else class="muted">{{ t('admin.chart.noModelUsage') }}</p>
           </div>
         </div>
 
-        <h3 class="subheading">账户用量</h3>
+        <h3 class="subheading">{{ t('admin.users.title') }}</h3>
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'username' }" @click="cycleSort('username')">账户{{ sortIndicator('username') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'totalTokens' }" @click="cycleSort('totalTokens')">总 Token{{ sortIndicator('totalTokens') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'requestCount' }" @click="cycleSort('requestCount')">调用次数{{ sortIndicator('requestCount') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'latestUsedAt' }" @click="cycleSort('latestUsedAt')">最新使用{{ sortIndicator('latestUsedAt') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'username' }" @click="cycleSort('username')">{{ t('admin.users.username') }}{{ sortIndicator('username') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'totalTokens' }" @click="cycleSort('totalTokens')">{{ t('admin.users.totalTokens') }}{{ sortIndicator('totalTokens') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'requestCount' }" @click="cycleSort('requestCount')">{{ t('admin.users.requestCount') }}{{ sortIndicator('requestCount') }}</th>
+              <th class="sortable" :class="{ 'sorted': sortKey === 'latestUsedAt' }" @click="cycleSort('latestUsedAt')">{{ t('admin.users.latestUsedAt') }}{{ sortIndicator('latestUsedAt') }}</th>
               <th></th>
             </tr></thead>
             <tbody>
@@ -57,7 +57,7 @@
                 <td>{{ formatNumber(user.totalTokens) }}</td>
                 <td>{{ user.requestCount }}</td>
                 <td>{{ formatDate(user.latestUsedAt) }}</td>
-                <td><button class="btn-sm btn-detail" @click="showDetails(user)">查看详情</button></td>
+                <td><button class="btn-sm btn-detail" @click="showDetails(user)">{{ t('admin.users.detail') }}</button></td>
               </tr>
             </tbody>
           </table>
@@ -68,10 +68,10 @@
     </section>
 
     <section class="card admin-card announcement-section">
-      <h3 class="section-title">发布公告</h3>
-      <input v-model.trim="title" type="text" maxlength="100" placeholder="公告标题" />
+      <h3 class="section-title">{{ t('admin.announce.publish') }}</h3>
+      <input v-model.trim="title" type="text" maxlength="100" :placeholder="t('admin.announce.titlePlaceholder')" />
       <div class="markdown-editor">
-        <div class="markdown-tabs" role="tablist" aria-label="公告内容编辑模式">
+        <div class="markdown-tabs" role="tablist" :aria-label="t('admin.announce.contentModeLabel')">
           <button
             type="button"
             class="markdown-tab"
@@ -79,7 +79,7 @@
             :aria-selected="editorMode === 'write'"
             role="tab"
             @click="editorMode = 'write'"
-          >编辑</button>
+          >{{ t('common.edit') }}</button>
           <button
             type="button"
             class="markdown-tab"
@@ -87,61 +87,61 @@
             :aria-selected="editorMode === 'preview'"
             role="tab"
             @click="editorMode = 'preview'"
-          >预览</button>
+          >{{ t('admin.announce.preview') }}</button>
         </div>
-        <textarea v-if="editorMode === 'write'" v-model="content" rows="5" placeholder="公告内容"></textarea>
+        <textarea v-if="editorMode === 'write'" v-model="content" rows="5" :placeholder="t('admin.announce.contentPlaceholder')"></textarea>
         <div v-else-if="content.trim()" class="announcement-markdown markdown-preview" v-html="renderMarkdown(content)"></div>
-        <p v-else class="markdown-preview-empty">暂无内容可预览</p>
+        <p v-else class="markdown-preview-empty">{{ t('admin.announce.emptyPreview') }}</p>
       </div>
       <label class="ack-checkbox">
         <input type="checkbox" v-model="requireConfirmation" />
-        <span>需要用户确认：用户访问网站时将弹出此公告，点击确认后不再自动弹出</span>
+        <span>{{ t('admin.announce.requireConfirmation') }}</span>
       </label>
-      <button @click="publish" :disabled="publishing">{{ publishing ? '发布中...' : '发布公告' }}</button>
+      <button @click="publish" :disabled="publishing">{{ publishing ? t('admin.announce.publishing') : t('admin.announce.publish') }}</button>
       <p v-if="success" class="success">{{ success }}</p>
 
       <hr />
-      <h3 class="section-title">已发布公告</h3>
-      <div v-if="loading" class="muted">加载中...</div>
+      <h3 class="section-title">{{ t('admin.announce.publishedTitle') }}</h3>
+      <div v-if="loading" class="muted">{{ t('admin.loading') }}</div>
       <div v-else-if="announcements.length" class="announcement-list">
         <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
           <div class="announcement-content">
-            <h4>{{ announcement.title }}<span v-if="announcement.requireConfirmation" class="badge">需确认</span></h4>
+            <h4>{{ announcement.title }}<span v-if="announcement.requireConfirmation" class="badge">{{ t('admin.announce.needConfirm') }}</span></h4>
             <time>{{ formatDate(announcement.createdAt) }}</time>
             <div class="announcement-markdown" v-html="renderMarkdown(announcement.content)"></div>
           </div>
           <div class="announcement-actions">
-            <button v-if="announcement.requireConfirmation" class="btn-sm btn-detail" @click="showAcknowledgements(announcement)">确认情况</button>
-            <button class="btn-sm btn-remove" @click="removeAnnouncement(announcement.id)">删除</button>
+            <button v-if="announcement.requireConfirmation" class="btn-sm btn-detail" @click="showAcknowledgements(announcement)">{{ t('admin.announce.acknowledgements') }}</button>
+            <button class="btn-sm btn-remove" @click="removeAnnouncement(announcement.id)">{{ t('common.delete') }}</button>
           </div>
         </article>
       </div>
-      <p v-else class="muted">暂无公告</p>
+      <p v-else class="muted">{{ t('admin.announce.empty') }}</p>
     </section>
 
     <div v-if="detailUser" class="modal-backdrop" @click.self="detailUser = null">
       <section class="modal card">
         <div class="page-heading">
-          <div><h3>{{ detailUser.user.username }} 的 Token 日志</h3><p class="muted">{{ detailUser.user.email }}</p></div>
-          <button class="btn-sm btn-remove" @click="detailUser = null">关闭</button>
+          <div><h3>{{ t('admin.detail.title', { username: detailUser.user.username }) }}</h3><p class="muted">{{ detailUser.user.email }}</p></div>
+          <button class="btn-sm btn-remove" @click="detailUser = null">{{ t('common.close') }}</button>
         </div>
         <div class="detail-summary">
-          <span>总计 <strong>{{ formatNumber(detailUser.summary.totalTokens) }}</strong></span>
-          <span>输入 {{ formatNumber(detailUser.summary.promptTokens) }}</span>
-          <span>输出 {{ formatNumber(detailUser.summary.completionTokens) }}</span>
+          <span>{{ t('admin.detail.total') }} <strong>{{ formatNumber(detailUser.summary.totalTokens) }}</strong></span>
+          <span>{{ t('admin.detail.prompt') }} {{ formatNumber(detailUser.summary.promptTokens) }}</span>
+          <span>{{ t('admin.detail.completion') }} {{ formatNumber(detailUser.summary.completionTokens) }}</span>
         </div>
-        <div v-if="detailLoading" class="muted">加载日志中...</div>
+        <div v-if="detailLoading" class="muted">{{ t('admin.loadingLogs') }}</div>
         <div v-else-if="detailUser.logs.length" class="table-wrap log-table">
           <table>
-            <thead><tr><th>时间</th><th>协议</th><th>模型</th><th>来源</th><th>输入</th><th>输出</th><th>合计</th></tr></thead>
+            <thead><tr><th>{{ t('admin.detail.time') }}</th><th>{{ t('admin.detail.provider') }}</th><th>{{ t('admin.detail.model') }}</th><th>{{ t('admin.detail.source') }}</th><th>{{ t('admin.detail.prompt') }}</th><th>{{ t('admin.detail.completion') }}</th><th>{{ t('admin.detail.sum') }}</th></tr></thead>
             <tbody><tr v-for="log in detailUser.logs" :key="log.id">
               <td>{{ formatDate(log.createdAt) }}</td><td>{{ providerLabel(log.provider) }}</td><td>{{ log.model }}</td>
-              <td>{{ log.estimated ? '估算' : (log.sourceType === 'CACHE_BACKFILL' ? '缓存实际' : '实际') }}</td>
+              <td>{{ log.estimated ? t('admin.detail.estimated') : (log.sourceType === 'CACHE_BACKFILL' ? t('admin.detail.cacheBackfill') : t('admin.detail.actual')) }}</td>
               <td>{{ formatNumber(log.promptTokens) }}</td><td>{{ formatNumber(log.completionTokens) }}</td><td><strong>{{ formatNumber(log.totalTokens) }}</strong></td>
             </tr></tbody>
           </table>
         </div>
-        <p v-else class="muted">暂无 token 使用日志</p>
+        <p v-else class="muted">{{ t('admin.detail.empty') }}</p>
       </section>
     </div>
 
@@ -149,16 +149,16 @@
       <section class="modal card">
         <div class="page-heading">
           <div>
-            <h3>「{{ ackModal.title }}」已确认用户</h3>
-            <p class="muted">共 {{ ackModal.total }} 人已确认</p>
+            <h3>{{ t('admin.acks.title', { title: ackModal.title }) }}</h3>
+            <p class="muted">{{ t('admin.acks.total', { count: ackModal.total }) }}</p>
           </div>
-          <button class="btn-sm btn-remove" @click="ackModal = null">关闭</button>
+          <button class="btn-sm btn-remove" @click="ackModal = null">{{ t('common.close') }}</button>
         </div>
-        <div v-if="ackLoading" class="muted">加载中...</div>
+        <div v-if="ackLoading" class="muted">{{ t('admin.loading') }}</div>
         <template v-else>
           <div v-if="ackModal.users.length" class="table-wrap log-table">
             <table>
-              <thead><tr><th>用户名</th><th>邮箱</th><th>确认时间</th></tr></thead>
+              <thead><tr><th>{{ t('admin.acks.username') }}</th><th>{{ t('admin.acks.email') }}</th><th>{{ t('admin.acks.time') }}</th></tr></thead>
               <tbody><tr v-for="ack in ackModal.users" :key="ack.username + ack.acknowledgedAt">
                 <td><strong>{{ ack.username }}</strong></td>
                 <td>{{ ack.email }}</td>
@@ -166,7 +166,7 @@
               </tr></tbody>
             </table>
           </div>
-          <p v-else class="muted">暂无用户确认此公告</p>
+          <p v-else class="muted">{{ t('admin.acks.empty') }}</p>
         </template>
       </section>
     </div>
@@ -175,8 +175,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import api from '../api'
 import { renderMarkdown } from '../utils/markdown'
+
+const { t } = useI18n()
 
 const usage = ref({ totalTokens: 0, promptTokens: 0, completionTokens: 0, requestCount: 0, daily: [], byModel: [], users: [] })
 
@@ -237,7 +240,7 @@ async function loadUsage() {
     const res = await api.get('/admin/usage')
     usage.value = res.data
   } catch (e) {
-    error.value = e.response?.data?.error || '加载 token 用量失败'
+    error.value = e.response?.data?.error || t('admin.errors.loadUsage')
   } finally {
     usageLoading.value = false
   }
@@ -250,7 +253,7 @@ async function showDetails(user) {
     const res = await api.get('/admin/usage/users/' + user.id)
     detailUser.value = res.data
   } catch (e) {
-    error.value = e.response?.data?.error || '加载 token 日志失败'
+    error.value = e.response?.data?.error || t('admin.errors.loadUserLogs')
     detailUser.value = null
   } finally {
     detailLoading.value = false
@@ -262,12 +265,12 @@ async function loadAnnouncements() {
     const res = await api.get('/announcements')
     announcements.value = res.data || []
   } catch (e) {
-    error.value = '加载公告失败：' + (e.response?.data?.error || '')
+    error.value = t('admin.errors.loadAnnouncements') + (e.response?.data?.error || '')
   } finally { loading.value = false }
 }
 
 async function publish() {
-  if (!title.value || !content.value.trim()) { error.value = '请填写公告标题和内容'; return }
+  if (!title.value || !content.value.trim()) { error.value = t('admin.errors.fillTitleContent'); return }
   publishing.value = true
   error.value = ''
   try {
@@ -276,9 +279,9 @@ async function publish() {
       content: content.value,
       requireConfirmation: requireConfirmation.value
     })
-    title.value = ''; content.value = ''; requireConfirmation.value = false; editorMode.value = 'write'; success.value = '公告发布成功'
+    title.value = ''; content.value = ''; requireConfirmation.value = false; editorMode.value = 'write'; success.value = t('admin.messages.published')
     await loadAnnouncements()
-  } catch (e) { error.value = e.response?.data?.error || '发布失败' }
+  } catch (e) { error.value = e.response?.data?.error || t('admin.errors.publishFailed') }
   finally { publishing.value = false }
 }
 
@@ -293,7 +296,7 @@ async function showAcknowledgements(announcement) {
       users: res.data.users || []
     }
   } catch (e) {
-    error.value = e.response?.data?.error || '加载确认列表失败'
+    error.value = e.response?.data?.error || t('admin.errors.loadAcks')
     ackModal.value = null
   } finally {
     ackLoading.value = false
@@ -301,15 +304,15 @@ async function showAcknowledgements(announcement) {
 }
 
 async function removeAnnouncement(id) {
-  if (!window.confirm('确定要删除这条公告吗？')) return
+  if (!window.confirm(t('admin.confirmDelete'))) return
   try { await api.delete('/admin/announcements/' + id); await loadAnnouncements() }
-  catch (e) { error.value = e.response?.data?.error || '删除失败' }
+  catch (e) { error.value = e.response?.data?.error || t('admin.errors.deleteFailed') }
 }
 
 function formatNumber(value) { return Number(value || 0).toLocaleString() }
-function formatDate(value) { return value ? value.replace('T', ' ').slice(0, 16) : '暂无' }
+function formatDate(value) { return value ? value.replace('T', ' ').slice(0, 16) : t('admin.none') }
 function shortDate(value) { return value ? value.slice(5).replace('-', '/') : '' }
-function providerLabel(value) { return value === 'anthropic' ? 'Anthropic' : value === 'openai' ? 'OpenAI 兼容' : 'DeepSeek' }
+function providerLabel(value) { return value === 'anthropic' ? 'Anthropic' : value === 'openai' ? t('admin.provider.openai') : 'DeepSeek' }
 function barHeight(value) {
   const max = Math.max(...(usage.value.daily || []).map(day => day.totalTokens), 1)
   return value ? Math.max(8, Math.round(value / max * 100)) : 2
