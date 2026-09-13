@@ -71,7 +71,6 @@
         v-model="targetLanguage"
         :title="t('translate.targetLanguage')"
         style="width:auto; min-width:160px;"
-        @change="userOverrodeTarget = true"
       >
         <option v-for="lang in languageOptions" :key="lang.code" :value="lang.code">{{ lang.label }}</option>
       </select>
@@ -132,7 +131,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { currentLocale } from '../i18n'
 import axios from 'axios'
 import api, { ocrImage, translateImages, translateStream } from '../api'
 import type { Announcement, LanguageOption, TranslateResponse } from '../types'
@@ -182,17 +180,30 @@ const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
 
 /**
- * Target language for the translation. Persisted locally so the choice survives a reload; until
- * the user overrides it, it follows the interface language.
+ * Target language for the translation. By default it follows the interface language, so a reader
+ * who switches the site to Vietnamese gets Vietnamese output without touching this control.
+ * Choosing a *different* language here stores an explicit override; choosing the interface
+ * language again clears it.
+ *
+ * The storage key is deliberately not the old `targetLanguage` one: the language-following logic
+ * used to write that key itself, so a later visit mistook a programmatic value for a user choice
+ * and left the target stuck on a language the interface no longer showed.
  */
-const TARGET_LANGUAGE_KEY = 'targetLanguage'
-const userOverrodeTarget = ref(!!localStorage.getItem(TARGET_LANGUAGE_KEY))
-const targetLanguage = ref(localStorage.getItem(TARGET_LANGUAGE_KEY) || currentLocale())
-const languageOptions = ref<LanguageOption[]>([])
-watch(targetLanguage, value => localStorage.setItem(TARGET_LANGUAGE_KEY, value))
-watch(locale, value => {
-  if (!userOverrodeTarget.value) targetLanguage.value = value
+const TARGET_LANGUAGE_OVERRIDE_KEY = 'targetLanguageOverride'
+const targetOverride = ref(localStorage.getItem(TARGET_LANGUAGE_OVERRIDE_KEY) || '')
+
+const targetLanguage = computed({
+  get: () => targetOverride.value || locale.value,
+  set: (value: string) => {
+    targetOverride.value = value === locale.value ? '' : value
+    if (targetOverride.value) {
+      localStorage.setItem(TARGET_LANGUAGE_OVERRIDE_KEY, targetOverride.value)
+    } else {
+      localStorage.removeItem(TARGET_LANGUAGE_OVERRIDE_KEY)
+    }
+  }
 })
+const languageOptions = ref<LanguageOption[]>([])
 const announcements = ref<Announcement[]>([])
 
 const result = ref<TranslateResponse | null>(null)
