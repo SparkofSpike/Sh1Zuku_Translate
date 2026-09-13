@@ -141,12 +141,12 @@ app:
             ko: 야치요
             vi: Yachiyo
         - kind: person
-          note: 昵称（与正名是两个概念，译法不同）
+          note: 昵称。日语原文是促音「ヤッチョ」，与正名「ヤチヨ」仅差一个促音，必须分开
           terms:
-            ja: ヤチョ
+            ja: ヤッチョ
             zh-CN: 小八
             ko: 얏쵸
-            vi: Yacho
+            vi: Yaccho
         - kind: person
           terms:
             ja: 月見

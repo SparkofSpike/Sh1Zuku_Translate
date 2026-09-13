@@ -37,8 +37,9 @@ public class GlossaryConcept {
 
     /**
      * Nicknames and short forms point at the concept they are derived from. Keeping them as
-     * separate concepts (rather than aliases of one) is deliberate: "ヤチヨ" and "ヤチョ" are the
-     * same character but must translate to different strings.
+     * separate concepts (rather than aliases of one) is deliberate: "ヤチヨ" and "ヤッチョ" are
+     * the same character but must translate to different strings, and their spellings differ by a
+     * single glottal stop — exactly the kind of pair a model conflates on its own.
      */
     private Long relatedId;
 
