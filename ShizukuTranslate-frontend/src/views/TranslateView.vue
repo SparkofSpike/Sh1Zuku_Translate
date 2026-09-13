@@ -97,14 +97,14 @@
       :disabled="false"
       :style="{
         marginTop: '16px',
-        background: status === 'preparing' ? '#e03131' : (status === 'ai-processing' ? '#1971c2' : undefined),
-        borderColor: status === 'preparing' ? '#e03131' : (status === 'ai-processing' ? '#1971c2' : undefined),
+        background: status === 'idle' ? undefined : '#e03131',
+        borderColor: status === 'idle' ? undefined : '#e03131',
       }"
     >
-      <template v-if="status === 'preparing'">网页处理中</template>
-      <template v-else-if="status === 'ai-processing'">AI 处理中</template>
-      <template v-else>开始翻译</template>
+      {{ status === 'idle' ? '开始翻译' : '取消翻译' }}
     </button>
+
+    <p v-if="statusText" class="translate-status">{{ statusText }}</p>
 
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
 
@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateImages, translateStream } from '../api'
 import type { Announcement, TranslateResponse } from '../types'
@@ -169,6 +169,21 @@ const result = ref<TranslateResponse | null>(null)
 const error = ref('')
 
 const status = ref<'idle' | 'preparing' | 'ai-processing'>('idle')
+
+/**
+ * Spelled out next to the button: the button itself carries the action (cancel while a
+ * translation is in flight), while this line says what is actually happening. Mirrors
+ * the status message the browser extension shows in its popup.
+ */
+const statusText = computed(() => {
+  if (status.value === 'preparing') return '正在连接服务器…'
+  if (status.value === 'ai-processing') {
+    return streamingText.value
+      ? `AI 正在翻译…（已接收 ${streamingText.value.length} 字）`
+      : 'AI 正在翻译…'
+  }
+  return ''
+})
 
 // SSE streaming
 const streamingEnabled = ref(true)
@@ -512,6 +527,30 @@ async function translate() {
 </script>
 
 <style scoped>
+.translate-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-muted, #666);
+}
+
+.translate-status::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #dee2e6;
+  border-top-color: #1971c2;
+  border-radius: 50%;
+  animation: translate-spin 0.8s linear infinite;
+}
+
+@keyframes translate-spin {
+  to { transform: rotate(360deg); }
+}
+
 .translate-layout {
   display: grid;
   grid-template-columns: minmax(0, 800px);
