@@ -258,34 +258,47 @@ interface ModelProfileOption {
   models?: string[]
 }
 
+/**
+ * Initial page data. These calls are independent, so they are fired together: a single slow or
+ * hanging request must not hold up the rest of the page's initialisation. (An earlier version
+ * awaited them one after another, so one stuck request left the page half-loaded — the language
+ * list, model list and announcements would never arrive.)
+ */
+const INIT_REQUEST_TIMEOUT_MS = 15000
+
 onMounted(async () => {
-  try {
-    const me = await api.get('/auth/me')
-    authStore.setAdmin(!!me.data.isAdmin)
-    authStore.setEmailVerified(!!me.data.emailVerified)
-  } catch (e) {
-    console.error('无法获取认证状态', e)
+  const [meResult, presetsResult, languagesResult, profilesResult, announcementsResult] =
+    await Promise.allSettled([
+      api.get('/auth/me', { timeout: INIT_REQUEST_TIMEOUT_MS }),
+      api.get('/presets', { timeout: INIT_REQUEST_TIMEOUT_MS }),
+      api.get('/translation/languages', { timeout: INIT_REQUEST_TIMEOUT_MS }),
+      api.get('/auth/model-profiles', { timeout: INIT_REQUEST_TIMEOUT_MS }),
+      api.get('/announcements', { timeout: INIT_REQUEST_TIMEOUT_MS })
+    ])
+
+  if (meResult.status === 'fulfilled') {
+    authStore.setAdmin(!!meResult.value.data.isAdmin)
+    authStore.setEmailVerified(!!meResult.value.data.emailVerified)
+  } else {
+    console.error('无法获取认证状态', meResult.reason)
   }
-  try {
-    const res = await api.get('/presets')
-    presetOptions.value = res.data || []
-  } catch (e) {
-    console.error('无法加载预设列表', e)
+  if (presetsResult.status === 'fulfilled') {
+    presetOptions.value = presetsResult.value.data || []
+  } else {
+    console.error('无法加载预设列表', presetsResult.reason)
   }
-  try {
-    const res = await api.get('/translation/languages')
-    languageOptions.value = res.data || []
-  } catch (e) {
-    console.error('无法加载目标语言列表', e)
+  if (languagesResult.status === 'fulfilled') {
+    languageOptions.value = languagesResult.value.data || []
+  } else {
+    console.error('无法加载目标语言列表', languagesResult.reason)
   }
   // Keep the stored selection valid if the backend no longer offers it.
   if (languageOptions.value.length && !languageOptions.value.some(lang => lang.code === targetLanguage.value)) {
     const fallback = languageOptions.value[0]
     if (fallback) targetLanguage.value = fallback.code
   }
-  try {
-    const res = await api.get('/auth/model-profiles')
-    const profiles = res.data || []
+  if (profilesResult.status === 'fulfilled') {
+    const profiles = profilesResult.value.data || []
     modelOptions.value = [
       { key: 'site:deepseek-flash', id: null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
       { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
@@ -325,14 +338,13 @@ onMounted(async () => {
       selectedModelKey.value = ''
     }
     handleModelChange()
-  } catch (e) {
-    console.error('无法加载个人模型配置', e)
+  } else {
+    console.error('无法加载个人模型配置', profilesResult.reason)
   }
-  try {
-    const res = await api.get('/announcements')
-    announcements.value = res.data || []
-  } catch (e) {
-    console.error('无法加载公告列表', e)
+  if (announcementsResult.status === 'fulfilled') {
+    announcements.value = announcementsResult.value.data || []
+  } else {
+    console.error('无法加载公告列表', announcementsResult.reason)
   }
 })
 
