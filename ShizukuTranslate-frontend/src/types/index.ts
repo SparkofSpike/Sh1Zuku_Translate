@@ -4,6 +4,14 @@ export interface TranslateRequest {
   modelProfileId?: number | null
   customPrompt?: string
   presets?: string[]
+  /** Target language tag; the backend falls back to its configured default when omitted. */
+  targetLanguage?: string
+}
+
+/** A target language offered by the backend (`GET /translation/languages`). */
+export interface LanguageOption {
+  code: string
+  label: string
 }
 
 export interface TokenUsage {

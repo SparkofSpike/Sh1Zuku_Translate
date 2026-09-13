@@ -66,6 +66,14 @@
       <select v-model="selectedModelKey" @change="handleModelChange" style="width:auto; min-width:240px;">
         <option v-for="option in modelOptions" :key="option.key" :value="option.key">{{ option.label }}</option>
       </select>
+      <select
+        v-if="languageOptions.length"
+        v-model="targetLanguage"
+        title="目标语言"
+        style="width:auto; min-width:160px;"
+      >
+        <option v-for="lang in languageOptions" :key="lang.code" :value="lang.code">{{ lang.label }}</option>
+      </select>
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
         流式输出
@@ -121,10 +129,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import api, { ocrImage, translateImages, translateStream } from '../api'
-import type { Announcement, TranslateResponse } from '../types'
+import type { Announcement, LanguageOption, TranslateResponse } from '../types'
 import OcrPreview from '../components/OcrPreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
@@ -163,6 +171,15 @@ const modelOptions = ref<ModelOption[]>([
 const customPrompt = ref('')
 const selectedPresets = ref<string[]>([])
 const presetOptions = ref<string[]>([])
+
+/**
+ * Target language for the translation. Persisted locally so the choice survives a reload.
+ * Defaults to the backend's default until `/translation/languages` answers.
+ */
+const TARGET_LANGUAGE_KEY = 'targetLanguage'
+const targetLanguage = ref(localStorage.getItem(TARGET_LANGUAGE_KEY) || 'zh-CN')
+const languageOptions = ref<LanguageOption[]>([])
+watch(targetLanguage, value => localStorage.setItem(TARGET_LANGUAGE_KEY, value))
 const announcements = ref<Announcement[]>([])
 
 const result = ref<TranslateResponse | null>(null)
@@ -230,6 +247,17 @@ onMounted(async () => {
     presetOptions.value = res.data || []
   } catch (e) {
     console.error('无法加载预设列表', e)
+  }
+  try {
+    const res = await api.get('/translation/languages')
+    languageOptions.value = res.data || []
+  } catch (e) {
+    console.error('无法加载目标语言列表', e)
+  }
+  // Keep the stored selection valid if the backend no longer offers it.
+  if (languageOptions.value.length && !languageOptions.value.some(lang => lang.code === targetLanguage.value)) {
+    const fallback = languageOptions.value[0]
+    if (fallback) targetLanguage.value = fallback.code
   }
   try {
     const res = await api.get('/auth/model-profiles')
@@ -435,7 +463,8 @@ async function translate() {
   if (pendingImageFiles.value.length && imageProcessingMode.value === 'model') {
     try {
       const request = { sourceText: sourceText.value, model: model.value, modelProfileId: modelProfileId.value,
-        customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined }
+        customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined,
+        targetLanguage: targetLanguage.value }
       const response = await translateImages(pendingImageFiles.value, request)
       result.value = response.data
       useStreaming.value = false
@@ -465,6 +494,7 @@ async function translate() {
       modelProfileId.value,
       customPrompt.value || undefined,
       selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
+      targetLanguage.value,
       (token: string) => {
         if (status.value === 'preparing') status.value = 'ai-processing'
         streamingText.value += token
@@ -511,7 +541,8 @@ async function translate() {
         model: model.value,
         modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined,
-        presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined
+        presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
+        targetLanguage: targetLanguage.value
       }, { signal: controller.signal })
       result.value = res.data
     } catch (e: unknown) {

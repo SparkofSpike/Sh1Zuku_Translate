@@ -42,6 +42,7 @@ export function translateStream(
   modelProfileId: number | null | undefined,
   customPrompt: string | undefined,
   presets: string[] | undefined,
+  targetLanguage: string | undefined,
   onToken: (token: string) => void,
   onDone: (response: TranslateResponse) => void,
   onError: (error: string) => void
@@ -58,7 +59,7 @@ export function translateStream(
   fetch(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets } as TranslateRequest),
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage } as TranslateRequest),
     signal: controller.signal
   }).then(async response => {
     if (!response.ok) {

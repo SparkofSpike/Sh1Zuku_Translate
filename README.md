@@ -364,6 +364,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /translate/image` | Authenticated + email verified | Translate one or more uploaded images in a single multimodal call. Send repeatable `images` fields (up to 10); the singular `image` field is still accepted for older clients. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names. |
+| `GET /translation/languages` | Public | Return the configured target languages (`code` + `label`), so the UI reads the list from configuration instead of hardcoding it. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order; each item includes `requireConfirmation`. |
 | `GET /announcements/pending` | Authenticated | Return announcements flagged as requiring confirmation that the current user has not confirmed yet. |
 | `POST /announcements/{id}/acknowledge` | Authenticated | Record that the current user confirmed the announcement (idempotent). |
