@@ -1,11 +1,32 @@
-name: Build
+name: Deploy
+
+# 生产部署（日本 RainYun 机 / Debian 12 + systemd）：
+#   构建前端 → 打入后端 static → 打包 jar → 备份线上 jar → scp 上传
+#   → 同步 deepseek.api.default-model → systemctl restart shizuku-backend → 验证
+#
+# 触发刻意设为「仅手动」：AGENTS.md 规定「部署到云端需用户同意」，故不做 push 自动部署。
+# 若将来要改成 push 即上线，把 on: 换成：
+#     on:
+#       push:
+#         branches: [main]
+#
+# 一次性前置条件：
+#   - secrets.SERVER_HOST / SERVER_PORT / SERVER_USER / SERVER_PATH 指向日本生产机
+#   - secrets.SERVER_SSH_KEY 为 CI 专用密钥（其公钥已写入服务器 /root/.ssh/authorized_keys）
+#   - 服务器上已有 /opt/shizuku-translate/env（600，含 DEEPSEEK_API_KEY 等），本 workflow 不触碰它
 
 on:
-  push:
-    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /opt/shizuku-translate
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,70 +35,142 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: ShizukuTranslate-frontend/package-lock.json
 
       - name: Build frontend
         run: |
           cd ShizukuTranslate-frontend
-          npm ci && npm run build
+          npm ci
+          npm run build
 
-      - name: Copy to backend static
+      - name: Copy frontend into backend static
         run: |
           rm -rf ShizukuTranslate/src/main/resources/static
           mkdir -p ShizukuTranslate/src/main/resources/static
           cp -r ShizukuTranslate-frontend/dist/* ShizukuTranslate/src/main/resources/static/
 
-      - name: Build backend
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          java-version: 21
-          distribution: 'temurin'
-          cache: 'maven'
-      - run: |
-          cd ShizukuTranslate
-          mvn clean package -DskipTests
-          cp target/*.jar target/translator.jar
+          java-version: '21'
+          distribution: temurin
+          cache: maven
 
-      - name: Package
+      - name: Build backend
         run: |
-          mkdir -p deploy_package/logs
-          cp ShizukuTranslate/target/translator.jar deploy_package/
-          cp -r ocr-worker deploy_package/
-          rm -rf deploy_package/ocr-worker/venv deploy_package/ocr-worker/.venv deploy_package/ocr-worker/__pycache__
-          cp .github/workflows/deploy.ps1 deploy_package/
-          # Create compressed archive for transfer
-          tar czf deploy_package.tar.gz -C deploy_package .
-          # Split into 4MB chunks to avoid Windows SCP issues
-          split -b 4m deploy_package.tar.gz deploy_chunk_
-          ls -la deploy_chunk_*
+          cd ShizukuTranslate
+          mvn -B clean package -DskipTests
+          cp target/translator-*.jar target/translator.jar
+          ls -l target/translator.jar
 
-      - name: Upload chunks
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          port: ${{ secrets.SERVER_PORT }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: deploy_chunk_*
-          target: ${{ secrets.SERVER_PATH }}
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SERVER_PORT }}" \
+            -o StrictHostKeyChecking=no -o BatchMode=yes \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" 'echo SSH_OK; hostname'
 
-      - name: Reassemble and restart
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          port: ${{ secrets.SERVER_PORT }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd /d D:\Sh1ZukuTranslate
-            powershell -Command "$chunks=Get-ChildItem deploy_chunk_*|Sort-Object Name;$data=@();foreach($c in $chunks){$data+=[System.IO.File]::ReadAllBytes($c.FullName);del $c.FullName};[System.IO.File]::WriteAllBytes('pkg.tgz',$data)"
-            gzip -d -f pkg.tgz 2>nul
-            tar xf pkg.tar 2>nul
-            del pkg.tar 2>nul
-            taskkill /f /im java.exe 2>nul
-            taskkill /f /im python.exe 2>nul
-            timeout /t 3 /nobreak >nul
-            start /B python ocr-worker\ocr_server.py > logs\ocr.log 2>&1
-            timeout /t 5 /nobreak >nul
-            start /B java -jar translator.jar > logs\backend.log 2>&1
+      - name: Backup current jar and upload new one
+        run: |
+          HOST="${{ secrets.SERVER_HOST }}"
+          PORT="${{ secrets.SERVER_PORT }}"
+          USER="${{ secrets.SERVER_USER }}"
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "cp -p $APP_DIR/translator.jar $APP_DIR/translator.jar.bak-$STAMP && \
+             cp -p $APP_DIR/application.yml $APP_DIR/application.yml.bak-$STAMP && \
+             echo backup-ok:.bak-$STAMP"
+
+          echo "--- uploading jar ---"
+          time scp -i ~/.ssh/deploy_key -P "$PORT" -o StrictHostKeyChecking=no \
+            ShizukuTranslate/target/translator.jar "$USER@$HOST:$APP_DIR/translator.jar"
+
+          LOCAL_SIZE=$(stat -c%s ShizukuTranslate/target/translator.jar)
+          REMOTE_SIZE=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no \
+            "$USER@$HOST" "stat -c%s $APP_DIR/translator.jar")
+          echo "local=$LOCAL_SIZE remote=$REMOTE_SIZE"
+          test "$LOCAL_SIZE" = "$REMOTE_SIZE"
+
+      - name: Sync default-model from repository yml
+        run: |
+          MODEL=$(grep -E '^\s*default-model:' ShizukuTranslate/src/main/resources/application.yml \
+            | head -1 | sed -E 's/^\s*default-model:\s*//' | tr -d '\r')
+          echo "repository default-model = $MODEL"
+          test -n "$MODEL"
+
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SERVER_PORT }}" -o StrictHostKeyChecking=no \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "grep -n 'default-model' $APP_DIR/application.yml; \
+             sed -i -E 's|^(\s*default-model:\s*)deepseek[a-zA-Z0-9.-]*\s*\$|\1$MODEL|' $APP_DIR/application.yml; \
+             grep -n 'default-model' $APP_DIR/application.yml"
+
+      - name: Restart service and wait for readiness
+        run: |
+          HOST="${{ secrets.SERVER_HOST }}"
+          PORT="${{ secrets.SERVER_PORT }}"
+          USER="${{ secrets.SERVER_USER }}"
+
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "systemctl restart shizuku-backend && echo restarted"
+
+          for i in $(seq 1 40); do
+            CODE=$(ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no "$USER@$HOST" \
+              "curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:5566/ || true")
+            echo "attempt $i: $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "backend ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "backend did not become ready in time"
+          exit 1
+
+      - name: Verify release
+        run: |
+          HOST="${{ secrets.SERVER_HOST }}"
+          PORT="${{ secrets.SERVER_PORT }}"
+          USER="${{ secrets.SERVER_USER }}"
+          SSH="ssh -i ~/.ssh/deploy_key -p $PORT -o StrictHostKeyChecking=no $USER@$HOST"
+
+          echo "--- systemd ---"
+          $SSH "systemctl is-active shizuku-backend shizuku-ocr"
+
+          echo "--- http on host ---"
+          $SSH "curl -s -o /dev/null -w '5566=%{http_code} ' http://127.0.0.1:5566/; curl -s -o /dev/null -w '80=%{http_code}\n' http://127.0.0.1/"
+
+          echo "--- default-model on server ---"
+          $SSH "grep -n 'default-model' $APP_DIR/application.yml"
+
+          echo "--- site model keys inside the deployed jar ---"
+          KEYS=$($SSH "cd $APP_DIR && unzip -p translator.jar 'BOOT-INF/classes/static/assets/*.js' 2>/dev/null | grep -o 'site:[a-z0-9.-]*' | sort -u")
+          echo "$KEYS"
+          echo "$KEYS" | grep -q 'site:deepseek-flash'
+
+          echo "--- external reachability ---"
+          curl -sS -o /dev/null -w "public :80 -> %{http_code} in %{time_total}s\n" -m 30 "http://$HOST/"
+
+          echo "--- backend log tail ---"
+          $SSH "tail -n 3 $APP_DIR/logs/backend.log | sed 's/\x1b\[[0-9;]*m//g'"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          if [ -z "$STAMP" ]; then
+            echo "no backup stamp recorded; nothing to roll back"
+            exit 0
+          fi
+          HOST="${{ secrets.SERVER_HOST }}"
+          PORT="${{ secrets.SERVER_PORT }}"
+          USER="${{ secrets.SERVER_USER }}"
+          echo "rolling back to .bak-$STAMP"
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "cp -p $APP_DIR/translator.jar.bak-$STAMP $APP_DIR/translator.jar && \
+             cp -p $APP_DIR/application.yml.bak-$STAMP $APP_DIR/application.yml && \
+             systemctl restart shizuku-backend && echo rolled-back"
