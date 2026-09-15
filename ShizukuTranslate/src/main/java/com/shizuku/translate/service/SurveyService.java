@@ -5,6 +5,7 @@ import com.shizuku.translate.entity.SurveyRecord;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.repository.SurveyRecordRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 
@@ -30,6 +31,13 @@ public class SurveyService {
         surveyRepository.save(record);
     }
 
+    /**
+     * Not reachable from any route today (SurveyController only exposes submit), but it reads
+     * the LAZY {@code SurveyRecord.user} association, so it needs a transaction of its own now
+     * that open-in-view is off. Without it, exposing this would 500 with
+     * LazyInitializationException.
+     */
+    @Transactional(readOnly = true)
     public Map<String, Object> getStatistics() {
         List<SurveyRecord> all = surveyRepository.findAllByOrderByCreatedAtDesc();
         Double avgTQ = surveyRepository.getAvgTranslationQuality();

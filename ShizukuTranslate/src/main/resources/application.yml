@@ -5,10 +5,39 @@ spring:
   datasource:
     url: jdbc:h2:file:./data/translatordb;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
+    hikari:
+      # Explicit rather than implicit. These match HikariCP's defaults and exist to pin the
+      # intent: a request must not hold a pooled JDBC connection any longer than the SQL it
+      # runs. Exhausting this pool is what produced
+      # "HikariPool-1 - Connection is not available, request timed out after 30000ms"
+      # in production, which surfaced to Safari users as "Load failed".
+      maximum-pool-size: 10
+      minimum-idle: 10
+      connection-timeout: 10000
+      # Sentinel: logs a stack trace if a connection is ever held longer than this. Expect one
+      # line per restart from the startup migration transaction (HistoricalUsageMigrationService),
+      # which legitimately holds a connection for its whole run; anything else is a real bug.
+      leak-detection-threshold: 60000
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: false
+    # Must stay false. With it enabled Spring binds an EntityManager to the whole request and
+    # the connection it acquired is only released when the request finishes, so a long upstream
+    # model call pins a pooled connection for minutes instead of milliseconds.
+    #
+    # Measured locally with three concurrent 15 s translations against a 3-connection pool:
+    #   open-in-view=on, transactional HTTP: 3 connections held 15 s each, pool active=1 idle=0,
+    #                                         a 4th request failed with 500 / "Connection is not
+    #                                         available, request timed out"
+    #   open-in-view=on, HTTP untransacted:  still held ~15 s (the borrow just moved from
+    #                                        doBegin to the first query) - so splitting the
+    #                                        transaction alone is NOT enough
+    #   open-in-view=off:                    pool stayed idle=3 and the 4th request succeeded
+    # Lazy association reads that open-in-view used to cover are now fetched explicitly
+    # (AiModelProfileRepository uses @EntityGraph; AnnouncementService and SurveyService carry
+    # read-only transactions).
+    open-in-view: false
   h2:
     console:
       enabled: ${H2_CONSOLE_ENABLED:false}

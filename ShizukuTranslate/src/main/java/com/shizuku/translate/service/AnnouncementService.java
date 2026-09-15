@@ -83,6 +83,7 @@ public class AnnouncementService {
     }
 
     /** Admin view: users who confirmed the announcement, newest first, plus a total count. */
+    @Transactional(readOnly = true)
     public Map<String, Object> acknowledgements(Long announcementId) {
         Announcement announcement = announcementRepository.findById(announcementId)
                 .orElseThrow(() -> new ResourceNotFoundException("Announcement not found"));

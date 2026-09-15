@@ -21,7 +21,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
 import java.nio.charset.StandardCharsets;
 import org.springframework.web.multipart.MultipartFile;
 import java.security.MessageDigest;
@@ -44,25 +43,32 @@ public class TranslationService {
     private final UserService userService;
     private final PromptTemplateService promptTemplateService;
     private final UsageService usageService;
+    private final TranslationResultWriter resultWriter;
 
     public TranslationService(AiModelClient aiModelClient,
                               TranslationRecordRepository recordRepository,
                               TranslationCacheRepository cacheRepository,
                               UserService userService,
                               PromptTemplateService promptTemplateService,
-                              UsageService usageService) {
+                              UsageService usageService,
+                              TranslationResultWriter resultWriter) {
         this.aiModelClient = aiModelClient;
         this.recordRepository = recordRepository;
         this.cacheRepository = cacheRepository;
         this.userService = userService;
         this.promptTemplateService = promptTemplateService;
         this.usageService = usageService;
+        this.resultWriter = resultWriter;
     }
 
     /** Images travel in a single multimodal call, so this bound also caps the token cost per request. */
     private static final int MAX_IMAGES_PER_REQUEST = 10;
 
-    @Transactional
+    /**
+     * Image translation. The multimodal call and the database writes are deliberately kept
+     * outside any transaction: see {@link TranslationResultWriter} for why an HTTP call must
+     * never run inside a transaction (it pins a pooled JDBC connection for its whole duration).
+     */
     public TranslateResponse translateImages(String username, TranslateRequest request, List<MultipartFile> images,
                                              boolean hideCustomPrompt) throws java.io.IOException {
         if (images == null || images.isEmpty()) {
@@ -87,14 +93,9 @@ public class TranslationService {
                 request.getPresets(), request.getCustomPrompt(), request.getTargetLanguage());
         DeepSeekResult result = aiModelClient.chatWithImages(systemPrompt,
                 buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config);
-        usageService.record(user, config, result.getUsage());
-        TranslationRecord record = new TranslationRecord();
-        record.setUser(user); record.setSourceText(request.getSourceText() == null ? "" : request.getSourceText()); record.setTranslatedText(result.getContent());
-        record.setModel(config.getModel()); record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
-        record = recordRepository.save(record);
-        TranslateResponse response = new TranslateResponse(); response.setId(record.getId());
-        response.setTranslatedText(result.getContent()); response.setModel(config.getModel()); response.setCreatedAt(record.getCreatedAt());
-        response.setTokenUsage(result.getUsage()); return response;
+        return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
+                request.getSourceText() == null ? "" : request.getSourceText(),
+                hideCustomPrompt ? null : request.getCustomPrompt());
     }
 
     /**
@@ -111,7 +112,12 @@ public class TranslationService {
         return text.isBlank() ? hint : text + "\n\n" + hint;
     }
 
-    @Transactional
+    /**
+     * Non-streaming translation. Deliberately NOT transactional: the upstream model call can
+     * take minutes and must not hold a pooled JDBC connection while it runs. Database writes
+     * happen afterwards in {@link TranslationResultWriter#persistTranslate}, which owns a
+     * short transaction.
+     */
     public TranslateResponse translate(String username, TranslateRequest request, boolean hideCustomPrompt) {
         requireSourceText(request);
         User user = userService.findByUsername(username);
@@ -125,28 +131,9 @@ public class TranslationService {
         AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
 
         DeepSeekResult result = aiModelClient.chat(systemPrompt, request.getSourceText(), config);
-        String translated = result.getContent();
-        usageService.record(user, config, result.getUsage());
 
-        TranslationRecord record = new TranslationRecord();
-        record.setUser(user);
-        record.setSourceText(request.getSourceText());
-        record.setTranslatedText(translated);
-        record.setModel(config.getModel());
-        record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
-        record = recordRepository.save(record);
-
-        TranslateResponse response = new TranslateResponse();
-        response.setId(record.getId());
-        response.setTranslatedText(translated);
-        response.setModel(config.getModel());
-        response.setCreatedAt(record.getCreatedAt());
-
-        if (result.getUsage() != null) {
-            response.setTokenUsage(result.getUsage());
-        }
-
-        return response;
+        return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
+                request.getSourceText(), hideCustomPrompt ? null : request.getCustomPrompt());
     }
 
     public Page<HistoryResponse> getHistory(String username, Pageable pageable) {
