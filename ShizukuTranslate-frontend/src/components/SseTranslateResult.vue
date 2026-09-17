@@ -2,7 +2,10 @@
   <div style="margin-top: 24px;">
     <div style="display:flex; align-items:center; gap:12px;">
       <h3 style="margin:0; font-weight:600;">{{ t('components.translateResult.heading') }}</h3>
-      <button v-if="streamingText" @click="copyStreaming" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button v-if="streamingText" @click="copyStreaming" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
+        <ExportBar v-if="exportText" :text="exportText" :model="model" />
+      </div>
     </div>
     <pre v-if="streamingText" style="margin-top: 12px; white-space: pre-wrap;">{{ streamingText }}</pre>
     <pre v-else-if="result" style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
@@ -14,8 +17,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TranslateResponse } from '../types'
+import ExportBar from './ExportBar.vue'
 
 // Shares the `components.translateResult.*` keys with TranslateResult.vue: same result block.
 const { t } = useI18n()
@@ -23,7 +28,12 @@ const { t } = useI18n()
 const props = defineProps<{
   streamingText: string
   result?: TranslateResponse | null
+  /** Model used for this translation; echoed in the export credit line. */
+  model?: string
 }>()
+
+// While streaming, the partial text is exported as-is; once finished, the final result wins.
+const exportText = computed(() => props.streamingText || props.result?.translatedText || '')
 
 function copyStreaming() {
   const text = props.streamingText

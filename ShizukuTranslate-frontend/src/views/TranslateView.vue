@@ -116,8 +116,8 @@
 
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
 
-    <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" />
-    <TranslateResult v-else-if="result" :result="result" />
+    <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" :model="model" />
+    <TranslateResult v-else-if="result" :result="result" :model="model" />
     </div>
 
     <AnnouncementPanel
