@@ -214,10 +214,12 @@ public class TranslationService {
             response.setTranslatedText(cached.getTranslatedText());
             response.setModel(config.getModel());
             response.setCreatedAt(record.getCreatedAt());
+            // Older cache rows may miss individual token counts; unboxing a
+            // null field must not crash a cache-hit replay.
             if (cached.getTotalTokens() != null && cached.getTotalTokens() > 0) {
                 TokenUsage usage = new TokenUsage();
-                usage.setPromptTokens(cached.getPromptTokens());
-                usage.setCompletionTokens(cached.getCompletionTokens());
+                usage.setPromptTokens(cached.getPromptTokens() != null ? cached.getPromptTokens() : 0);
+                usage.setCompletionTokens(cached.getCompletionTokens() != null ? cached.getCompletionTokens() : 0);
                 usage.setTotalTokens(cached.getTotalTokens());
                 response.setTokenUsage(usage);
             }
