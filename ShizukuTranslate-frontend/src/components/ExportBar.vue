@@ -61,12 +61,20 @@ async function exportAs(format: ExportFormat) {
   try {
     // Lazy-loaded so docx/jsPDF (≈1 MB) stay out of the main bundle until an export happens.
     const { exportTranslation } = await import('../utils/exportFormats')
-    // The "watermark" is the credit/disclaimer block as the first line of the file.
-    const creditLine = t('components.export.creditLine', {
-      commit: import.meta.env.VITE_COMMIT || 'unknown',
-      model: props.model || '-'
-    })
-    await exportTranslation(props.text, format, creditLine)
+    // The "watermark" is the credit/disclaimer block at the top of the file. Lines 2+3
+    // share one output line; a blank line separates the disclaimers from the
+    // sign-off, and the sign-off itself spans two lines.
+    const params = { commit: import.meta.env.VITE_COMMIT || 'unknown', model: props.model || '-' }
+    const creditLines = [
+      t('components.export.creditLine1', params),
+      t('components.export.creditLine2', params) + t('components.export.creditLine3', params),
+      t('components.export.creditLine4', params),
+      t('components.export.creditLine5', params),
+      '',
+      t('components.export.creditLine6', params),
+      t('components.export.creditLine7', params)
+    ]
+    await exportTranslation(props.text, format, creditLines)
   } catch (e) {
     console.error('导出失败', e)
     error.value = true

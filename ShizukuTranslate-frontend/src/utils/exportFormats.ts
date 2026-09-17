@@ -1,10 +1,10 @@
 /**
  * Format-specific export builders: TXT, DOC (HTML), DOCX (OOXML) and PDF.
  *
- * Every export is a plain document whose first line credits the tool, e.g.
- * "本文由 ShizukuTranslate 翻译生成 · 2026-09-18" (the line text comes from
- * the i18n messages and follows the interface language). No graphics or
- * rotated shapes — just one readable line of text at the very top.
+ * Every export is a plain document that starts with a credit/disclaimer block
+ * (the "watermark"), passed in by the caller as an array of output lines —
+ * an empty string renders as a blank line. No graphics or rotated shapes,
+ * just readable gray text at the very top, then the translation body.
  */
 import {
   AlignmentType,
@@ -23,7 +23,7 @@ import {
 
 export type { ExportFormat }
 
-/** Content of a `.doc` export: the credit line is a plain paragraph at the top. */
+/** Content of a `.doc` export: the credit block is a sequence of paragraphs at the top. */
 const DOC_HTML_TEMPLATE = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
@@ -31,12 +31,12 @@ const DOC_HTML_TEMPLATE = `<!DOCTYPE html>
 <title>{TITLE}</title>
 <style>
   body { font-family: 'MS Mincho', 'SimSun', serif; font-size: 12pt; }
-  .credit { color: #808080; }
+  .credit p { color: #808080; margin: 0; }
   pre { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; }
 </style>
 </head>
 <body>
-<p class="credit">{WATERMARK}</p>
+<div class="credit">{WATERMARK}</div>
 <pre>{BODY}</pre>
 </body>
 </html>`
@@ -49,15 +49,27 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-async function exportTxt(text: string, creditLine: string): Promise<void> {
-  const content = `${creditLine}\n\n${text}\n`
+/** Credit block as one plain-text chunk (lines joined by \n), for TXT. */
+function creditText(creditLines: string[]): string {
+  return creditLines.join('\n')
+}
+
+/** Credit block as HTML paragraphs (empty line → spacer), for DOC. */
+function creditHtml(creditLines: string[]): string {
+  return creditLines
+    .map(line => (line ? `<p>${escapeHtml(line)}</p>` : '<p>&nbsp;</p>'))
+    .join('\n')
+}
+
+async function exportTxt(text: string, creditLines: string[]): Promise<void> {
+  const content = `${creditText(creditLines)}\n\n${text}\n`
   downloadBlob(new Blob([content], { type: 'text/plain;charset=utf-8' }), buildExportFilename('txt'))
 }
 
-function exportDoc(text: string, creditLine: string): void {
+function exportDoc(text: string, creditLines: string[]): void {
   const html = DOC_HTML_TEMPLATE
-    .replace('{TITLE}', 'ShizukuTranslate')
-    .replace('{WATERMARK}', escapeHtml(creditLine))
+    .replace('{TITLE}', 'Sh1Zuku_Translate')
+    .replace('{WATERMARK}', creditHtml(creditLines))
     .replace('{BODY}', escapeHtml(text))
   // Word opens this MHTML-style HTML in editing mode (the xmlns:w declaration is the switch).
   downloadBlob(
@@ -66,29 +78,29 @@ function exportDoc(text: string, creditLine: string): void {
   )
 }
 
-async function exportDocx(text: string, creditLine: string): Promise<void> {
-  // First paragraph: the gray credit line, then the translation body.
-  const paragraphs = [
+async function exportDocx(text: string, creditLines: string[]): Promise<void> {
+  // Gray credit paragraphs first (an empty entry renders as a blank line), then the body.
+  const creditParagraphs = creditLines.map(line =>
     new Paragraph({
       alignment: AlignmentType.LEFT,
-      children: [new TextRun({ text: creditLine, color: '808080', italics: true })],
-    }),
-    ...text
-      .replace(/\r\n?/g, '\n')
-      .split('\n')
-      .map(line =>
-        new Paragraph({
-          alignment: AlignmentType.LEFT,
-          children: [new TextRun({ text: line, font: 'MS Mincho' })]
-        })
-      )
-  ]
+      children: [new TextRun({ text: line, color: '808080', italics: true })],
+    })
+  )
+  const bodyParagraphs = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line =>
+      new Paragraph({
+        alignment: AlignmentType.LEFT,
+        children: [new TextRun({ text: line, font: 'MS Mincho' })]
+      })
+    )
 
   const doc = new Document({
     sections: [
       {
         properties: {},
-        children: paragraphs
+        children: [...creditParagraphs, ...bodyParagraphs]
       }
     ]
   })
@@ -97,7 +109,7 @@ async function exportDocx(text: string, creditLine: string): Promise<void> {
   downloadBlob(blob, buildExportFilename('docx'))
 }
 
-function exportPdf(text: string, creditLine: string): void {
+function exportPdf(text: string, creditLines: string[]): void {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -109,8 +121,17 @@ function exportPdf(text: string, creditLine: string): void {
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(fontSize)
 
-  // The credit line renders first (slightly gray), the body starts below it.
-  const lines: { text: string; gray: boolean }[] = [{ text: creditLine, gray: true }]
+  // Every credit line wraps independently (blank line stays blank), then the body follows.
+  const lines: { text: string; gray: boolean }[] = []
+  for (const credit of creditLines) {
+    if (!credit) {
+      lines.push({ text: '', gray: true })
+      continue
+    }
+    for (const wrapped of wrapTextByWidth(credit, contentWidth, chunk => doc.getTextWidth(chunk))) {
+      lines.push({ text: wrapped, gray: true })
+    }
+  }
   for (const line of wrapTextByWidth(text, contentWidth, chunk => doc.getTextWidth(chunk))) {
     lines.push({ text: line, gray: false })
   }
@@ -121,6 +142,7 @@ function exportPdf(text: string, creditLine: string): void {
     const lineIndex = i % linesPerPage
     if (i > 0 && lineIndex === 0) doc.addPage()
     const line = lines[i]
+    if (!line.text) continue
     doc.setTextColor(line.gray ? 128 : 20)
     doc.text(line.text, margin, margin + (lineIndex + 1) * lineHeight)
   }
@@ -129,20 +151,21 @@ function exportPdf(text: string, creditLine: string): void {
 }
 
 /**
- * Export `text` as `format`. `creditLine` is the first line of the output
- * (localized, with the export date already filled in by the caller).
+ * Export `text` as `format`. `creditLines` is the credit/disclaimer block at the
+ * top of the output (localized, with commit/model filled in by the caller);
+ * an empty entry renders as a blank line.
  * The promise resolves once the file has been handed to the browser.
  */
-export async function exportTranslation(text: string, format: ExportFormat, creditLine: string): Promise<void> {
+export async function exportTranslation(text: string, format: ExportFormat, creditLines: string[]): Promise<void> {
   if (!text.trim()) return
   switch (format) {
     case 'txt':
-      return exportTxt(text, creditLine)
+      return exportTxt(text, creditLines)
     case 'doc':
-      return exportDoc(text, creditLine)
+      return exportDoc(text, creditLines)
     case 'docx':
-      return exportDocx(text, creditLine)
+      return exportDocx(text, creditLines)
     case 'pdf':
-      return exportPdf(text, creditLine)
+      return exportPdf(text, creditLines)
   }
 }

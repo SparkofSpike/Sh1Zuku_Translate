@@ -23,13 +23,14 @@ export default {
     label: 'Export',
     exporting: 'Exporting…',
     failed: 'Export failed, please try again',
-    // First line of every exported file. {commit} = site build commit, {model} = model used.
-    creditLine: 'This article was translated by Sh1Zuku_Translate (build {commit}) using the model {model}, for study and exchange only. '
-      + 'All source code is open-sourced under the MIT license at https://github.com/SparkofSpike/Sh1Zuku_Translate. '
-      + 'Found a problem? Please open an issue/PR; if you like it, please give us a star! '
-      + 'Disclaimer: AI-generated results may be inaccurate — please double-check. Sh1Zuku_Translate and its maintainer Sh1Zuku accept no legal liability for anything arising from this translation. '
-      + 'When republishing, you may trim this notice but must keep labels such as "AI translation" or "machine translation". '
-      + 'Long live fandom! Long live love! The text follows —',
+    // First lines of every exported file, one key per output line. {commit} = site build commit, {model} = model used.
+    creditLine1: 'This article was translated by Sh1Zuku_Translate (build {commit}) using the model {model}, for study and exchange only.',
+    creditLine2: 'All source code is open-sourced under the MIT license at https://github.com/SparkofSpike/Sh1Zuku_Translate.',
+    creditLine3: 'Found a problem? Please open an issue/PR; if you like it, please give us a star!',
+    creditLine4: 'Disclaimer: AI-generated results may be inaccurate — please double-check. Sh1Zuku_Translate and its maintainer Sh1Zuku accept no legal liability for anything arising from this translation.',
+    creditLine5: 'When republishing, you may trim this notice but must keep labels such as "AI translation" or "machine translation".',
+    creditLine6: 'Long live fandom! Long live love!',
+    creditLine7: 'The text follows —',
     format: {
       docx: 'Word document (.docx)',
       doc: 'Word document (.doc)',
