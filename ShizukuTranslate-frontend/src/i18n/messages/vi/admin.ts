@@ -66,6 +66,27 @@ export default {
     time: 'Thời gian xác nhận',
     empty: 'Chưa có người dùng xác nhận thông báo này'
   },
+  presets: {
+    title: 'Cài đặt dịch thuật',
+    subtitle: 'Cài đặt được chèn vào prompt hệ thống theo tên; sau khi lưu có hiệu lực ngay, không cần triển khai lại',
+    namePlaceholder: 'Tên cài đặt (ví dụ: Kaguya!)',
+    promptPlaceholder: 'Nội dung cài đặt (yêu cầu dịch được chèn vào prompt hệ thống)',
+    create: 'Tạo cài đặt',
+    update: 'Lưu thay đổi',
+    saving: 'Đang lưu...',
+    empty: 'Chưa có cài đặt',
+    confirmDelete: 'Bạn chắc chắn muốn xóa cài đặt này chứ? Người dùng sẽ không thể chọn lại nó.',
+    errors: {
+      load: 'Tải cài đặt thất bại',
+      fillNamePrompt: 'Vui lòng điền tên và nội dung cài đặt',
+      save: 'Lưu cài đặt thất bại',
+      delete: 'Xóa cài đặt thất bại'
+    },
+    messages: {
+      created: 'Đã tạo cài đặt',
+      updated: 'Đã cập nhật cài đặt'
+    }
+  },
   logs: {
     title: 'Nhật ký tiện ích',
     subtitle: 'Báo cáo lỗi do tiện ích mở rộng trên trình duyệt gửi lên',

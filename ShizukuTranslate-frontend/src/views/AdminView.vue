@@ -123,6 +123,37 @@
       <p v-else class="muted">{{ t('admin.announce.empty') }}</p>
     </section>
 
+    <section class="card admin-card preset-section">
+      <h3 class="section-title">{{ t('admin.presets.title') }}</h3>
+      <p class="muted">{{ t('admin.presets.subtitle') }}</p>
+      <div class="preset-editor">
+        <input v-model.trim="presetForm.name" type="text" maxlength="100" :placeholder="t('admin.presets.namePlaceholder')" />
+        <textarea v-model="presetForm.prompt" rows="4" :placeholder="t('admin.presets.promptPlaceholder')"></textarea>
+        <div class="preset-editor-actions">
+          <button @click="savePreset" :disabled="presetSaving">
+            {{ presetSaving ? t('admin.presets.saving') : (presetEditingId ? t('admin.presets.update') : t('admin.presets.create')) }}
+          </button>
+          <button v-if="presetEditingId" class="btn-sm btn-detail" @click="cancelPresetEdit">{{ t('common.cancel') }}</button>
+        </div>
+      </div>
+      <div v-if="presetLoading" class="muted">{{ t('admin.loading') }}</div>
+      <div v-else-if="presets.length" class="preset-list">
+        <article v-for="preset in presets" :key="preset.id" class="preset-item">
+          <div class="preset-content">
+            <h4>{{ preset.name }}</h4>
+            <p class="preset-prompt">{{ preset.prompt }}</p>
+          </div>
+          <div class="preset-actions">
+            <button class="btn-sm btn-detail" @click="startPresetEdit(preset)">{{ t('common.edit') }}</button>
+            <button class="btn-sm btn-remove" @click="removePreset(preset.id)">{{ t('common.delete') }}</button>
+          </div>
+        </article>
+      </div>
+      <p v-else class="muted">{{ t('admin.presets.empty') }}</p>
+      <p v-if="presetError" class="error">{{ presetError }}</p>
+      <p v-if="presetSuccess" class="success">{{ presetSuccess }}</p>
+    </section>
+
     <div v-if="detailUser" class="modal-backdrop" @click.self="detailUser = null">
       <section class="modal card">
         <div class="page-heading">
@@ -177,21 +208,52 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '../api'
 import { renderMarkdown } from '../utils/markdown'
+import type { AdminPreset } from '../utils/html'
+import type { Announcement, UsageDay, UsageLog, UsageModel, UsageUser } from '../types'
+
+interface AdminUsage {
+  totalTokens: number
+  promptTokens: number
+  completionTokens: number
+  requestCount: number
+  daily: UsageDay[]
+  byModel: UsageModel[]
+  users: UsageUser[]
+}
+
+interface AdminUserDetail {
+  user: UsageUser
+  summary: UsageSummaryLike
+  logs: UsageLog[]
+}
+
+interface UsageSummaryLike {
+  totalTokens: number
+  promptTokens: number
+  completionTokens: number
+}
+
+interface AckModal {
+  title: string
+  total: number
+  users: { username: string; email: string; acknowledgedAt: string }[]
+}
 
 const { t } = useI18n()
 
-const usage = ref({ totalTokens: 0, promptTokens: 0, completionTokens: 0, requestCount: 0, daily: [], byModel: [], users: [] })
+const usage = ref<AdminUsage>({ totalTokens: 0, promptTokens: 0, completionTokens: 0, requestCount: 0, daily: [], byModel: [], users: [] })
 
 // 账户用量表格排序：不按是默认，第一次点击升序，第二次降序，第三次还原，以此类推
-const sortKey = ref(null)        // 'username' | 'totalTokens' | 'requestCount' | 'latestUsedAt' | null
-const sortDirection = ref(null)  // 'asc' | 'desc' | null（null 表示还原为默认顺序）
+type SortKey = 'username' | 'totalTokens' | 'requestCount' | 'latestUsedAt'
+const sortKey = ref<SortKey | null>(null)
+const sortDirection = ref<'asc' | 'desc' | null>(null)  // null 表示还原为默认顺序
 
-function cycleSort(key) {
+function cycleSort(key: SortKey) {
   if (sortKey.value !== key) {
     sortKey.value = key
     sortDirection.value = 'asc'
@@ -203,7 +265,7 @@ function cycleSort(key) {
   }
 }
 
-function sortIndicator(key) {
+function sortIndicator(key: SortKey) {
   if (sortKey.value !== key) return ''
   return sortDirection.value === 'asc' ? ' ↑' : ' ↓'
 }
@@ -211,10 +273,11 @@ function sortIndicator(key) {
 const sortedUsers = computed(() => {
   const users = usage.value.users || []
   if (!sortKey.value || !sortDirection.value) return users
+  const key: SortKey = sortKey.value
   const dir = sortDirection.value === 'asc' ? 1 : -1
   return [...users].sort((a, b) => {
-    const av = a[sortKey.value]
-    const bv = b[sortKey.value]
+    const av = a[key]
+    const bv = b[key]
     // 空值（如暂无使用时间）始终排在最后
     if (av == null && bv == null) return 0
     if (av == null) return 1
@@ -224,41 +287,118 @@ const sortedUsers = computed(() => {
   })
 })
 const usageLoading = ref(true)
-const detailUser = ref(null)
+const detailUser = ref<AdminUserDetail | null>(null)
 const detailLoading = ref(false)
 const error = ref('')
 const title = ref('')
 const content = ref('')
 const requireConfirmation = ref(false)
 const editorMode = ref('write')
-const announcements = ref([])
+const announcements = ref<Announcement[]>([])
 const loading = ref(true)
 const publishing = ref(false)
 const success = ref('')
-const ackModal = ref(null)  // { title, total, users } | null
+const ackModal = ref<AckModal | null>(null)  // null when closed
 const ackLoading = ref(false)
-const togglingId = ref(null)
+const togglingId = ref<number | null>(null)
+
+// ─── Preset management (database-backed, admin CRUD) ─────────
+const presets = ref<AdminPreset[]>([])
+const presetLoading = ref(false)
+const presetSaving = ref(false)
+const presetEditingId = ref<number | null>(null)
+const presetForm = ref({ name: '', prompt: '' })
+const presetError = ref('')
+const presetSuccess = ref('')
+
+async function loadPresets() {
+  presetLoading.value = true
+  try {
+    const res = await api.get<AdminPreset[]>('/admin/presets')
+    presets.value = res.data || []
+  } catch (e) {
+    presetError.value = apiError(e, t('admin.presets.errors.load'))
+  } finally {
+    presetLoading.value = false
+  }
+}
+
+async function savePreset() {
+  if (!presetForm.value.name || !presetForm.value.prompt.trim()) {
+    presetError.value = t('admin.presets.errors.fillNamePrompt')
+    return
+  }
+  presetSaving.value = true
+  presetError.value = ''
+  try {
+    if (presetEditingId.value) {
+      await api.put('/admin/presets/' + presetEditingId.value, {
+        name: presetForm.value.name,
+        prompt: presetForm.value.prompt.trim()
+      })
+      presetSuccess.value = t('admin.presets.messages.updated')
+    } else {
+      await api.post('/admin/presets', {
+        name: presetForm.value.name,
+        prompt: presetForm.value.prompt.trim()
+      })
+      presetSuccess.value = t('admin.presets.messages.created')
+    }
+    cancelPresetEdit()
+    await loadPresets()
+  } catch (e) {
+    presetError.value = apiError(e, t('admin.presets.errors.save'))
+  } finally {
+    presetSaving.value = false
+  }
+}
+
+function startPresetEdit(preset: AdminPreset) {
+  presetEditingId.value = preset.id
+  presetForm.value = { name: preset.name, prompt: preset.prompt }
+  presetSuccess.value = ''
+  presetError.value = ''
+}
+
+function cancelPresetEdit() {
+  presetEditingId.value = null
+  presetForm.value = { name: '', prompt: '' }
+}
+
+async function removePreset(id: number) {
+  if (!window.confirm(t('admin.presets.confirmDelete'))) return
+  presetError.value = ''
+  try {
+    await api.delete('/admin/presets/' + id)
+    if (presetEditingId.value === id) cancelPresetEdit()
+    await loadPresets()
+  } catch (e) {
+    presetError.value = apiError(e, t('admin.presets.errors.delete'))
+  }
+}
+
+onMounted(() => { loadUsage(); loadAnnouncements(); loadPresets() })
 
 async function loadUsage() {
   usageLoading.value = true
   try {
-    const res = await api.get('/admin/usage')
+    const res = await api.get<AdminUsage>('/admin/usage')
     usage.value = res.data
   } catch (e) {
-    error.value = e.response?.data?.error || t('admin.errors.loadUsage')
+    error.value = apiError(e, t('admin.errors.loadUsage'))
   } finally {
     usageLoading.value = false
   }
 }
 
-async function showDetails(user) {
+async function showDetails(user: UsageUser) {
   detailLoading.value = true
   detailUser.value = { user, summary: user, logs: [] }
   try {
-    const res = await api.get('/admin/usage/users/' + user.id)
+    const res = await api.get<AdminUserDetail>('/admin/usage/users/' + user.id)
     detailUser.value = res.data
   } catch (e) {
-    error.value = e.response?.data?.error || t('admin.errors.loadUserLogs')
+    error.value = apiError(e, t('admin.errors.loadUserLogs'))
     detailUser.value = null
   } finally {
     detailLoading.value = false
@@ -267,10 +407,10 @@ async function showDetails(user) {
 
 async function loadAnnouncements() {
   try {
-    const res = await api.get('/announcements')
+    const res = await api.get<Announcement[]>('/announcements')
     announcements.value = res.data || []
   } catch (e) {
-    error.value = t('admin.errors.loadAnnouncements') + (e.response?.data?.error || '')
+    error.value = t('admin.errors.loadAnnouncements') + apiError(e, '')
   } finally { loading.value = false }
 }
 
@@ -286,68 +426,74 @@ async function publish() {
     })
     title.value = ''; content.value = ''; requireConfirmation.value = false; editorMode.value = 'write'; success.value = t('admin.messages.published')
     await loadAnnouncements()
-  } catch (e) { error.value = e.response?.data?.error || t('admin.errors.publishFailed') }
+  } catch (e) { error.value = apiError(e, t('admin.errors.publishFailed')) }
   finally { publishing.value = false }
 }
 
-async function showAcknowledgements(announcement) {
+async function showAcknowledgements(announcement: Announcement) {
   ackLoading.value = true
   ackModal.value = { title: announcement.title, total: 0, users: [] }
   try {
-    const res = await api.get('/admin/announcements/' + announcement.id + '/acknowledgements')
+    const res = await api.get<{ total: number; users: AckModal['users'] }>('/admin/announcements/' + announcement.id + '/acknowledgements')
     ackModal.value = {
       title: announcement.title,
       total: res.data.total || 0,
       users: res.data.users || []
     }
   } catch (e) {
-    error.value = e.response?.data?.error || t('admin.errors.loadAcks')
+    error.value = apiError(e, t('admin.errors.loadAcks'))
     ackModal.value = null
   } finally {
     ackLoading.value = false
   }
 }
 
-async function removeAnnouncement(id) {
+async function removeAnnouncement(id: number) {
   if (!window.confirm(t('admin.confirmDelete'))) return
   try { await api.delete('/admin/announcements/' + id); await loadAnnouncements() }
-  catch (e) { error.value = e.response?.data?.error || t('admin.errors.deleteFailed') }
+  catch (e) { error.value = apiError(e, t('admin.errors.deleteFailed')) }
 }
 
 // Toggle the confirmation flag: disable to stop the pop-up, re-enable to bring it back.
-async function toggleConfirmation(announcement) {
+async function toggleConfirmation(announcement: Announcement) {
   if (togglingId.value) return
   const required = !announcement.requireConfirmation
   togglingId.value = announcement.id
   error.value = ''
   try {
-    const res = await api.patch('/admin/announcements/' + announcement.id + '/confirmation-required', {
+    const res = await api.patch<Announcement>('/admin/announcements/' + announcement.id + '/confirmation-required', {
       requireConfirmation: required
     })
     const updated = res.data
     const idx = announcements.value.findIndex((a) => a.id === announcement.id)
     if (idx !== -1 && updated) announcements.value[idx] = updated
   } catch (e) {
-    error.value = e.response?.data?.error || t('admin.errors.updateFailed')
+    error.value = apiError(e, t('admin.errors.updateFailed'))
   } finally {
     togglingId.value = null
   }
 }
 
-function formatNumber(value) { return Number(value || 0).toLocaleString() }
-function formatDate(value) { return value ? value.replace('T', ' ').slice(0, 16) : t('admin.none') }
-function shortDate(value) { return value ? value.slice(5).replace('-', '/') : '' }
-function providerLabel(value) { return value === 'anthropic' ? 'Anthropic' : value === 'openai' ? t('admin.provider.openai') : 'DeepSeek' }
-function barHeight(value) {
+// ─── Shared helpers ─────────
+function apiError(e: unknown, fallback: string): string {
+  const message = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+  return message || fallback
+}
+
+function formatNumber(value: unknown) { return Number(value || 0).toLocaleString() }
+function formatDate(value: string | null | undefined) { return value ? value.replace('T', ' ').slice(0, 16) : t('admin.none') }
+function shortDate(value: string) { return value ? value.slice(5).replace('-', '/') : '' }
+function providerLabel(value: string) { return value === 'anthropic' ? 'Anthropic' : value === 'openai' ? t('admin.provider.openai') : 'DeepSeek' }
+function barHeight(value: number) {
   const max = Math.max(...(usage.value.daily || []).map(day => day.totalTokens), 1)
   return value ? Math.max(8, Math.round(value / max * 100)) : 2
 }
-function modelWidth(value) {
+function modelWidth(value: number) {
   const max = Math.max(...(usage.value.byModel || []).map(item => item.totalTokens), 1)
   return value ? Math.max(4, Math.round(value / max * 100)) : 0
 }
 
-onMounted(() => { loadUsage(); loadAnnouncements() })
+onMounted(() => { loadUsage(); loadAnnouncements(); loadPresets() })
 </script>
 
 <style scoped>
@@ -356,6 +502,17 @@ onMounted(() => { loadUsage(); loadAnnouncements() })
 .page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 h2 { margin: 0; font-weight: 600; }
 h3 { font-size: 16px; font-weight: 600; }
+.preset-section { margin-top: 0; }
+.preset-editor { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.preset-editor input, .preset-editor textarea { width: 100%; box-sizing: border-box; }
+.preset-editor-actions { display: flex; gap: 8px; }
+.preset-list { display: flex; flex-direction: column; }
+.preset-item { display: flex; align-items: flex-start; gap: 16px; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+.preset-content { min-width: 0; flex: 1; }
+.preset-item h4 { margin: 0; font-size: 15px; }
+.preset-prompt { margin: 6px 0 0; color: #666; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preset-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+@media (max-width: 720px) { .preset-item { flex-direction: column; gap: 8px; } .preset-actions { flex-direction: row; justify-content: flex-end; } }
 .muted { color: #777; font-size: 13px; }
 .page-heading p { margin: 3px 0 0; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }

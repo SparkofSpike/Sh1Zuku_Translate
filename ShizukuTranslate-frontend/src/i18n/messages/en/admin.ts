@@ -66,6 +66,27 @@ export default {
     time: 'Confirmed at',
     empty: 'No users have confirmed this announcement'
   },
+  presets: {
+    title: 'Translation presets',
+    subtitle: 'Presets are injected into the system prompt by name; saving takes effect immediately without a redeployment',
+    namePlaceholder: 'Preset name (e.g. Kaguya!)',
+    promptPlaceholder: 'Preset content (translation rules appended to the system prompt)',
+    create: 'Create preset',
+    update: 'Save changes',
+    saving: 'Saving...',
+    empty: 'No presets',
+    confirmDelete: 'Delete this preset? Users will no longer be able to select it.',
+    errors: {
+      load: 'Failed to load presets',
+      fillNamePrompt: 'Please provide the preset name and content',
+      save: 'Failed to save the preset',
+      delete: 'Failed to delete the preset'
+    },
+    messages: {
+      created: 'Preset created',
+      updated: 'Preset updated'
+    }
+  },
   logs: {
     title: 'Extension logs',
     subtitle: 'Error reports submitted by the browser extension',

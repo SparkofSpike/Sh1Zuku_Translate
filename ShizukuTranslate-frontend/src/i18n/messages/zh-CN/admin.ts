@@ -66,6 +66,27 @@ export default {
     time: '确认时间',
     empty: '暂无用户确认此公告'
   },
+  presets: {
+    title: '翻译预设',
+    subtitle: '预设按名称注入系统提示词，保存后立即生效，无需重新部署',
+    namePlaceholder: '预设名称（如：超时空辉夜姬！）',
+    promptPlaceholder: '预设内容（追加到系统提示词的翻译要求）',
+    create: '新建预设',
+    update: '保存修改',
+    saving: '保存中...',
+    empty: '暂无预设',
+    confirmDelete: '确定要删除这个预设吗？正在使用它的用户将无法再选择它。',
+    errors: {
+      load: '加载预设失败',
+      fillNamePrompt: '请填写预设名称和内容',
+      save: '保存预设失败',
+      delete: '删除预设失败'
+    },
+    messages: {
+      created: '预设创建成功',
+      updated: '预设更新成功'
+    }
+  },
   logs: {
     title: '插件日志',
     subtitle: '浏览器插件提交的错误报告',
