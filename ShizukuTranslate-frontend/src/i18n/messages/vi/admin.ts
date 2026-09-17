@@ -38,6 +38,9 @@ export default {
     publishedTitle: 'Thông báo đã đăng',
     needConfirm: 'Cần xác nhận',
     acknowledgements: 'Tình trạng xác nhận',
+    noConfirmNeeded: 'Không cần xác nhận nữa',
+    restoreConfirm: 'Khôi phục xác nhận',
+    updating: 'Đang cập nhật...',
     empty: 'Chưa có thông báo'
   },
   detail: {
@@ -85,6 +88,7 @@ export default {
     fillTitleContent: 'Vui lòng điền tiêu đề và nội dung thông báo',
     publishFailed: 'Đăng thất bại',
     loadAcks: 'Tải danh sách xác nhận thất bại',
+    updateFailed: 'Cập nhật thông báo thất bại',
     deleteFailed: 'Xóa thất bại',
     loadLogs: 'Tải nhật ký thất bại'
   },

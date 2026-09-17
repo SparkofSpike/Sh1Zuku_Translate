@@ -376,6 +376,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /admin/usage` | Administrator | Return global token totals, charts, and per-user summaries. |
 | `GET /admin/usage/users/{userId}` | Administrator | Return one user's token log. |
 | `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text; `requireConfirmation: true` makes every user confirm it once before it stops popping up. |
+| `PATCH /admin/announcements/{id}/confirmation-required` | Administrator | Toggle whether the announcement still requires user confirmation. Disabling stops the pop-up for unconfirmed users; re-enabling brings it back, keeping existing confirmations. |
 | `GET /admin/announcements/{id}/acknowledgements` | Administrator | List the users who confirmed an announcement, newest first, plus a total count. |
 | `POST /plugin/logs` | Authenticated or extension API key | Submit browser-extension error reports. |
 | `GET /plugin/logs` | Authenticated | List the current user's reports; administrators see all reports. |

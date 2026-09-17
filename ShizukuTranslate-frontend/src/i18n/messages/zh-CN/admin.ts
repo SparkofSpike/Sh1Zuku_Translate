@@ -38,6 +38,9 @@ export default {
     publishedTitle: '已发布公告',
     needConfirm: '需确认',
     acknowledgements: '确认情况',
+    noConfirmNeeded: '不再需要确认',
+    restoreConfirm: '恢复需确认',
+    updating: '更新中...',
     empty: '暂无公告'
   },
   detail: {
@@ -85,6 +88,7 @@ export default {
     fillTitleContent: '请填写公告标题和内容',
     publishFailed: '发布失败',
     loadAcks: '加载确认列表失败',
+    updateFailed: '更新公告失败',
     deleteFailed: '删除失败',
     loadLogs: '加载日志失败'
   },

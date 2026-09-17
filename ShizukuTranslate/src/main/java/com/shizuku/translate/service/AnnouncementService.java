@@ -82,6 +82,20 @@ public class AnnouncementService {
                 .build());
     }
 
+    /**
+     * Admin: turn the confirmation requirement for one announcement on or off.
+     * Disabling makes it stop popping up for users who have not confirmed yet;
+     * re-enabling brings the pop-up back (previous confirmations are kept, so
+     * users who already confirmed are not asked again).
+     */
+    @Transactional
+    public Map<String, Object> setConfirmationRequired(Long id, boolean required) {
+        Announcement announcement = announcementRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Announcement not found"));
+        announcement.setRequireConfirmation(required);
+        return toMap(announcementRepository.save(announcement));
+    }
+
     /** Admin view: users who confirmed the announcement, newest first, plus a total count. */
     @Transactional(readOnly = true)
     public Map<String, Object> acknowledgements(Long announcementId) {

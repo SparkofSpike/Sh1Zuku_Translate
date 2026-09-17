@@ -2,6 +2,7 @@ package com.shizuku.translate.controller;
 
 import com.shizuku.translate.config.AppConfig;
 import com.shizuku.translate.dto.AnnouncementRequest;
+import com.shizuku.translate.exception.BusinessException;
 import com.shizuku.translate.service.AnnouncementService;
 import com.shizuku.translate.service.UsageService;
 import jakarta.validation.Valid;
@@ -50,6 +51,19 @@ public class AdminController {
                                                 Principal principal) {
         checkAdmin(principal);
         return ResponseEntity.ok(announcementService.create(request));
+    }
+
+    /** Toggle whether an announcement still requires user confirmation (stop/start popping up). */
+    @PatchMapping("/announcements/{id}/confirmation-required")
+    public ResponseEntity<?> setAnnouncementConfirmationRequired(@PathVariable Long id,
+                                                                 @RequestBody Map<String, Boolean> body,
+                                                                 Principal principal) {
+        checkAdmin(principal);
+        Boolean required = body == null ? null : body.get("requireConfirmation");
+        if (required == null) {
+            throw new BusinessException("requireConfirmation 不能为空");
+        }
+        return ResponseEntity.ok(announcementService.setConfirmationRequired(id, required));
     }
 
     @GetMapping("/announcements/{id}/acknowledgements")

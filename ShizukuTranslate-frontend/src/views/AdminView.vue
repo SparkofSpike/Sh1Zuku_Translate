@@ -112,6 +112,10 @@
           </div>
           <div class="announcement-actions">
             <button v-if="announcement.requireConfirmation" class="btn-sm btn-detail" @click="showAcknowledgements(announcement)">{{ t('admin.announce.acknowledgements') }}</button>
+            <button class="btn-sm btn-detail" :disabled="togglingId === announcement.id" @click="toggleConfirmation(announcement)">{{
+              togglingId === announcement.id ? t('admin.announce.updating') :
+              announcement.requireConfirmation ? t('admin.announce.noConfirmNeeded') : t('admin.announce.restoreConfirm')
+            }}</button>
             <button class="btn-sm btn-remove" @click="removeAnnouncement(announcement.id)">{{ t('common.delete') }}</button>
           </div>
         </article>
@@ -233,6 +237,7 @@ const publishing = ref(false)
 const success = ref('')
 const ackModal = ref(null)  // { title, total, users } | null
 const ackLoading = ref(false)
+const togglingId = ref(null)
 
 async function loadUsage() {
   usageLoading.value = true
@@ -307,6 +312,26 @@ async function removeAnnouncement(id) {
   if (!window.confirm(t('admin.confirmDelete'))) return
   try { await api.delete('/admin/announcements/' + id); await loadAnnouncements() }
   catch (e) { error.value = e.response?.data?.error || t('admin.errors.deleteFailed') }
+}
+
+// Toggle the confirmation flag: disable to stop the pop-up, re-enable to bring it back.
+async function toggleConfirmation(announcement) {
+  if (togglingId.value) return
+  const required = !announcement.requireConfirmation
+  togglingId.value = announcement.id
+  error.value = ''
+  try {
+    const res = await api.patch('/admin/announcements/' + announcement.id + '/confirmation-required', {
+      requireConfirmation: required
+    })
+    const updated = res.data
+    const idx = announcements.value.findIndex((a) => a.id === announcement.id)
+    if (idx !== -1 && updated) announcements.value[idx] = updated
+  } catch (e) {
+    error.value = e.response?.data?.error || t('admin.errors.updateFailed')
+  } finally {
+    togglingId.value = null
+  }
 }
 
 function formatNumber(value) { return Number(value || 0).toLocaleString() }
