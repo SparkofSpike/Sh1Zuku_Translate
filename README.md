@@ -10,8 +10,8 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 - **Personal model profiles** with reusable provider API keys: one personal API key can be shared by multiple model profiles. The profile page can proxy provider model-list detection and still permits manual model names when detection is unavailable.
 - **Streaming translation** over Server-Sent Events (SSE), with cancellation support in the web UI.
 - **Translation cache** for streaming requests. Cache entries are keyed by user, provider, endpoint, model, prompt, and source text, and are removed after 30 days.
-- **Preset prompts** for series-specific style rules, plus a **terminology glossary**. Each glossed concept stores one spelling per language (Japanese, Korean, Chinese, Vietnamese), and the request's target language decides which spelling is rendered into the prompt — the right-hand side is always the target language, so another language's output can never leak in. Adding a language is a configuration change under `app.translation.target-languages`, not a code change. An optional custom prompt is appended last.
-- **Interface languages** (Simplified Chinese and Vietnamese) through vue-i18n. The interface language also sets the default translation target, so a reader who switches the site to Vietnamese gets Vietnamese output without touching the language picker; the picker itself stays available as an override.
+- **Preset prompts** for series-specific style rules, plus a **terminology glossary**. Presets live in a database table that administrators manage through the admin panel (create, edit, delete), so style rules can be tuned without a redeployment; `app.presets` in the configuration file only seeds missing names on first startup. Each glossed concept stores one spelling per language (Japanese, Korean, Chinese, Vietnamese), and the request's target language decides which spelling is rendered into the prompt — the right-hand side is always the target language, so another language's output can never leak in. Adding a language is a configuration change under `app.translation.target-languages`, not a code change. An optional custom prompt is appended last.
+- **Interface languages** (Simplified Chinese, Vietnamese, and English) through vue-i18n. The interface language also sets the default translation target, so a reader who switches the site to Vietnamese gets Vietnamese output without touching the language picker; the picker itself stays available as an override.
 - **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once and choose **model processing** with `deepseek-flash` (all pages are translated in one multimodal call, in upload order) or **OCR processing** through the PaddleOCR worker (pages are recognised one at a time and joined afterwards). Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
@@ -260,7 +260,7 @@ Sh1Zuku_Translate/
 │   │   ├── security/           # JWT and API-key authentication filters
 │   │   └── service/            # Translation, OCR, user, survey, usage, and announcement services
 │   └── src/main/resources/
-│       ├── application.yml     # Runtime settings, target languages, glossary, presets
+│       ├── application.yml     # Runtime settings, target languages, glossary, preset seeds
 │       └── static/              # Copied production frontend assets
 ├── ShizukuTranslate-frontend/  # Vue 3 and TypeScript frontend
 │   └── src/
@@ -366,7 +366,11 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
 | `POST /translate/image` | Authenticated + email verified | Translate one or more uploaded images in a single multimodal call. Send repeatable `images` fields (up to 10); the singular `image` field is still accepted for older clients. |
 | `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
-| `GET /presets` | Public | Return configured preset names. |
+| `GET /presets` | Public | Return configured preset names, served from the database. |
+| `GET /admin/presets` | Administrator | List all presets including their prompts. |
+| `POST /admin/presets` | Administrator | Create a preset with a unique name and its prompt text. |
+| `PUT /admin/presets/{id}` | Administrator | Rename a preset or edit its prompt. |
+| `DELETE /admin/presets/{id}` | Administrator | Delete a preset. |
 | `GET /translation/languages` | Public | Return the configured target languages (`code` + `label`). A translate request may carry one of these codes as `targetLanguage`; a missing or unrecognised value falls back to `app.translation.default-target-language`, so older clients are unaffected. |
 | `GET /announcements` | Public | Return announcements in reverse chronological order; each item includes `requireConfirmation`. |
 | `GET /announcements/pending` | Authenticated | Return announcements flagged as requiring confirmation that the current user has not confirmed yet. |
@@ -382,10 +386,26 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /plugin/logs` | Authenticated | List the current user's reports; administrators see all reports. |
 | `DELETE /admin/announcements/{id}` | Administrator | Delete an announcement. |
 
+## Testing
+
+A push/PR triggered GitHub Actions workflow (`.github/workflows/test.yml`) runs the backend tests and the frontend typecheck plus unit tests on every change; the deploy workflow remains manually triggered.
+
+```powershell
+# Backend (JUnit, 43 tests)
+cd ShizukuTranslate
+mvn test
+
+# Frontend (vue-tsc typecheck + vitest)
+cd ShizukuTranslate-frontend
+npm run typecheck
+npm test
+```
+
+The backend suite covers prompt assembly, translation and cache-replay behavior, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, and JWT issuing. The frontend suite covers the safe Markdown renderer and HTML escaping helpers.
+
 ## Known limitations
 
 - The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
-- The frontend package defines `dev`, `build`, and `preview` scripts but no test or typecheck script; `npm run build` is the available frontend verification command.
 - The backend exposes the H2 console at `/h2-console` in the checked-in configuration; protect or disable it before exposing the service outside a trusted environment.
 - H2 file storage is convenient for this deployment but is not a replacement for a production database with stronger operational tooling.
 - The browser extension is distributed as an unpacked extension rather than through a browser store, so users must reload it after updates.
