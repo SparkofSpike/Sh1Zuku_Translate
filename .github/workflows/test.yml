@@ -1,0 +1,50 @@
+name: Test
+
+# push / PR 触发的质量门禁：后端 mvn test + 前端 vue-tsc 类型检查 + vitest。
+# 与 deploy.yml（仅手动触发）互不影响；部署前本地 CI 应当先绿。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Run backend tests
+        run: mvn -B test
+        working-directory: ShizukuTranslate
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ShizukuTranslate-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ShizukuTranslate-frontend
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: ShizukuTranslate-frontend
+
+      - name: Unit tests
+        run: npm test
+        working-directory: ShizukuTranslate-frontend
