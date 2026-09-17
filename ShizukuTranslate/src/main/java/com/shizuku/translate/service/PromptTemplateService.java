@@ -1,10 +1,14 @@
 package com.shizuku.translate.service;
 
 import com.shizuku.translate.config.AppConfig;
+import com.shizuku.translate.entity.Preset;
+import com.shizuku.translate.repository.PresetRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class PromptTemplateService {
@@ -14,10 +18,14 @@ public class PromptTemplateService {
 
     private final AppConfig.AppProperties appProperties;
     private final GlossaryService glossaryService;
+    private final PresetRepository presetRepository;
 
-    public PromptTemplateService(AppConfig.AppProperties appProperties, GlossaryService glossaryService) {
+    public PromptTemplateService(AppConfig.AppProperties appProperties,
+                                 GlossaryService glossaryService,
+                                 PresetRepository presetRepository) {
         this.appProperties = appProperties;
         this.glossaryService = glossaryService;
+        this.presetRepository = presetRepository;
     }
 
     /**
@@ -43,6 +51,15 @@ public class PromptTemplateService {
     public static final String DEFAULT_STREAM_PROMPT =
             "你是一名专业小说翻译，请将用户提供的小说原文翻译为{language}，保持原文风格和语气。"
             + "原文可能为日语、韩语或中文，请自行判断，不要询问用户。";
+
+    /**
+     * Preset prompts keyed by name, loaded from the database (admin-editable at runtime).
+     * A name without a row still keeps the raw name in the prompt so nothing is silently dropped.
+     */
+    private Map<String, String> presetMap() {
+        return presetRepository.findAll().stream()
+                .collect(Collectors.toMap(Preset::getName, Preset::getPrompt, (a, b) -> a));
+    }
 
     /**
      * Build a complete system prompt by combining the default prompt with user-selected presets,
@@ -72,7 +89,7 @@ public class PromptTemplateService {
         }
 
         if (presets != null && !presets.isEmpty()) {
-            Map<String, String> presetMap = appProperties.getPresetMap();
+            Map<String, String> presetMap = presetMap();
             systemPrompt.append("\n\n请特别注意以下要求：");
             for (String presetKey : presets) {
                 String prompt = presetMap.get(presetKey);

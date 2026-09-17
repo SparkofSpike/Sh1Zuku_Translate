@@ -2,8 +2,10 @@ package com.shizuku.translate.controller;
 
 import com.shizuku.translate.config.AppConfig;
 import com.shizuku.translate.dto.AnnouncementRequest;
+import com.shizuku.translate.dto.PresetRequest;
 import com.shizuku.translate.exception.BusinessException;
 import com.shizuku.translate.service.AnnouncementService;
+import com.shizuku.translate.service.PresetService;
 import com.shizuku.translate.service.UsageService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -19,16 +21,24 @@ public class AdminController {
     private final AnnouncementService announcementService;
     private final AppConfig.AppProperties appProperties;
     private final UsageService usageService;
+    private final PresetService presetService;
 
     public AdminController(AnnouncementService announcementService,
                            AppConfig.AppProperties appProperties,
-                           UsageService usageService) {
+                           UsageService usageService,
+                           PresetService presetService) {
         this.announcementService = announcementService;
         this.appProperties = appProperties;
         this.usageService = usageService;
+        this.presetService = presetService;
     }
 
     private void checkAdmin(Principal principal) {
+        checkAdmin(appProperties, principal);
+    }
+
+    /** Shared with PresetController's admin listing endpoint. */
+    static void checkAdmin(AppConfig.AppProperties appProperties, Principal principal) {
         if (principal == null || !appProperties.isAdmin(principal.getName())) {
             throw new RuntimeException("无管理员权限");
         }
@@ -77,5 +87,26 @@ public class AdminController {
         checkAdmin(principal);
         announcementService.delete(id);
         return ResponseEntity.ok(Map.of("message", "公告已删除"));
+    }
+
+    @PostMapping("/presets")
+    public ResponseEntity<?> createPreset(@Valid @RequestBody PresetRequest request, Principal principal) {
+        checkAdmin(principal);
+        return ResponseEntity.ok(presetService.create(request.getName(), request.getPrompt()));
+    }
+
+    @PutMapping("/presets/{id}")
+    public ResponseEntity<?> updatePreset(@PathVariable Long id,
+                                          @Valid @RequestBody PresetRequest request,
+                                          Principal principal) {
+        checkAdmin(principal);
+        return ResponseEntity.ok(presetService.update(id, request.getName(), request.getPrompt()));
+    }
+
+    @DeleteMapping("/presets/{id}")
+    public ResponseEntity<?> deletePreset(@PathVariable Long id, Principal principal) {
+        checkAdmin(principal);
+        presetService.delete(id);
+        return ResponseEntity.ok(Map.of("message", "预设已删除"));
     }
 }
