@@ -118,6 +118,9 @@ app:
         # The concrete relationship -> pronoun mapping still needs a native speaker, so this is
         # deliberately left empty rather than guessed.
         prompt-notes: ""
+      - code: en
+        label: English
+        prompt-notes: ""
 
   # ── Glossary seed data ──────────────────────────────────────────────────────
   # Seeded into glossary_concepts / glossary_terms on first startup, per series,

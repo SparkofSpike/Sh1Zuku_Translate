@@ -1,6 +1,6 @@
 # ShizukuTranslate
 
-ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese novels. The source language is detected by the model and the target language is chosen per request (`zh-CN` by default, `vi` supported), so one work can be read in more than one language. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
+ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese novels. The source language is detected by the model and the target language is chosen per request (`zh-CN` by default, `vi` and `en` supported), so one work can be read in more than one language. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
 
 ## Features
 
@@ -320,7 +320,7 @@ Other runtime defaults in `application.yml`:
 - Multipart limits: 20 MB per file and 60 MB per request (a multi-image upload arrives as one request).
 - Translation cache cleanup: entries older than 30 days are removed daily at 03:00.
 - Administrator usernames: configured by `app.admin-usernames` in `application.yml`.
-- Target languages: `app.translation.target-languages` (currently `zh-CN` and `vi`), with `app.translation.default-target-language` as the fallback. A translate request may carry `targetLanguage`; a missing or unrecognised value falls back to the default, so older clients keep behaving exactly as before.
+- Target languages: `app.translation.target-languages` (currently `zh-CN`, `vi`, and `en`), with `app.translation.default-target-language` as the fallback. A translate request may carry `targetLanguage`; a missing or unrecognised value falls back to the default, so older clients keep behaving exactly as before.
 - Series terminology: `app.glossary` seeds the `glossary_concepts` and `glossary_terms` tables. Seeding runs per series and only when that series has no concepts yet, so edits made later (for example through a future admin UI) survive a restart. A preset whose name matches a `series` injects that series' terms into the system prompt.
 - Glossaries are anchored on concepts, not language pairs: a nickname and a full name are deliberately separate concepts because they translate differently, and each concept carries one spelling per language. Japanese proper nouns are not rendered with Sino-Vietnamese readings; Vietnamese readers use the romanised name as-is (`Iroha`, `Kaguya`, `Yachiyo`), which is what the `vi` column holds.
 

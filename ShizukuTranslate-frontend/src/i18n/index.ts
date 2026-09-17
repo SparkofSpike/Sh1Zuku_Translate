@@ -1,6 +1,7 @@
 import { createI18n } from 'vue-i18n'
 import zhCN from './messages/zh-CN'
 import vi from './messages/vi'
+import en from './messages/en'
 
 /**
  * Interface languages offered by the web app. `code` doubles as the value sent as the
@@ -10,7 +11,8 @@ import vi from './messages/vi'
  */
 export const SUPPORTED_LOCALES = [
   { code: 'zh-CN', label: '简体中文' },
-  { code: 'vi', label: 'Tiếng Việt' }
+  { code: 'vi', label: 'Tiếng Việt' },
+  { code: 'en', label: 'English' }
 ] as const
 
 export type LocaleCode = (typeof SUPPORTED_LOCALES)[number]['code']
@@ -27,6 +29,7 @@ export function detectLocale(): LocaleCode {
   if (isSupportedLocale(stored)) return stored
   const browser = (navigator.language || '').toLowerCase()
   if (browser.startsWith('vi')) return 'vi'
+  if (browser.startsWith('en')) return 'en'
   return 'zh-CN'
 }
 
@@ -34,7 +37,7 @@ export const i18n = createI18n({
   legacy: false,
   locale: detectLocale(),
   fallbackLocale: 'zh-CN',
-  messages: { 'zh-CN': zhCN, vi }
+  messages: { 'zh-CN': zhCN, vi, en }
 })
 
 export function currentLocale(): LocaleCode {
