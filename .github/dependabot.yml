@@ -1,0 +1,28 @@
+# Dependabot 版本跟进配置。
+#
+# 目前只启用 github-actions 生态：自动跟进 .github/workflows/*.yml 里
+# `uses:` 的 action 版本（checkout / setup-java / setup-node 等），
+# 避免再次出现 v4 这类跑在退役 Node 运行时上、每次运行都报
+# deprecation annotation 的情况。
+#
+# - 每周检查一次；所有可更新项合并为一个 PR（groups），减少打扰。
+# - test.yml 在 pull_request 时自动跑后端测试 + 前端类型检查/单测，
+#   所以每个 Dependabot PR 在合并前都会被 CI 验证。
+# - commit-message prefix 沿用仓库的 conventional commits 规范（ci: ...）。
+#
+# 注意：npm（ShizukuTranslate-frontend）不在跟进范围内 —— 依赖升级属于
+# 代码变更，需要本地验证，不适合自动 PR。
+
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
