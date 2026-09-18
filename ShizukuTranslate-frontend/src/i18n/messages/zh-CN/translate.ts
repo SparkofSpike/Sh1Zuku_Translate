@@ -26,6 +26,8 @@ export default {
   customPrompt: '自定义附加Prompt（可选）',
   start: '开始翻译',
   cancel: '取消翻译',
+  retranslate: '重新翻译',
+  retranslateHint: '强制重新翻译：忽略缓存和已有翻译结果，重新调用 AI',
   siteModelPrefix: '站方',
   status: {
     preparing: '正在连接服务器…',

@@ -6,6 +6,11 @@ export interface TranslateRequest {
   presets?: string[]
   /** Target language tag; the backend falls back to its configured default when omitted. */
   targetLanguage?: string
+  /**
+   * Re-translate switch: ignore the caller's own cache AND other users' translations of the
+   * same text, and force a fresh model call. The new result is still cached afterwards.
+   */
+  skipCache?: boolean
 }
 
 /** A target language offered by the backend (`GET /translation/languages`). */
@@ -26,6 +31,10 @@ export interface TranslateResponse {
   model: string
   createdAt: string
   tokenUsage?: TokenUsage
+  /** Served from another user's earlier translation of the same text (no model call). */
+  fromSharedTranslation?: boolean
+  /** Replayed from this user's own translation cache. */
+  fromCache?: boolean
 }
 
 export interface OcrResponse {

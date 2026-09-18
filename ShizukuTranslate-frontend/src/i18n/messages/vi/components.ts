@@ -16,6 +16,8 @@ export default {
   // Shared by TranslateResult.vue and SseTranslateResult.vue: both render the same result block.
   translateResult: {
     heading: 'Kết quả dịch',
+    sharedBadge: 'Người dùng khác đã dịch',
+    cacheBadge: 'Trả từ bộ nhớ đệm',
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Tiêu thụ Token: Đầu vào {prompt} {'|'} Đầu ra {completion} {'|'} Tổng {total}"
   },

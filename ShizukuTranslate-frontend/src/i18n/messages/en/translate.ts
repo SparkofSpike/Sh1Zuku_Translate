@@ -26,6 +26,8 @@ export default {
   customPrompt: 'Custom extra prompt (optional)',
   start: 'Start translation',
   cancel: 'Cancel translation',
+  retranslate: 'Re-translate',
+  retranslateHint: 'Force re-translation: ignores the cache and existing translations, calls the AI again',
   siteModelPrefix: 'Site',
   status: {
     preparing: 'Connecting to the server…',

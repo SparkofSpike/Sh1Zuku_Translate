@@ -26,6 +26,8 @@ export default {
   customPrompt: 'Prompt bổ sung tùy chỉnh (không bắt buộc)',
   start: 'Bắt đầu dịch',
   cancel: 'Hủy dịch',
+  retranslate: 'Dịch lại',
+  retranslateHint: 'Buộc dịch lại: bỏ qua bộ nhớ đệm và bản dịch có sẵn, gọi AI lần nữa',
   siteModelPrefix: 'Máy chủ',
   status: {
     preparing: 'Đang kết nối tới máy chủ…',

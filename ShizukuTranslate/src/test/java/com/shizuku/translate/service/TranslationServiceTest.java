@@ -123,7 +123,9 @@ class TranslationServiceTest {
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(aiModelClient).chat(promptCaptor.capture(), eq("原文"), any(AiModelConfig.class));
         assertTrue(promptCaptor.getValue().contains("简体中文"));
-        verify(resultWriter).persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), eq("原文"), eq(null));
+        // Fresh model translations must carry the resolved target language so they can be
+        // found by other users' shared-translation lookups.
+        verify(resultWriter).persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), eq("原文"), eq(null), eq("zh-CN"));
     }
 
     @Test
@@ -249,5 +251,151 @@ class TranslationServiceTest {
         assertEquals("你好", done.get(0).getTranslatedText());
         // The completed translation is cached for the next identical request.
         verify(cacheRepository).save(any(com.shizuku.translate.entity.TranslationCache.class));
+    }
+
+    private static TranslationRecord sharedRecord(Long id, String text) {
+        TranslationRecord rec = TranslationRecord.builder()
+                .id(id)
+                .sourceText("原文")
+                .translatedText(text)
+                .model("别人的模型")
+                .targetLanguage("zh-CN")
+                .build();
+        rec.setCreatedAt(java.time.LocalDateTime.now());
+        return rec;
+    }
+
+    @Test
+    void streamingSharedTranslationIsReplayedInsteadOfCallingTheModel() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "m", "disabled"));
+        when(recordRepository.findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(1L, "原文", "zh-CN"))
+                .thenReturn(java.util.Optional.of(sharedRecord(7L, "别人的译文")));
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(9L);
+            return rec;
+        });
+
+        List<String> tokens = new java.util.ArrayList<>();
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request("原文", null, null), false,
+                tokens::add, done::add, error -> { }, () -> { });
+
+        assertEquals(List.of("别人的译文"), tokens);
+        assertEquals("别人的译文", done.get(0).getTranslatedText());
+        assertTrue(done.get(0).isFromSharedTranslation());
+        verify(aiModelClient, never()).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+        // The reused translation still lands in the caller's own history.
+        ArgumentCaptor<TranslationRecord> saved = ArgumentCaptor.forClass(TranslationRecord.class);
+        verify(recordRepository).save(saved.capture());
+        assertEquals("zh-CN", saved.getValue().getTargetLanguage());
+        // The personal cache is not consulted once a shared result was served.
+        verify(cacheRepository, never()).findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString());
+    }
+
+    @Test
+    void skipCacheBypassesSharedTranslationsAndForcesAFreshModelCall() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "m", "disabled"));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(9L);
+            return rec;
+        });
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            onToken.accept("新译文");
+            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            return null;
+        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        TranslateRequest req = request("原文", null, null);
+        req.setSkipCache(true);
+        List<String> tokens = new java.util.ArrayList<>();
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", req, false,
+                tokens::add, done::add, error -> { }, () -> { });
+
+        assertEquals(List.of("新译文"), tokens);
+        assertTrue(done.get(0).isFromSharedTranslation() == false);
+        assertTrue(done.get(0).isFromCache() == false);
+        // Neither reuse path may even be queried.
+        verify(recordRepository, never())
+                .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(any(), any(), any());
+        verify(cacheRepository, never()).findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString());
+    }
+
+    @Test
+    void nonStreamingSharedTranslationIsServedWithoutAModelCall() {
+        when(recordRepository.findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(1L, "原文", "zh-CN"))
+                .thenReturn(java.util.Optional.of(sharedRecord(7L, "别人的译文")));
+
+        TranslateResponse response = service.translate("alice", request("原文", null, null), false);
+
+        assertEquals("别人的译文", response.getTranslatedText());
+        assertTrue(response.isFromSharedTranslation());
+        verify(aiModelClient, never()).chat(anyString(), anyString(), any(AiModelConfig.class));
+    }
+
+    @Test
+    void streamingNonSharedResultIsTaggedAsCacheAndNotShared() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "m", "disabled"));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(9L);
+            return rec;
+        });
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            onToken.accept("新译文");
+            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            return null;
+        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request("原文", null, null), false,
+                t -> { }, done::add, error -> { }, () -> { });
+
+        assertTrue(done.get(0).isFromSharedTranslation() == false);
+        assertTrue(done.get(0).isFromCache() == false);
+    }
+
+    @Test
+    void streamingCacheHitIsTaggedFromCache() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "m", "disabled"));
+        com.shizuku.translate.entity.TranslationCache cached =
+                com.shizuku.translate.entity.TranslationCache.builder()
+                        .userId(1L)
+                        .cacheKey("k")
+                        .model("m")
+                        .translatedText("缓存译文")
+                        .totalTokens(10)
+                        .build();
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of(cached));
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(9L);
+            return rec;
+        });
+
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request("原文", null, null), false,
+                t -> { }, done::add, error -> { }, () -> { });
+
+        assertTrue(done.get(0).isFromCache());
+        assertTrue(done.get(0).isFromSharedTranslation() == false);
     }
 }

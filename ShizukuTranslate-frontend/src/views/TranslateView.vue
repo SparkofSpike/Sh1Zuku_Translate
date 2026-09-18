@@ -100,17 +100,27 @@
       style="margin-top:16px;"
     ></textarea>
 
-    <button
-      @click="status === 'idle' ? translate() : cancel()"
-      :disabled="false"
-      :style="{
-        marginTop: '16px',
-        background: status === 'idle' ? undefined : '#e03131',
-        borderColor: status === 'idle' ? undefined : '#e03131',
-      }"
-    >
-      {{ status === 'idle' ? t('translate.start') : t('translate.cancel') }}
-    </button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button
+        @click="status === 'idle' ? translate() : cancel()"
+        :disabled="false"
+        :style="{
+          marginTop: '16px',
+          background: status === 'idle' ? undefined : '#e03131',
+          borderColor: status === 'idle' ? undefined : '#e03131',
+        }"
+      >
+        {{ status === 'idle' ? t('translate.start') : t('translate.cancel') }}
+      </button>
+      <button
+        v-if="status === 'idle' && hasReusableResult"
+        @click="translate(true)"
+        class="retranslate-btn"
+      >
+        {{ t('translate.retranslate') }}
+      </button>
+    </div>
+    <p v-if="status === 'idle' && hasReusableResult" class="retranslate-hint">{{ t('translate.retranslateHint') }}</p>
 
     <p v-if="statusText" class="translate-status">{{ statusText }}</p>
 
@@ -208,6 +218,13 @@ const announcements = ref<Announcement[]>([])
 
 const result = ref<TranslateResponse | null>(null)
 const error = ref('')
+
+/**
+ * True while the finished result on screen came from someone else's translation or the
+ * personal cache — the two cases where "re-translate" adds something the start button alone
+ * cannot express. Cleared whenever a new translation starts or the source text changes.
+ */
+const hasReusableResult = ref(false)
 
 const status = ref<'idle' | 'preparing' | 'ai-processing'>('idle')
 
@@ -352,6 +369,14 @@ onUnmounted(() => {
   cancel()
 })
 
+// Any input that changes what a re-translation would mean (the text itself, the model or the
+// target language) invalidates the "re-translate" affordance until the next completed result.
+watch(
+  [sourceText, selectedModelKey, customPrompt, selectedPresets, targetLanguage],
+  () => { hasReusableResult.value = false },
+  { deep: true }
+)
+
 function readSelectedProfileId(): number | null {
   const value = localStorage.getItem('modelProfileId')
   const id = value ? Number(value) : 0
@@ -494,7 +519,7 @@ function cancel() {
   error.value = ''
 }
 
-async function translate() {
+async function translate(forceRetranslate = false) {
   if (!sourceText.value.trim() && !pendingImageFiles.value.length) return
   if (pendingImageFiles.value.length && imageProcessingMode.value === 'model') {
     try {
@@ -517,6 +542,7 @@ async function translate() {
   }
   status.value = 'preparing'
   error.value = ''
+  hasReusableResult.value = false
 
   if (streamingEnabled.value) {
     useStreaming.value = true
@@ -537,6 +563,7 @@ async function translate() {
       },
       (response: TranslateResponse) => {
         streamingResult.value = response
+        hasReusableResult.value = true
         status.value = 'idle'
         cancelFn = null
       },
@@ -544,7 +571,8 @@ async function translate() {
         error.value = err
         status.value = 'idle'
         cancelFn = null
-      }
+      },
+      forceRetranslate
     )
 
     cancelFn = () => {
@@ -578,9 +606,11 @@ async function translate() {
         modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined,
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
-        targetLanguage: targetLanguage.value
+        targetLanguage: targetLanguage.value,
+        skipCache: forceRetranslate || undefined
       }, { signal: controller.signal })
       result.value = res.data
+      hasReusableResult.value = true
     } catch (e: unknown) {
       if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
       const err = e as { response?: { data?: { error?: string } } }
@@ -616,6 +646,23 @@ async function translate() {
 
 @keyframes translate-spin {
   to { transform: rotate(360deg); }
+}
+
+.retranslate-btn {
+  margin-top: 16px;
+  background: #f0f0f0;
+  color: #1a1a1a;
+  border: 1px solid #ccc;
+}
+
+.retranslate-btn:hover {
+  background: #e6e6e6;
+}
+
+.retranslate-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-muted, #666);
 }
 
 .translate-layout {

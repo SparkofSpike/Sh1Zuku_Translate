@@ -147,7 +147,8 @@ public class TranslateController {
                         },
                         response -> {
                             if (!closed.get()) {
-                                String json = writeJson(new SseDoneEvent(response.getId(), response.getTranslatedText(), response.getTokenUsage()));
+                                String json = writeJson(new SseDoneEvent(response.getId(), response.getTranslatedText(),
+                                        response.getTokenUsage(), response.isFromSharedTranslation(), response.isFromCache()));
                                 if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
                                     emitter.complete();
                                 }

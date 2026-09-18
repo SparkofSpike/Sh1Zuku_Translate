@@ -93,6 +93,8 @@ public class TranslationService {
                 request.getPresets(), request.getCustomPrompt(), request.getTargetLanguage());
         DeepSeekResult result = aiModelClient.chatWithImages(systemPrompt,
                 buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config);
+        // Image pages have no stable source text, so the result is recorded without a target
+        // language and deliberately never shared — only exact-text matches are reusable.
         return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
                 request.getSourceText() == null ? "" : request.getSourceText(),
                 hideCustomPrompt ? null : request.getCustomPrompt());
@@ -121,6 +123,21 @@ public class TranslationService {
     public TranslateResponse translate(String username, TranslateRequest request, boolean hideCustomPrompt) {
         requireSourceText(request);
         User user = userService.findByUsername(username);
+        String resolvedTargetLanguage = promptTemplateService.resolveTargetLanguage(request.getTargetLanguage());
+
+        // Reuse someone else's translation before spending tokens on the model. Resolving the
+        // target language here (rather than re-deriving it from the prompt) keeps the column
+        // value and the lookup key identical for writer and reader.
+        if (!request.isSkipCache()) {
+            TranslationRecord shared = recordRepository
+                    .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
+                            user.getId(), request.getSourceText(), resolvedTargetLanguage)
+                    .orElse(null);
+            if (shared != null) {
+                log.info("Serving shared translation for user {} from record {}", user.getId(), shared.getId());
+                return sharedResponse(shared);
+            }
+        }
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
                 PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
@@ -133,7 +150,19 @@ public class TranslationService {
         DeepSeekResult result = aiModelClient.chat(systemPrompt, request.getSourceText(), config);
 
         return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
-                request.getSourceText(), hideCustomPrompt ? null : request.getCustomPrompt());
+                request.getSourceText(), hideCustomPrompt ? null : request.getCustomPrompt(),
+                resolvedTargetLanguage);
+    }
+
+    /** Builds the response for a translation reused from another user's history. */
+    private static TranslateResponse sharedResponse(TranslationRecord shared) {
+        TranslateResponse response = new TranslateResponse();
+        response.setId(shared.getId());
+        response.setTranslatedText(shared.getTranslatedText());
+        response.setModel(shared.getModel());
+        response.setCreatedAt(shared.getCreatedAt());
+        response.setFromSharedTranslation(true);
+        return response;
     }
 
     public Page<HistoryResponse> getHistory(String username, Pageable pageable) {
@@ -186,6 +215,42 @@ public class TranslationService {
         if (cancelled.getAsBoolean()) {
             return;
         }
+        // Resolved once so the shared-translation lookup key, the history row and the response
+        // all describe the same language.
+        String resolvedTargetLanguage = promptTemplateService.resolveTargetLanguage(request.getTargetLanguage());
+
+        // Reuse another user's translation of the same text into the same language before
+        // checking anything else: it saves the caller tokens, and unlike the personal cache it
+        // is interesting information even when the user has their own cached copy.
+        if (!request.isSkipCache()) {
+            TranslationRecord shared = recordRepository
+                    .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
+                            user.getId(), request.getSourceText(), resolvedTargetLanguage)
+                    .orElse(null);
+            if (shared != null) {
+                log.info("Serving shared translation for user {} from record {}", user.getId(), shared.getId());
+                onToken.accept(shared.getTranslatedText());
+
+                TranslationRecord ownRecord = new TranslationRecord();
+                ownRecord.setUser(user);
+                ownRecord.setSourceText(request.getSourceText());
+                ownRecord.setTranslatedText(shared.getTranslatedText());
+                ownRecord.setModel(config.getModel());
+                ownRecord.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
+                ownRecord.setTargetLanguage(resolvedTargetLanguage);
+                ownRecord = recordRepository.save(ownRecord);
+
+                TranslateResponse response = new TranslateResponse();
+                response.setId(ownRecord.getId());
+                response.setTranslatedText(shared.getTranslatedText());
+                response.setModel(config.getModel());
+                response.setCreatedAt(ownRecord.getCreatedAt());
+                response.setFromSharedTranslation(true);
+                onComplete.accept(response);
+                return;
+            }
+        }
+
         TranslationCache cached = null;
         if (!request.isSkipCache()) {
             java.util.List<TranslationCache> cachedEntries =
@@ -207,6 +272,7 @@ public class TranslationService {
             record.setTranslatedText(cached.getTranslatedText());
             record.setModel(config.getModel());
             record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
+            record.setTargetLanguage(promptTemplateService.resolveTargetLanguage(request.getTargetLanguage()));
             record = recordRepository.save(record);
 
             TranslateResponse response = new TranslateResponse();
@@ -214,6 +280,7 @@ public class TranslationService {
             response.setTranslatedText(cached.getTranslatedText());
             response.setModel(config.getModel());
             response.setCreatedAt(record.getCreatedAt());
+            response.setFromCache(true);
             // Older cache rows may miss individual token counts; unboxing a
             // null field must not crash a cache-hit replay.
             if (cached.getTotalTokens() != null && cached.getTotalTokens() > 0) {
@@ -248,6 +315,7 @@ public class TranslationService {
                     record.setTranslatedText(fullText.toString());
                     record.setModel(config.getModel());
                     record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
+                    record.setTargetLanguage(resolvedTargetLanguage);
                     record = recordRepository.save(record);
 
                     TranslateResponse response = new TranslateResponse();

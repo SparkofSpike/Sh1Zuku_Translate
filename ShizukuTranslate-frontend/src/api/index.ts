@@ -45,7 +45,9 @@ export function translateStream(
   targetLanguage: string | undefined,
   onToken: (token: string) => void,
   onDone: (response: TranslateResponse) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  /** Re-translate: bypass both the personal cache and other users' shared translations. */
+  skipCache: boolean = false
 ): AbortController {
   const controller = new AbortController()
   const token = localStorage.getItem('token')
@@ -59,7 +61,7 @@ export function translateStream(
   fetch(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage } as TranslateRequest),
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache } as TranslateRequest),
     signal: controller.signal
   }).then(async response => {
     if (!response.ok) {

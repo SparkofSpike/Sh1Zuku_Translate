@@ -5,6 +5,10 @@ public class SseDoneEvent {
     private Long id;
     private String translatedText;
     private TokenUsage tokenUsage;
+    /** @see TranslateResponse#fromSharedTranslation */
+    private boolean fromSharedTranslation;
+    /** @see TranslateResponse#fromCache */
+    private boolean fromCache;
 
     public SseDoneEvent() {}
 
@@ -13,6 +17,16 @@ public class SseDoneEvent {
         this.id = id;
         this.translatedText = translatedText;
         this.tokenUsage = tokenUsage;
+    }
+
+    public SseDoneEvent(Long id, String translatedText, TokenUsage tokenUsage,
+                        boolean fromSharedTranslation, boolean fromCache) {
+        this.done = true;
+        this.id = id;
+        this.translatedText = translatedText;
+        this.tokenUsage = tokenUsage;
+        this.fromSharedTranslation = fromSharedTranslation;
+        this.fromCache = fromCache;
     }
 
     public boolean isDone() {
@@ -45,5 +59,21 @@ public class SseDoneEvent {
 
     public void setTokenUsage(TokenUsage tokenUsage) {
         this.tokenUsage = tokenUsage;
+    }
+
+    public boolean isFromSharedTranslation() {
+        return fromSharedTranslation;
+    }
+
+    public void setFromSharedTranslation(boolean fromSharedTranslation) {
+        this.fromSharedTranslation = fromSharedTranslation;
+    }
+
+    public boolean isFromCache() {
+        return fromCache;
+    }
+
+    public void setFromCache(boolean fromCache) {
+        this.fromCache = fromCache;
     }
 }

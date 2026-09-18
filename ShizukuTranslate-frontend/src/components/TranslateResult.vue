@@ -1,7 +1,9 @@
 <template>
   <div style="margin-top: 24px;">
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
       <h3 style="margin:0; font-weight:600;">{{ t('components.translateResult.heading') }}</h3>
+      <span v-if="result.fromSharedTranslation" class="origin-badge origin-badge--shared">{{ t('components.translateResult.sharedBadge') }}</span>
+      <span v-else-if="result.fromCache" class="origin-badge origin-badge--cache">{{ t('components.translateResult.cacheBadge') }}</span>
       <div style="display:flex; align-items:center; gap:8px;">
         <button @click="copyResult" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
         <ExportBar v-if="result.translatedText" :text="result.translatedText" :model="model" />
@@ -45,3 +47,27 @@ function copyResult() {
   }
 }
 </script>
+
+<style scoped>
+.origin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.origin-badge--shared {
+  background: #fff3bf;
+  color: #8a6d00;
+  border: 1px solid #f0c93a;
+}
+
+.origin-badge--cache {
+  background: #e7f5ff;
+  color: #1864ab;
+  border: 1px solid #a5c8f0;
+}
+</style>

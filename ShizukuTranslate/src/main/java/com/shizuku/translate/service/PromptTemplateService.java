@@ -16,6 +16,15 @@ public class PromptTemplateService {
     /** Replaced with the resolved target-language name, e.g. "简体中文". */
     private static final String LANGUAGE_PLACEHOLDER = "{language}";
 
+    /**
+     * Resolves a client-supplied target-language tag to a configured one (e.g. {@code zh-CN}).
+     * Exposed for callers that need the same resolved tag the prompt builder will use, so a
+     * lookup key (shared-translation search, cache key) and a stored value can never drift apart.
+     */
+    public String resolveTargetLanguage(String requested) {
+        return appProperties.resolveTargetLanguage(requested);
+    }
+
     private final AppConfig.AppProperties appProperties;
     private final GlossaryService glossaryService;
     private final PresetRepository presetRepository;

@@ -16,7 +16,11 @@ public class TranslateRequest {
     private List<String> presets;
     /** DeepSeek v4 thinking mode: "enabled" | "disabled" (null = server default) */
     private String thinkingType;
-    /** Skip reading an existing translation cache entry, but still write the new result. */
+    /**
+     * Skip every existing result for this text — both the caller's own cache entries and other
+     * users' translations — and force a fresh model call. The new result is still written to the
+     * caller's cache afterwards. This is the "re-translate" switch.
+     */
     private boolean skipCache;
     /**
      * Target language tag (e.g. {@code zh-CN}, {@code vi}). Null or unrecognised values fall back

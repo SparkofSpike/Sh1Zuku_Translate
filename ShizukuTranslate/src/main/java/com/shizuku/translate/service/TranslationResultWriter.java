@@ -39,6 +39,18 @@ public class TranslationResultWriter {
     @Transactional
     public TranslateResponse persistTranslate(User user, AiModelConfig config, TokenUsage usage,
                                               String translatedText, String sourceText, String customPrompt) {
+        return persistTranslate(user, config, usage, translatedText, sourceText, customPrompt, null);
+    }
+
+    /**
+     * Same as above, but also records the resolved target language. Shared-translation lookups
+     * match on it, so every path that produces a fresh model translation should use this
+     * overload — a row without the language can never be shared with anyone else.
+     */
+    @Transactional
+    public TranslateResponse persistTranslate(User user, AiModelConfig config, TokenUsage usage,
+                                              String translatedText, String sourceText, String customPrompt,
+                                              String targetLanguage) {
         usageService.record(user, config, usage);
 
         TranslationRecord record = new TranslationRecord();
@@ -47,6 +59,7 @@ public class TranslationResultWriter {
         record.setTranslatedText(translatedText);
         record.setModel(config.getModel());
         record.setCustomPrompt(customPrompt);
+        record.setTargetLanguage(targetLanguage);
         record = recordRepository.save(record);
 
         TranslateResponse response = new TranslateResponse();
