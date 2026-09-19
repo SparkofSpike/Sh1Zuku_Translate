@@ -89,7 +89,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (items.targetLang) targetLangSelect.value = items.targetLang;
       // 思考：复选框，勾选 = 开启思考推理（默认关闭，与后端 disabled 一致）
       thinkingCheck.checked = items.thinkingType === 'enabled';
-      if (items.displayMode) displayModeSelect.value = items.displayMode === 'inline-full' ? 'inline' : items.displayMode;
+      // 侧边面板已从界面移除（窗口呈现由分页模式接管），老配置映射到分页
+      // 模式；inline-full 是更早的旧值，等价于 inline + 翻译全篇。
+      if (items.displayMode) {
+        const saved = items.displayMode === 'panel' ? 'paged' : items.displayMode;
+        displayModeSelect.value = saved === 'inline-full' ? 'inline' : saved;
+      }
       if (items.inlineScope) inlineScopeSelect.value = items.inlineScope;
       else if (items.displayMode === 'inline-full') inlineScopeSelect.value = 'full';
       if (items.inlineSeparator) inlineSeparatorSelect.value = items.inlineSeparator;

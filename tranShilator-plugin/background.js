@@ -645,11 +645,12 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     const novel = await fetchNovelFromPixiv(safeNovelId, controller.signal);
     console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
-    // All inline modes (single-page, paged, full) number their paragraphs
-    // and receive JSON Lines output, so the content script can map every
-    // translation back to the exact DOM paragraph by id — a model that
-    // merges or splits paragraphs can no longer shift the mapping. Only
-    // plain panel mode on a non-paged novel stays unnumbered.
+    // Inline modes number their paragraphs and receive JSON Lines output, so
+    // the content script can map every translation back to the exact DOM
+    // paragraph by id — a model that merges or splits paragraphs can no
+    // longer shift the mapping. Panel and paged stay unnumbered: they render
+    // raw text instead, and paged needs the [newpage] markers intact to
+    // split the result into page blocks.
     const numbered = fullMode || currentPage > 0 || displayMode === 'inline';
 
     // Notify content script: novel loaded, begin streaming
@@ -663,9 +664,9 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         tags: novel.tags || [],
         characterCount: novel.characterCount,
         // The content script needs to know whether this request produces
-        // numbered paragraphs + JSON Lines output (all inline/paged/full
-        // modes) so it can pick the right streaming renderer. Only plain
-        // panel mode on a non-paged novel stays unnumbered.
+        // numbered paragraphs + JSON Lines output (inline modes only) so it
+        // can pick the right streaming renderer. Panel and paged render the
+        // raw text instead.
         numberedRequest: numbered,
         fullMode
       }
@@ -712,7 +713,12 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       },
       skipCache,
       inlineSeparator,
-      repairParagraphIds
+      // 注意：这里原本多传一个 repairParagraphIds（数不到 17 个参数，被丢掉了；
+      // 源文本早在 startStreamingTranslation 里就构建好了），现在换成
+      // 「后端已响应」通知，用来把「连接服务器」和「模型预填充」分开报。
+      async () => {
+        await notifyTab(tabId, { type: 'SSE_SERVER_ACK' });
+      }
     );
   } finally {
     // Clean up controller + keepalive on every exit path, STEP1/2
@@ -933,7 +939,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false, inlineSeparator = 'p') {
+async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false, inlineSeparator = 'p', onServerResponded) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -1040,6 +1046,9 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     throw new Error(`翻译服务请求失败 (${response.status}): ${body}`);
   }
   console.log('[PNT][response]', { status: response.status, contentType: response.headers.get('content-type') || '' });
+  // 响应头到手：后端已经在查缓存、装 prompt、调模型了，接下来就是模型
+  // 预填充。这段等待以前和「抓原文」混在同一个状态里，现在分开报。
+  if (onServerResponded) await onServerResponded();
   const reader = response.body?.getReader();
   if (!reader) {
     throw new Error('浏览器不支持流式响应');

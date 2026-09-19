@@ -7,7 +7,7 @@
 let state = {
   novelId: null,
   translating: false,
-  mode: 'panel',          // 'panel' | 'inline' | 'paged'
+  mode: 'inline',         // 'inline' | 'paged'（'panel' 仅作为 inline 找不到原文容器时的降级态）
   targetLang: 'zh',
   streamingText: '',
   paraTranslations: [],
@@ -34,6 +34,9 @@ let state = {
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false, // true once the first SSE token arrived
   aiConnected: false,       // upstream model response has connected
+  // 一次翻译要依次经过三段不同的等待，按钮文案按它区分：
+  // fetching(抓 Pixiv 原文) → connecting(等后端响应) → prefill(模型预填充) → reasoning(吐字中)
+  phase: 'idle',
   expectedParagraphCount: 0, // number of numbered paragraphs in this request
   missingParagraphIds: [], // ids the model did not return at completion
   repairMode: false,
@@ -510,6 +513,32 @@ function makeDraggable(w) {
 
 // ─── 3-State Button (black → red → blue, mirrors website) ───
 
+// 三段等待的文案与配色。以前它们共用「网络连接中」，既看不出卡在哪，也会
+// 把模型预填充误读成网络问题。
+const PHASE_TEXT = {
+  fetching: '正在获取原文',
+  connecting: '正在连接服务器',
+  prefill: 'AI 预填充中',
+  reasoning: 'AI 推理中'
+};
+const PHASE_COLOR = {
+  fetching: '#e03131',
+  connecting: '#e03131',
+  prefill: '#1971c2',
+  reasoning: '#1971c2'
+};
+
+function phaseText(phase) {
+  return PHASE_TEXT[phase] || PHASE_TEXT.connecting;
+}
+
+function phaseColor(phase) {
+  return PHASE_COLOR[phase] || '#e03131';
+}
+
+// 状态直接写在按钮上（与右下角胶囊同一套）。窗口模式下那个胶囊会被
+// openWindow() 隐藏，所以同一份文字与配色也写到窗口里的「取消翻译」按钮上
+// —— 它在翻译期间是唯一可见的按钮，点击即取消。译文区只放译文。
 function updateTranslateButton(status) {
   const set = (el, text, bg) => {
     if (!el) return;
@@ -518,13 +547,14 @@ function updateTranslateButton(status) {
     el.style.borderColor = bg;
   };
 
-  if (status === 'preparing') {
-    set(state.miniBtn, '网络连接中...', '#e03131');
-  } else if (status === 'reasoning') {
-    set(state.miniBtn, 'AI 推理中...', '#1971c2');
-  } else if (status === 'ai-processing') {
-    set(state.miniBtn, 'AI 处理中...', '#1971c2');
-  } else {
+  if (status === 'idle') {
+    state.phase = 'idle';
+    // 把取消按钮交回样式表（黑底「取消翻译」），下次翻译开始时再接管。
+    if (state.cancelBtn) {
+      state.cancelBtn.textContent = '取消翻译';
+      state.cancelBtn.style.background = '';
+      state.cancelBtn.style.borderColor = '';
+    }
     // idle: with a rendered translation the pill toggles its display
     // (关闭翻译/显示翻译); otherwise it starts a new translation.
     if (hasTranslationContent()) {
@@ -532,7 +562,15 @@ function updateTranslateButton(status) {
     } else {
       set(state.miniBtn, '翻译', '#1a1a1a');
     }
+    return;
   }
+
+  // 非 idle：文案与配色完全由当前阶段决定（status 参数只有 'idle' 这个值
+  // 需要区分，其余调用点统一走阶段文案）。
+  const phase = state.phase || 'connecting';
+  const label = phaseText(phase) + '...';
+  set(state.miniBtn, label, phaseColor(phase));
+  set(state.cancelBtn, label, phaseColor(phase));
 }
 
 // ─── Inline Mode: Rewrite Novel Container with Paragraphs ───
@@ -1158,7 +1196,12 @@ async function handleTranslate(skipCache = false) {
       chrome.storage.sync.get(['targetLang', 'displayMode', 'inlineScope', 'inlineSeparator', 'selectedPresets', 'customPrompt', 'thinkingType', 'model', 'modelProfileId'], (items) => {
         resolve({
           targetLang: items.targetLang || 'zh',
-          displayMode: items.displayMode || 'panel',
+          // 侧边面板已从界面移除：它的窗口呈现由分页模式接管，老配置
+          // （storage 里存着 'panel'）映射过来，以免老用户升级后卡在一个
+          // 界面上选不到的状态。
+          displayMode: items.displayMode === 'panel'
+            ? 'paged'
+            : (items.displayMode || 'inline'),
           selectedPresets: Array.isArray(items.selectedPresets) ? items.selectedPresets : [],
           customPrompt: items.customPrompt || '',
           thinkingType: items.thinkingType || 'disabled',
@@ -1174,7 +1217,7 @@ async function handleTranslate(skipCache = false) {
       showToast('扩展已更新，请刷新页面后重试');
       resolve({
         targetLang: 'zh',
-        displayMode: 'panel',
+        displayMode: 'inline',
         selectedPresets: [],
         customPrompt: '',
         model: '',
@@ -1237,15 +1280,21 @@ async function handleTranslate(skipCache = false) {
   state.waitTick = setInterval(() => {
     if (!state.translating) { clearInterval(state.waitTick); state.waitTick = null; return; }
     const secs = Math.round((Date.now() - state.waitStart) / 1000);
-    const btn = state.miniBtn;
-    if (btn) {
-      const connected = state.aiConnected || state.firstTokenReceived;
-      btn.textContent = connected
-        ? 'AI 推理中 ' + secs + 's…'
-        : '网络连接中 ' + secs + 's…';
-      btn.style.background = connected ? '#1971c2' : '#e03131';
-      btn.style.borderColor = connected ? '#1971c2' : '#e03131';
+    // 首 token 一到就进入推理阶段（缓存命中时后端不发 ai-connected，
+    // 靠 firstTokenReceived 兜底）。
+    if (state.aiConnected || state.firstTokenReceived) {
+      state.phase = 'reasoning';
     }
+    const phase = state.phase || 'connecting';
+    const statusText = phaseText(phase) + ' ' + secs + 's…';
+    const color = phaseColor(phase);
+    // 同一份进度写到右下角胶囊和窗口里的取消按钮上（窗口打开时胶囊被隐藏）。
+    [state.miniBtn, state.cancelBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.textContent = statusText;
+      btn.style.background = color;
+      btn.style.borderColor = color;
+    });
   }, 1000);
 
   // Prepare UI: show floating window in panel & paged modes;
@@ -1253,6 +1302,8 @@ async function handleTranslate(skipCache = false) {
   if (state.mode === 'panel' || state.mode === 'paged') {
     openWindow();
   }
+  // 从这一刻起（到后端响应头抵达为止）是在抓 Pixiv 原文。
+  state.phase = 'fetching';
   updateTranslateButton('preparing');
   if (state.cancelBtn) state.cancelBtn.style.display = 'inline-block';
 
@@ -1261,12 +1312,16 @@ async function handleTranslate(skipCache = false) {
     await sendToBackground('TRANSLATE_NOVEL_STREAM', {
       novelId,
       // fullMode: background translates the whole novel (global ids);
-      // otherwise translate only the page the user is reading.
-      currentPage: state.fullMode ? 0 : getCurrentNovelPage(),
+      // paged mode also needs the whole novel, because its renderer splits the
+      // result on [newpage] markers into page blocks. Sending a page number
+      // made background slice out the current page and number the paragraphs,
+      // so the model answered with JSON Lines and the panel renderer took over
+      // — which is why paged mode showed up as the side panel.
+      currentPage: (state.fullMode || state.mode === 'paged') ? 0 : getCurrentNovelPage(),
       fullMode: state.fullMode,
-      // background numbers paragraphs + requests JSON Lines for every
-      // inline mode (single-page, paged, full) so the id mapping protects
-      // against model paragraph merges/splits; plain panel stays raw.
+      // background numbers paragraphs + requests JSON Lines for inline modes
+      // (single-page and full) so the id mapping protects against model
+      // paragraph merges/splits; panel and paged receive raw text.
       displayMode: state.mode,
       targetLang: state.targetLang,
       selectedPresets: settings.selectedPresets,
@@ -1484,7 +1539,7 @@ function waitForInlineContainer(data) {
     } else if (state.transBody) {
       state.transBody.textContent = state.streamingText;
     }
-    showToast('未找到原文容器，已改用侧边面板显示');
+    showToast('未找到原文容器，已改用悬浮窗显示');
     updateTranslateButton('preparing');
   };
 
@@ -1531,6 +1586,7 @@ function waitForInlineContainer(data) {
 function onStreamConnected() {
   if (!state.translating) return;
   state.aiConnected = true;
+  state.phase = 'reasoning';
   if (!state.firstTokenReceived) updateTranslateButton('reasoning');
 }
 
@@ -1539,6 +1595,7 @@ function onStreamToken(token) {
   // First token means the AI is really streaming — flip the button.
   if (!state.firstTokenReceived) {
     state.firstTokenReceived = true;
+    state.phase = 'reasoning';
     if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
     updateTranslateButton('ai-processing');
   }
@@ -1637,7 +1694,9 @@ async function repairMissingParagraphs() {
   try {
     await sendToBackground('TRANSLATE_NOVEL_STREAM', {
       novelId: state.novelId,
-      currentPage: state.fullMode ? 0 : getCurrentNovelPage(),
+      // Keep paged requests on the whole-novel path here too, so a repair can
+      // never flip the renderer back to the panel mid-stream.
+      currentPage: (state.fullMode || state.mode === 'paged') ? 0 : getCurrentNovelPage(),
       fullMode: state.fullMode,
       displayMode: state.mode === 'inline' ? 'inline' : state.mode,
       targetLang: state.targetLang,
@@ -1737,7 +1796,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.type) {
     case 'SSE_NOVEL_LOADED':
+      // 原文到手，接下来是发翻译请求、等后端响应。
+      state.phase = 'connecting';
       onNovelLoaded(message.data);
+      sendResponse({ ok: true });
+      break;
+    case 'SSE_SERVER_ACK':
+      // 后端已回响应头：它在查缓存、装 prompt、调模型，到第一个 token
+      // 之间就是模型预填充。
+      if (state.translating) {
+        state.phase = 'prefill';
+        updateTranslateButton('preparing');
+      }
       sendResponse({ ok: true });
       break;
     case 'SSE_CONNECTED':

@@ -157,10 +157,12 @@
   border-color: #ccc;
 }
 
+/* 与网站 .retranslate-btn 对齐：中性灰。蓝色是状态色（表示进行中），
+   不该用在普通按钮上。 */
 #pnt-window .pnt-retranslate-btn {
-  background: #fff;
-  color: #1971c2;
-  border: 1px solid #a5d8ff;
+  background: #f0f0f0;
+  color: #1a1a1a;
+  border: 1px solid #ccc;
   border-radius: 6px;
   padding: 5px 14px;
   font-size: 13px;
@@ -183,8 +185,8 @@
 }
 
 #pnt-window .pnt-retranslate-btn:hover {
-  background: #e7f5ff;
-  border-color: #74c0fc;
+  background: #e6e6e6;
+  border-color: #bbb;
 }
 
 #pnt-window .pnt-cancel-btn {

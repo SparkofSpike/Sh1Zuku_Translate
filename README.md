@@ -31,7 +31,7 @@ The extension supports:
 - A floating side-panel translation view (used as a fallback when inline paragraphs cannot be located).
 - Inline translation under paragraphs on the current Pixiv page (the default display mode).
 - Full-novel inline translation with global paragraph IDs mapped across Pixiv page breaks.
-- Paged translation that preserves Pixiv's `[newpage]` markers.
+- Paged mode that translates the whole novel at once and renders it in the floating window, split into blocks at Pixiv's `[newpage]` markers.
 - Chinese, English, and Korean output.
 - Site DeepSeek models and the user's saved model profiles.
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
