@@ -407,6 +407,20 @@ npm test
 
 The backend suite covers prompt assembly, translation and cache-replay behavior, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, and JWT issuing. The frontend suite covers the safe Markdown renderer and HTML escaping helpers.
 
+### CI test commands
+
+These are the exact commands executed by `.github/workflows/test.yml` on every push and pull request:
+
+```bash
+# Backend tests — run from ShizukuTranslate/
+mvn -B test
+
+# Frontend typecheck and unit tests — run from ShizukuTranslate-frontend/
+npm ci
+npm run typecheck
+npm test
+```
+
 ## Known limitations
 
 - The announcement renderer supports a safe Markdown subset implemented in the frontend; raw HTML is escaped rather than rendered.
