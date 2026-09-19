@@ -76,6 +76,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── Load saved settings ─────────────────────────────────
 
+  // 一键授权：本地状态读完前先占位，避免与设置区的展开/折叠互相覆盖
+  let deviceLoginPanelForced = false;
+
   chrome.storage.sync.get(
     ['backendUrl', 'apiKey', 'model', 'modelProfileId', 'targetLang', 'thinkingType', 'displayMode', 'inlineScope', 'inlineSeparator', 'autoTranslate', 'selectedPresets', 'customPrompt'],
     (items) => {
@@ -95,13 +98,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (Array.isArray(items.selectedPresets)) selectedPresets = items.selectedPresets;
       autoTranslateCheckbox.checked = items.autoTranslate !== false;
 
-      // 已配置过：后端地址 / API Key / 目标语言收进“设置”；首次配置直接展示
+      // 已配置过：后端地址 / API Key / 目标语言收进“设置”；首次配置直接展示。
+      // 有未完成的授权流程时必须强制展开，否则用户看不到等待状态。
       const isConfigured = !!(items.backendUrl && items.apiKey);
-      if (isConfigured) {
+      if (isConfigured && !deviceLoginPanelForced) {
         settingsToggle.style.display = '';
         settingsPanel.style.display = 'none';
       } else {
-        settingsToggle.style.display = 'none';
+        settingsToggle.style.display = isConfigured ? '' : 'none';
         settingsPanel.style.display = 'block';
       }
 
@@ -270,6 +274,159 @@ document.addEventListener('DOMContentLoaded', () => {
     if (await ensureBackendHostPermission(backendUrlInput.value.trim(), true)) {
       saveSettings(true);
     }
+  });
+
+  // ─── 一键登录并授权（设备码流程） ─────────────────────
+  // popup 只负责触发和展示：申请设备码、打开授权页、轮询全在 background
+  // 完成——tabs.create 会让 popup 失焦关闭，这里放定时器会随之中断。
+  const deviceLoginBtn = document.getElementById('deviceLoginBtn');
+  const deviceLoginStatus = document.getElementById('deviceLoginStatus');
+  const DEVICE_LOGIN_PENDING_KEY = 'pntDeviceLoginPending';
+  const DEVICE_LOGIN_RESULT_KEY = 'pntDeviceLoginResult';
+  const DEVICE_LOGIN_RESULT_TITLE = {
+    success: '授权成功',
+    expired: '授权已过期',
+    consumed: '授权码已被使用',
+    error: '授权失败',
+    timeout: '授权超时'
+  };
+  let deviceLoginCountdown = null;
+
+  function activeDeviceLoginPending(items) {
+    const pending = items[DEVICE_LOGIN_PENDING_KEY] || null;
+    if (!pending || !Number(pending.expiresAt)) return null;
+    return Number(pending.expiresAt) > Date.now() ? pending : null;
+  }
+
+  function renderDeviceLoginState(pending, result) {
+    if (deviceLoginCountdown) {
+      clearInterval(deviceLoginCountdown);
+      deviceLoginCountdown = null;
+    }
+    deviceLoginStatus.innerHTML = '';
+
+    if (pending) {
+      deviceLoginBtn.disabled = true;
+      deviceLoginBtn.textContent = '等待授权中...';
+      const span = document.createElement('span');
+      span.className = 'new';
+      const paint = () => {
+        const left = Math.max(0, Math.round((Number(pending.expiresAt) - Date.now()) / 1000));
+        span.textContent = '等待授权中…（剩余 ' + left + ' 秒）请在打开的授权页确认';
+        return left;
+      };
+      const left = paint();
+      deviceLoginStatus.appendChild(span);
+      if (left > 0) {
+        deviceLoginCountdown = setInterval(() => {
+          if (paint() > 0) return;
+          clearInterval(deviceLoginCountdown);
+          deviceLoginCountdown = null;
+          // 具体原因以 background 写入的结果为准，这里只先把 UI 解开
+          span.textContent = '等待已超时，请重新点击“一键登录并授权”';
+          deviceLoginBtn.disabled = false;
+          deviceLoginBtn.textContent = '一键登录并授权';
+        }, 1000);
+      } else {
+        span.textContent = '等待已超时，请重新点击“一键登录并授权”';
+        deviceLoginBtn.disabled = false;
+        deviceLoginBtn.textContent = '一键登录并授权';
+      }
+      return;
+    }
+
+    deviceLoginBtn.disabled = false;
+    deviceLoginBtn.textContent = '一键登录并授权';
+    if (result && result.message) {
+      const span = document.createElement('span');
+      span.className = result.status === 'success' ? 'ok' : 'err';
+      span.textContent = (DEVICE_LOGIN_RESULT_TITLE[result.status] || '授权未完成') + '：' + result.message;
+      deviceLoginStatus.appendChild(span);
+    }
+  }
+
+  function deviceLoginShowPanel() {
+    deviceLoginPanelForced = true;
+    settingsPanel.style.display = 'block';
+    settingsToggle.style.display = '';
+  }
+
+  function applyDeviceLoginStorage(items) {
+    const pending = activeDeviceLoginPending(items);
+    const result = items[DEVICE_LOGIN_RESULT_KEY] || null;
+    // 有未完成流程：强制展开设置区，让等待状态可见
+    if (pending) deviceLoginShowPanel();
+    renderDeviceLoginState(pending, result);
+    return { pending, result };
+  }
+
+  // 打开 popup 时：检查未完成的授权流程 + 上次失败原因，如实展示
+  chrome.storage.local.get([DEVICE_LOGIN_PENDING_KEY, DEVICE_LOGIN_RESULT_KEY], (items) => {
+    const { result } = applyDeviceLoginStorage(items);
+    // 刚结束不久（10 分钟内）的结果也展开一次，避免“上次失败原因”被折叠遮住
+    if (!items[DEVICE_LOGIN_PENDING_KEY] && result
+        && Date.now() - Number(result.finishedAt || 0) < 10 * 60 * 1000) {
+      deviceLoginShowPanel();
+    }
+  });
+
+  // 授权完成/失败时 popup 自动更新（含 sync.apiKey 被自动写入的情况）
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes.apiKey) {
+      const next = changes.apiKey.newValue || '';
+      if (next && next !== apiKeyInput.value) apiKeyInput.value = next;
+    }
+    if (area !== 'local') return;
+    if (!changes[DEVICE_LOGIN_PENDING_KEY] && !changes[DEVICE_LOGIN_RESULT_KEY]) return;
+
+    chrome.storage.local.get([DEVICE_LOGIN_PENDING_KEY, DEVICE_LOGIN_RESULT_KEY], (items) => {
+      const { pending, result } = applyDeviceLoginStorage(items);
+      if (pending || !result) return;
+      deviceLoginShowPanel();
+      if (result.status === 'success') {
+        showStatus('授权成功，API Key 已自动填写', 'ok');
+        // Key 变了，重新拉取个人模型配置与预设
+        chrome.storage.sync.get(['apiKey'], (sync) => {
+          if (sync.apiKey) apiKeyInput.value = sync.apiKey;
+          loadUserModel();
+          loadPresets();
+        });
+      } else {
+        showStatus(result.message || '授权未完成', 'err');
+      }
+    });
+  });
+
+  deviceLoginBtn.addEventListener('click', async () => {
+    const backendUrl = backendUrlInput.value.trim();
+    if (!backendUrl) {
+      showStatus('请先填写后端地址', 'err');
+      return;
+    }
+    if (!await ensureBackendHostPermission(backendUrl, true)) return;
+
+    deviceLoginBtn.disabled = true;
+    deviceLoginBtn.textContent = '正在申请...';
+    // 后端地址可能刚改过还没保存：先保存，保证 background 读到最新值
+    await saveSettings(false);
+
+    chrome.runtime.sendMessage({ type: 'DEVICE_LOGIN_START' }, (response) => {
+      if (chrome.runtime.lastError) {
+        showStatus('无法联系后台服务，请重新加载扩展后重试', 'err');
+        deviceLoginBtn.disabled = false;
+        deviceLoginBtn.textContent = '一键登录并授权';
+        return;
+      }
+      if (!response || !response.success) {
+        showStatus(response && response.error ? response.error : '启动一键授权失败', 'err');
+        deviceLoginBtn.disabled = false;
+        deviceLoginBtn.textContent = '一键登录并授权';
+        return;
+      }
+      // background 已写入 pending（storage.onChanged 会再刷一次）
+      renderDeviceLoginState({ expiresAt: response.expiresAt }, null);
+      showStatus(response.reused ? '已有授权流程，已重新打开授权页' : '已打开授权页，请在网页中确认', 'ok');
+    });
   });
 
   // ─── Submit error log ─────────────────────────────────────

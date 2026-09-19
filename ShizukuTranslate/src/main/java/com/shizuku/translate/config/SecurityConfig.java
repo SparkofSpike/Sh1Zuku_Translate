@@ -4,6 +4,7 @@ import com.shizuku.translate.security.ApiKeyAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import com.shizuku.translate.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
@@ -41,6 +42,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/presets").permitAll()
                         .requestMatchers("/api/v1/translation/languages").permitAll()
                         .requestMatchers("/api/v1/announcements").permitAll()
+                        // Device-code flow: the plugin has no credentials yet when it asks for a
+                        // code (POST) and when it polls (GET). Approval is a POST to
+                        // /api/v1/plugin/device-code/approve, which the exact-path matcher below
+                        // does not cover, so it still requires a JWT on purpose.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/plugin/device-code").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/plugin/device-code/*").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
                         // .requestMatchers("/api/v1/stats/**").permitAll() — removed, restricted to authenticated users only
                         .requestMatchers("/api/v1/**").authenticated()

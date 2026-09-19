@@ -15,7 +15,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 const { t } = useI18n()
 
@@ -24,6 +24,15 @@ const password = ref('')
 const error = ref('')
 const authStore = useAuthStore()
 const router = useRouter()
+const route = useRoute()
+
+// 登录成功后的回跳目标：只接受站内相对路径。`//evil.com` 是协议相对地址，
+// `\` 会被浏览器当成 `/`（`/\evil.com` 同样会跳去外部站点），一律忽略。
+function safeRedirect(value) {
+  if (typeof value !== 'string' || !value.startsWith('/')) return ''
+  if (value.startsWith('//') || value.includes('\\')) return ''
+  return value
+}
 
 async function login() {
   try {
@@ -32,7 +41,7 @@ async function login() {
     const me = await api.get('/auth/me')
     authStore.setAdmin(!!me.data.isAdmin)
     authStore.setEmailVerified(!!me.data.emailVerified)
-    router.push('/')
+    router.push(safeRedirect(route.query.redirect) || '/')
   } catch (e) {
     error.value = e.response?.data?.error || t('auth.errors.loginFailed')
   }

@@ -224,6 +224,9 @@
     <div class="field">
       <label for="apiKey">API Key</label>
       <input type="password" id="apiKey" placeholder="sk-xxxxxxxx..." />
+      <button class="btn btn-secondary update-btn" id="deviceLoginBtn" type="button">一键登录并授权</button>
+      <div class="log-info">点击后在浏览器打开网站授权页，确认后自动获取 Key；也可手动填写 Key</div>
+      <div id="deviceLoginStatus" class="update-status"></div>
     </div>
     <div class="field">
       <label for="targetLang">目标语言</label>

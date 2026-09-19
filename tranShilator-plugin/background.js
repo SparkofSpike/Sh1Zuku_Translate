@@ -197,7 +197,10 @@ let keepaliveRefs = 0;
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) {
-    // No-op: firing the alarm itself resets the SW idle timer.
+    // No-op for translations: firing the alarm itself resets the SW idle timer.
+    // 一键授权的轮询也挂在这条保活链上：MV3 回收 SW 后 setInterval 会丢失，
+    // 每次 alarm 触发补一次轮询，等待流程才不会永远卡住。
+    deviceLoginKeepaliveTick();
   } else if (alarm.name === UPDATE_ALARM) {
     checkForUpdates();
   }
@@ -216,6 +219,311 @@ function keepaliveStop() {
     chrome.alarms.clear(KEEPALIVE_ALARM);
   }
 }
+
+// ─── 一键登录并授权（设备码流程） ───────────────────────────
+// popup 点“一键登录并授权”后走这条链路：
+//   1) 匿名 POST {backendUrl}/api/v1/plugin/device-code 申请设备码；
+//   2) chrome.tabs.create 打开 {backendUrl}{verificationPath}?code=xxx，
+//      让用户在自己的账号下确认授权；
+//   3) 在 background 轮询 GET .../device-code/{code}：PENDING 继续等，
+//      其它状态立即结束（后端约定：只要不是 PENDING 就停轮询）；
+//   4) APPROVED 时一次性拿到明文 keyValue，立刻写入 sync.apiKey
+//      —— 与手工填写完全同一个键，手工路径继续作为降级方案。
+// 轮询必须留在 background：上面的 tabs.create 会让 popup 失焦关闭，
+// popup 里的任何定时器都会随之中断。
+const DEVICE_LOGIN_PENDING_KEY = 'pntDeviceLoginPending';
+const DEVICE_LOGIN_RESULT_KEY = 'pntDeviceLoginResult';
+const DEVICE_LOGIN_MAX_LIFETIME_MS = 10 * 60 * 1000; // 等待上限：10 分钟
+const DEVICE_LOGIN_FALLBACK_INTERVAL_SEC = 2;        // 契约默认轮询间隔（秒）
+const DEVICE_LOGIN_MAX_FAILURES = 30;                // 连续失败上限（约 1 分钟）
+
+// 内存态：{code, backendUrl, verificationPath, interval, startedAt,
+//          expiresAt, failures}。SW 被回收后内存丢失，靠 storage 恢复。
+let deviceLoginState = null;
+let deviceLoginTimer = null;          // setInterval 句柄
+let deviceLoginKeepaliveHeld = false; // 是否已占用一次 keepalive 引用
+let deviceLoginPolling = false;       // 轮询重入保护（interval 与 alarm 会同时触发）
+let deviceLoginStarting = null;       // 申请设备码中的 Promise，避免重复点击叠加流程
+let deviceLoginLastPollAt = 0;        // 最近一次轮询尝试时间（避免 alarm 与 interval 重复打点）
+
+function deviceLoginReadPending() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(DEVICE_LOGIN_PENDING_KEY, (items) => {
+      resolve(items[DEVICE_LOGIN_PENDING_KEY] || null);
+    });
+  });
+}
+
+function deviceLoginSavePending() {
+  if (!deviceLoginState) return Promise.resolve();
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [DEVICE_LOGIN_PENDING_KEY]: deviceLoginState }, resolve);
+  });
+}
+
+function deviceLoginClearPending() {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove(DEVICE_LOGIN_PENDING_KEY, resolve);
+  });
+}
+
+// 终态结果留给 popup 展示（成功 / 过期 / 已被取走 / 网络错误）
+function deviceLoginSaveResult(status, message, extra = {}) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({
+      [DEVICE_LOGIN_RESULT_KEY]: Object.assign({
+        status,
+        message,
+        finishedAt: Date.now()
+      }, extra)
+    }, resolve);
+  });
+}
+
+function deviceLoginStopPolling() {
+  if (deviceLoginTimer !== null) {
+    clearInterval(deviceLoginTimer);
+    deviceLoginTimer = null;
+  }
+  if (deviceLoginKeepaliveHeld) {
+    deviceLoginKeepaliveHeld = false;
+    keepaliveStop(); // 与 deviceLoginHoldKeepalive 严格配对
+  }
+}
+
+function deviceLoginHoldKeepalive() {
+  if (deviceLoginKeepaliveHeld) return;
+  deviceLoginKeepaliveHeld = true;
+  keepaliveStart();
+}
+
+function deviceLoginStartPolling(intervalSec) {
+  const seconds = Number(intervalSec) > 0 ? Number(intervalSec) : DEVICE_LOGIN_FALLBACK_INTERVAL_SEC;
+  if (deviceLoginTimer !== null) clearInterval(deviceLoginTimer);
+  deviceLoginTimer = setInterval(() => {
+    deviceLoginPollOnce().catch((e) => console.warn('[PNT][device-login] 轮询异常:', e && e.message));
+  }, Math.max(1, seconds) * 1000);
+}
+
+function deviceLoginOpenAuthTab(state) {
+  if (!state || !state.code) return;
+  const base = String(state.backendUrl || '').replace(/\/+$/, '');
+  const path = String(state.verificationPath || '/plugin-link');
+  const url = base + (path.charAt(0) === '/' ? path : '/' + path) + '?code=' + encodeURIComponent(state.code);
+  chrome.tabs.create({ url });
+}
+
+// 结束一轮授权：停轮询 → 清 pending → 写终态结果。状态一旦结束，
+// 迟到的轮询会被 deviceLoginState === null 挡掉（例如 APPROVED 落盘之后
+// 后端再返回 CONSUMED，不会把成功态覆盖成失败态）。
+async function deviceLoginFinish(status, message, extra = {}) {
+  deviceLoginStopPolling();
+  deviceLoginState = null;
+  await deviceLoginSaveResult(status, message, extra);
+  await deviceLoginClearPending();
+  if (status === 'success') {
+    chrome.notifications.create('pnt-device-login-' + Date.now(), {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: '授权成功',
+      message: '已自动获取 API Key，可以开始翻译了。'
+    });
+  }
+}
+
+// 一次可重试的失败：只有连续失败超过上限才判定为网络错误结束，
+// 单次抖动/超时不终止等待（后端 EXPIRED 与本地 expiresAt 才是硬终点）。
+async function deviceLoginRecordFailure(reason) {
+  const state = deviceLoginState;
+  if (!state) return;
+  state.failures = (state.failures || 0) + 1;
+  if (state.failures >= DEVICE_LOGIN_MAX_FAILURES) {
+    await deviceLoginFinish(
+      'error',
+      '网络错误：连续 ' + state.failures + ' 次无法完成授权请求（' + reason + '），请检查网络和后端地址后重试'
+    );
+    return;
+  }
+  console.warn('[PNT][device-login] 第 ' + state.failures + ' 次失败，稍后重试：' + reason);
+  await deviceLoginSavePending();
+}
+
+async function deviceLoginPollOnce() {
+  if (!deviceLoginState || deviceLoginPolling) return;
+  deviceLoginPolling = true;
+  deviceLoginLastPollAt = Date.now();
+  try {
+    const state = deviceLoginState;
+    if (Date.now() >= Number(state.expiresAt)) {
+      await deviceLoginFinish(
+        'expired',
+        '授权等待超时（超过 ' + Math.round(DEVICE_LOGIN_MAX_LIFETIME_MS / 60000) + ' 分钟未确认），请重新点击“一键登录并授权”'
+      );
+      return;
+    }
+
+    let response;
+    try {
+      response = await fetch(
+        String(state.backendUrl).replace(/\/+$/, '') + '/api/v1/plugin/device-code/' + encodeURIComponent(state.code),
+        {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(10000)
+        }
+      );
+    } catch (e) {
+      await deviceLoginRecordFailure('网络请求失败：' + (e && e.message ? e.message : 'unknown'));
+      return;
+    }
+
+    if (!response.ok) {
+      await deviceLoginRecordFailure('HTTP ' + response.status);
+      return;
+    }
+
+    const data = await response.json().catch(() => null);
+    if (!deviceLoginState) return; // 期间已被其它触发结束
+    deviceLoginState.failures = 0;
+
+    const status = data && typeof data.status === 'string' ? data.status.toUpperCase() : '';
+    if (status === 'PENDING') {
+      await deviceLoginSavePending();
+      return;
+    }
+    if (status === 'APPROVED') {
+      const keyValue = data && typeof data.keyValue === 'string' ? data.keyValue.trim() : '';
+      if (!keyValue) {
+        await deviceLoginRecordFailure('授权响应缺少 keyValue');
+        return;
+      }
+      // 明文 Key 只返回一次：先落盘，再做其它事
+      await new Promise((resolve) => chrome.storage.sync.set({ apiKey: keyValue }, resolve));
+      await deviceLoginFinish('success',
+        '已自动获取 API Key（' + ((data && data.keyName) || '设备授权') + '），可以开始翻译了。',
+        { keyName: (data && data.keyName) || '' });
+      return;
+    }
+    if (status === 'CONSUMED') {
+      await deviceLoginFinish('consumed', '该授权码已被使用（可能是重复请求，或本次授权刚已完成），请重新点击“一键登录并授权”');
+      return;
+    }
+    if (status === 'EXPIRED') {
+      await deviceLoginFinish('expired', '授权码已过期或不存在，请重新点击“一键登录并授权”');
+      return;
+    }
+    // 未知状态不当作终态，避免后端措辞变化直接失败；连续未知同样会超限结束
+    await deviceLoginRecordFailure('后端返回未知状态 ' + (status || '(空)'));
+  } finally {
+    deviceLoginPolling = false;
+  }
+}
+
+async function deviceLoginStartInner() {
+  // 避免并发：已有未完成流程时复用，不再申请新码、不叠加第二个轮询
+  const existing = deviceLoginState || await deviceLoginReadPending();
+  if (existing && Number(existing.expiresAt) > Date.now()) {
+    deviceLoginState = existing;
+    deviceLoginHoldKeepalive();
+    deviceLoginStartPolling(existing.interval);
+    deviceLoginOpenAuthTab(existing); // 重新打开授权页，方便用户继续确认
+    return { success: true, reused: true, code: existing.code, expiresAt: existing.expiresAt };
+  }
+  if (existing) {
+    // 残留但已过期：先清干净，再走新流程
+    deviceLoginState = existing;
+    await deviceLoginFinish('expired', '上次授权等待已超时，请重新点击“一键登录并授权”');
+  }
+
+  const items = await new Promise((resolve) => {
+    chrome.storage.sync.get(['backendUrl'], resolve);
+  });
+  const backendUrl = String(items.backendUrl || '').trim().replace(/\/+$/, '');
+  if (!backendUrl) {
+    return { success: false, error: '请先填写后端地址，再使用一键授权' };
+  }
+
+  let response;
+  try {
+    response = await fetch(backendUrl + '/api/v1/plugin/device-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (e) {
+    return { success: false, error: '无法连接后端（' + (e && e.message ? e.message : 'network error') + '），请检查后端地址' };
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    return { success: false, error: '申请授权码失败 (HTTP ' + response.status + ')' + (body ? '：' + body.slice(0, 120) : '') };
+  }
+
+  const data = await response.json().catch(() => null);
+  const code = data && typeof data.code === 'string' ? data.code.trim() : '';
+  if (!code) {
+    return { success: false, error: '后端未返回授权码，请确认后端已支持一键授权' };
+  }
+
+  const now = Date.now();
+  const expiresInSec = Number(data.expiresIn) > 0
+    ? Number(data.expiresIn)
+    : DEVICE_LOGIN_MAX_LIFETIME_MS / 1000;
+  deviceLoginState = {
+    code,
+    backendUrl,
+    verificationPath: typeof data.verificationPath === 'string' && data.verificationPath ? data.verificationPath : '/plugin-link',
+    interval: Number(data.interval) > 0 ? Number(data.interval) : DEVICE_LOGIN_FALLBACK_INTERVAL_SEC,
+    startedAt: now,
+    expiresAt: Math.min(now + expiresInSec * 1000, now + DEVICE_LOGIN_MAX_LIFETIME_MS),
+    failures: 0
+  };
+  // 先落盘待办状态，再起轮询/开标签页：SW 若在此刻被回收也能恢复
+  await deviceLoginSavePending();
+  deviceLoginHoldKeepalive();
+  deviceLoginStartPolling(deviceLoginState.interval);
+  deviceLoginOpenAuthTab(deviceLoginState);
+  return { success: true, reused: false, code, expiresAt: deviceLoginState.expiresAt };
+}
+
+function deviceLoginStart() {
+  if (deviceLoginStarting) return deviceLoginStarting;
+  deviceLoginStarting = deviceLoginStartInner();
+  return deviceLoginStarting.then(
+    (result) => { deviceLoginStarting = null; return result; },
+    (error) => { deviceLoginStarting = null; throw error; }
+  );
+}
+
+// MV3 会随时回收 service worker（setInterval 随之丢失）。模块加载时
+// 检查 storage 里是否残留未完成的流程，未过期就恢复轮询。
+async function deviceLoginResume() {
+  if (deviceLoginState) return;
+  const pending = await deviceLoginReadPending();
+  if (!pending || !pending.code || !pending.backendUrl || !Number(pending.expiresAt)) return;
+  if (Number(pending.expiresAt) <= Date.now()) {
+    deviceLoginState = pending;
+    await deviceLoginFinish('expired', '授权等待已超时，请重新点击“一键登录并授权”');
+    return;
+  }
+  deviceLoginState = pending;
+  deviceLoginHoldKeepalive();
+  deviceLoginStartPolling(pending.interval);
+  console.log('[PNT][device-login] 已恢复未完成的授权轮询 code=' + pending.code);
+}
+
+// keepalive alarm 的补轮询入口：SW 被回收后内存态为空，先尝试恢复。
+function deviceLoginKeepaliveTick() {
+  if (!deviceLoginState) {
+    deviceLoginResume().catch(() => {});
+    return;
+  }
+  // setInterval 还活着时最近刚轮询过，不再补一次，避免把 2 秒间隔打成更密
+  const intervalMs = Math.max(1, Number(deviceLoginState.interval) || DEVICE_LOGIN_FALLBACK_INTERVAL_SEC) * 1000;
+  if (Date.now() - deviceLoginLastPollAt < intervalMs) return;
+  deviceLoginPollOnce().catch((e) => console.warn('[PNT][device-login] alarm 补轮询异常:', e && e.message));
+}
+
+deviceLoginResume().catch((e) => console.warn('[PNT][device-login] 恢复失败:', e && e.message));
 
 // ─── Message Handler ─────────────────────────────────────────
 
@@ -291,6 +599,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true;
 
+    case 'DEVICE_LOGIN_START':
+      // 申请设备码 + 打开授权页 + 起轮询；已有未完成流程时复用
+      deviceLoginStart().then((result) => {
+        sendResponse(result);
+      }).catch((error) => {
+        sendResponse({
+          success: false,
+          error: '一键授权启动失败：' + (error && error.message ? error.message : String(error))
+        });
+      });
+      return true;
+
     case 'PING':
       sendResponse({ pong: true });
       break;
@@ -298,7 +618,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     default:
       sendResponse({ success: false, error: '未知消息类型' });
   }
-  return false; // all branches respond synchronously
+  return false; // 同步分支（含 default）已在此返回；异步分支在上面 return true 以保持消息端口
 });
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────

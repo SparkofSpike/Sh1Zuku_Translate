@@ -7,6 +7,7 @@ import profile from './profile'
 import history from './history'
 import admin from './admin'
 import components from './components'
+import pluginLink from './pluginLink'
 
 export default {
   common,
@@ -17,5 +18,6 @@ export default {
   profile,
   history,
   admin,
-  components
+  components,
+  pluginLink
 }
