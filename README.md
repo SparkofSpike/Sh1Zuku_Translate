@@ -40,8 +40,9 @@ The extension supports:
 - One-click retranslation, targeted repair of missing numbered paragraphs, and local error-log submission from the popup.
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
+- One-click authorization: the popup requests a device code, opens the consent page in a new tab, and stores the resulting API key by itself. Manual key entry stays available as a fallback.
 
-The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and a user-generated extension API key. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
+The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and an extension API key, either fetched with the popup's one-click authorization or generated on the profile page and pasted in by hand. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
@@ -105,7 +106,7 @@ Then:
 1. Open `edge://extensions` or `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose **Load unpacked** and select the installed extension directory.
-4. Log in to Pixiv, open the extension popup, and configure the backend URL and extension API key.
+4. Log in to Pixiv, open the extension popup, and set the backend URL. Then either use the authorization button to fetch an extension API key automatically or paste one generated on the profile page.
 
 The standalone updater supports:
 
@@ -119,7 +120,7 @@ CheckUpdate.exe --no-pause
 
 ### Load the repository directory
 
-For local development, enable Developer mode on the browser extension page, choose **Load unpacked**, and select the repository's `tranShilator-plugin/` directory. Configure the backend URL and extension API key in the popup.
+For local development, enable Developer mode on the browser extension page, choose **Load unpacked**, and select the repository's `tranShilator-plugin/` directory. Configure the backend URL in the popup, then authorize or paste an extension API key.
 
 ### Build the Windows updater
 
@@ -336,7 +337,7 @@ Codes are stored hashed in memory, expire after 10 minutes, are single-use, and 
 
 ### Persistence and token usage
 
-The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, announcements, translation cache entries, survey records, token usage logs, and the terminology glossary (`glossary_concepts` / `glossary_terms`).
+The backend uses an H2 file database with Hibernate schema updates enabled. The database contains users, translation history, model profiles, API keys, plugin device codes, announcements, translation cache entries, survey records, token usage logs, and the terminology glossary (`glossary_concepts` / `glossary_terms`).
 
 Live model responses that report token usage are logged with the provider, model, input tokens, output tokens, total tokens, source type, estimate flag, and timestamp. Cache hits return cached translations without creating a new live provider usage event. On startup, the historical migration service can backfill cache usage and estimate older translation records that do not contain provider usage data; estimated entries are marked separately in the administrator log view.
 
@@ -386,6 +387,9 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /admin/announcements` | Administrator | Publish an announcement as raw Markdown text; `requireConfirmation: true` makes every user confirm it once before it stops popping up. |
 | `PATCH /admin/announcements/{id}/confirmation-required` | Administrator | Toggle whether the announcement still requires user confirmation. Disabling stops the pop-up for unconfirmed users; re-enabling brings it back, keeping existing confirmations. |
 | `GET /admin/announcements/{id}/acknowledgements` | Administrator | List the users who confirmed an announcement, newest first, plus a total count. |
+| `POST /plugin/device-code` | Public | Issue a short device code for the extension's one-click authorization. Returns `code`, `expiresIn` (600 s), `interval`, and `verificationPath`. |
+| `GET /plugin/device-code/{code}` | Public | Poll a device code. Always answers HTTP 200 with a `status` of `PENDING`, `APPROVED`, `CONSUMED`, or `EXPIRED` — never 404, because unmatched paths fall through to the SPA handler. `APPROVED` carries the plaintext `keyValue` exactly once. |
+| `POST /plugin/device-code/approve` | Authenticated + email verified | Approve a device code shown in the extension. Creates an API key named `pixiv-plugin` and answers 400 `invalid_or_expired_code`, 403 `email_not_verified`, or 409 `code_already_approved`. |
 | `POST /plugin/logs` | Authenticated or extension API key | Submit browser-extension error reports. |
 | `GET /plugin/logs` | Authenticated | List the current user's reports; administrators see all reports. |
 | `DELETE /admin/announcements/{id}` | Administrator | Delete an announcement. |
@@ -395,7 +399,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 A push/PR triggered GitHub Actions workflow (`.github/workflows/test.yml`) runs the backend tests and the frontend typecheck plus unit tests on every change; the deploy workflow remains manually triggered.
 
 ```powershell
-# Backend (JUnit, 43 tests)
+# Backend (JUnit, 54 tests)
 cd ShizukuTranslate
 mvn test
 
@@ -405,7 +409,7 @@ npm run typecheck
 npm test
 ```
 
-The backend suite covers prompt assembly, translation and cache-replay behavior, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, and JWT issuing. The frontend suite covers the safe Markdown renderer and HTML escaping helpers.
+The backend suite covers prompt assembly, translation and cache-replay behavior, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, plugin device-code authorization, and JWT issuing. The frontend suite covers the safe Markdown renderer and HTML escaping helpers.
 
 ### CI test commands
 
