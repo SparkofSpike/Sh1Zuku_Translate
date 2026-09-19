@@ -642,6 +642,17 @@ function collectParagraphRun(startEl, acceptDivs = false) {
   const paras = [];
   let el = startEl;
   while (el) {
+    // 跳过我们自己插入的节点。译文 div 是「叶子 div + 文本非空」，当
+    // acceptDivs 为真时正好命中下面的条件，会被当成正文段落 —— 后果有两个：
+    // 一是段落收集可能在这里断掉，二是 findNovelParagraphs() 的返回随
+    // 译文渲染而变化，让翻页监视器的 DOM 签名抖动，于是把「刚画出的译文」
+    // 误判成翻页残留并清掉（表现为点「显示翻译」后闪一下就全没了）。
+    // 用 continue 跳过而不是 break，保证后面的正文段落仍能被收集到。
+    if (el.classList && (el.classList.contains('pnt-inline-trans')
+        || el.classList.contains('pnt-inline-unit'))) {
+      el = el.nextElementSibling;
+      continue;
+    }
     if (el.tagName === 'P') {
       if (el.textContent.trim().length > 0) paras.push(el);
     } else if (acceptDivs && (el.tagName === 'DIV' || el.tagName === 'SPAN')
