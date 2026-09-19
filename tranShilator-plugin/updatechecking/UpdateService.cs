@@ -114,7 +114,18 @@ internal sealed class UpdateService
         {
             progress(0);
             log($"\n更新失败: {error.Message}\n\n");
-            log("如果插件正在使用，请先关闭 Pixiv 页面或浏览器后重试。\n");
+            // 只有真的是文件占用类问题才让人去关浏览器。这句以前是无条件打印的，
+            // 于是任何失败（网络、磁盘、权限）都被误报成「插件正在使用」，
+            // 用户关浏览器、重启都无济于事。
+            if (error is IOException || error is UnauthorizedAccessException)
+            {
+                log("看起来是文件被占用或没有写入权限。请确认浏览器已完全退出"
+                    + "（任务管理器里不应有 msedge.exe），并确认对插件目录有写权限。\n");
+            }
+            else
+            {
+                log($"错误类型: {error.GetType().Name}（不是文件占用类问题）\n");
+            }
             return new UpdateResult(false, extensionDirectory, check.CurrentVersion, check.LatestVersion, error.Message);
         }
         finally
