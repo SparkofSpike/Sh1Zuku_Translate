@@ -37,13 +37,6 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", ex.getMessage()));
     }
 
-    @ExceptionHandler(OcrServiceException.class)
-    public ResponseEntity<?> handleOcrService(OcrServiceException ex) {
-        log.error("OCR service error: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(Map.of("error", ex.getMessage()));
-    }
-
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<?> handleBusiness(BusinessException ex) {
         log.warn("Business exception: {}", ex.getMessage());

@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { AxiosResponse } from 'axios'
-import type { TranslateRequest, TranslateResponse, OcrResponse } from '../types'
+import type { TranslateRequest, TranslateResponse } from '../types'
 
 const api = axios.create({
   baseURL: (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:5566/api/v1'
@@ -14,26 +14,12 @@ api.interceptors.request.use(config => {
   return config
 })
 
-export function ocrImage(file: File, polish: boolean = true, threshold: number = 0.5) {
-  const formData = new FormData()
-  formData.append('image', file)
-  formData.append('polish', String(polish))
-  formData.append('threshold', String(threshold))
-  return api.post<OcrResponse>('/ocr', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  })
-}
-
 export function translateImages(files: File[], request: TranslateRequest) {
   const formData = new FormData()
   // Repeated `images` fields: the backend appends them to one multimodal request in this order.
   for (const file of files) formData.append('images', file)
   formData.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
   return api.post<TranslateResponse>('/translate/image', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
-}
-
-export function checkOcrHealth() {
-  return api.get('/ocr/health')
 }
 
 export function translateStream(

@@ -37,12 +37,6 @@ export interface TranslateResponse {
   fromCache?: boolean
 }
 
-export interface OcrResponse {
-  text: string
-  lines: number
-  success: boolean
-}
-
 export interface LoginRequest {
   username: string
   password: string

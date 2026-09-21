@@ -65,9 +65,6 @@ deepseek:
     # DeepSeek v4 thinking mode: enabled=AI 推理（慢 ~6x）/ disabled=关闭（快），插件可请求级覆盖
     thinking-type: disabled
 
-ocr:
-  worker-url: http://localhost:5557
-
 app:
   jwt:
     # No production fallback: JwtTokenProvider rejects blank or known weak secrets.

@@ -18,11 +18,6 @@ export default {
   },
   targetLanguage: 'Ngôn ngữ đích',
   streaming: 'Xuất theo luồng',
-  imageMode: {
-    label: 'Xử lý ảnh:',
-    model: 'Xử lý bằng mô hình',
-    ocr: 'Xử lý bằng OCR'
-  },
   customPrompt: 'Prompt bổ sung tùy chỉnh (không bắt buộc)',
   start: 'Bắt đầu dịch',
   cancel: 'Hủy dịch',
@@ -37,8 +32,6 @@ export default {
   errors: {
     tooManyImages: 'Mỗi lần chỉ được tải lên tối đa {max} ảnh',
     tooManyImagesKept: 'Mỗi lần chỉ được tải lên tối đa {max} ảnh, đã giữ lại {max} ảnh đầu tiên',
-    noText: 'Không nhận diện được chữ nào',
-    ocrFailed: 'Yêu cầu OCR thất bại',
     imageModelFailed: 'Xử lý ảnh bằng mô hình thất bại',
     translateFailed: 'Dịch thất bại'
   }

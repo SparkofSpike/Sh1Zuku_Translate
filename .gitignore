@@ -10,12 +10,6 @@ ShizukuTranslate-frontend/node_modules/
 ShizukuTranslate-frontend/dist/
 ShizukuTranslate-frontend/.vite/
 
-# ===== Python OCR Worker =====
-ocr-worker/__pycache__/
-ocr-worker/*.pyc
-ocr-worker/venv/
-ocr-worker/.venv/
-
 # ===== Runtime =====
 logs/
 deploy_package/

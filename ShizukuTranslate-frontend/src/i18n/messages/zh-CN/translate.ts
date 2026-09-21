@@ -18,11 +18,6 @@ export default {
   },
   targetLanguage: '目标语言',
   streaming: '流式输出',
-  imageMode: {
-    label: '图片处理：',
-    model: '模型处理',
-    ocr: 'OCR处理'
-  },
   customPrompt: '自定义附加Prompt（可选）',
   start: '开始翻译',
   cancel: '取消翻译',
@@ -37,8 +32,6 @@ export default {
   errors: {
     tooManyImages: '一次最多上传 {max} 张图片',
     tooManyImagesKept: '一次最多上传 {max} 张图片，已保留前 {max} 张',
-    noText: '未识别到文字',
-    ocrFailed: 'OCR 请求失败',
     imageModelFailed: '图片模型处理失败',
     translateFailed: '翻译失败'
   }
