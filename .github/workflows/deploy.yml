@@ -140,7 +140,7 @@ jobs:
           SSH="ssh -i ~/.ssh/deploy_key -p $PORT -o StrictHostKeyChecking=no $USER@$HOST"
 
           echo "--- systemd ---"
-          $SSH "systemctl is-active shizuku-backend shizuku-ocr"
+          $SSH "systemctl is-active shizuku-backend"
 
           echo "--- http on host ---"
           $SSH "curl -s -o /dev/null -w '5566=%{http_code} ' http://127.0.0.1:5566/; curl -s -o /dev/null -w '80=%{http_code}\n' http://127.0.0.1/"

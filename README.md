@@ -1,6 +1,6 @@
 # ShizukuTranslate
 
-ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese novels. The source language is detected by the model and the target language is chosen per request (`zh-CN` by default, `vi` and `en` supported), so one work can be read in more than one language. The repository contains a Vue web application, a Spring Boot API, a Python OCR worker, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
+ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese novels. The source language is detected by the model and the target language is chosen per request (`zh-CN` by default, `vi` and `en` supported), so one work can be read in more than one language. The repository contains a Vue web application, a Spring Boot API, and a Chrome/Edge Manifest V3 extension for translating Pixiv novels in place.
 
 ## Features
 
@@ -15,7 +15,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
   > **共享翻译**：调用模型前，请求会复用其他用户对同一原文、同一目标语言的最新译文（流式与非流式均生效）。响应带 `fromSharedTranslation` 标记，个人缓存命中带 `fromCache` 标记，网页端会显示对应徽标；`skipCache` 请求会同时跳过两者并强制重新调用模型（网页端的「重新翻译」按钮）。
 - **Preset prompts** for series-specific style rules, plus a **terminology glossary**. Presets live in a database table that administrators manage through the admin panel (create, edit, delete), so style rules can be tuned without a redeployment; `app.presets` in the configuration file only seeds missing names on first startup. Each glossed concept stores one spelling per language (Japanese, Korean, Chinese, Vietnamese), and the request's target language decides which spelling is rendered into the prompt — the right-hand side is always the target language, so another language's output can never leak in. Adding a language is a configuration change under `app.translation.target-languages`, not a code change. An optional custom prompt is appended last.
 - **Interface languages** (Simplified Chinese, Vietnamese, and English) through vue-i18n. The interface language also sets the default translation target, so a reader who switches the site to Vietnamese gets Vietnamese output without touching the language picker; the picker itself stays available as an override.
-- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once and choose **model processing** with `deepseek-flash` (all pages are translated in one multimodal call, in upload order) or **OCR processing** through the PaddleOCR worker (pages are recognised one at a time and joined afterwards). Word/PDF files are not supported yet.
+- **Novel translation attachments**: upload TXT/MD files for automatic text parsing, or upload up to ten images at once for multimodal **model processing** with `deepseek-flash` (all pages are translated in one call, in upload order). Word/PDF files are not supported yet.
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
@@ -52,12 +52,6 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 | TypeScript / Vite    | <---- | JWT and API-key auth   |       | compatible provider  |
 +----------------------+       | SSE / JPA / H2         |       +----------------------+
                                +-----------+------------+
-                                           |
-                                           v
-                               +------------------------+
-                               | Python OCR worker      |
-                               | Flask / PaddleOCR      |
-                               +------------------------+
 
 +----------------------+       +------------------------+
 | Pixiv novel page     | ----> | MV3 extension          |
@@ -74,7 +68,6 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 |---|---|
 | Web frontend | Vue 3, TypeScript, Vite, Pinia, Vue Router, Axios, vue-i18n |
 | Backend | Java 21 source/target, Spring Boot 3.2.0, Spring Data JPA, H2, Spring Security, JWT |
-| OCR worker | Python, Flask, PaddleOCR with the Japanese model |
 | AI integration | DeepSeek API, OpenAI-compatible chat completions, Anthropic Messages API |
 | Browser extension | Chrome/Edge Manifest V3, vanilla JavaScript, SSE |
 | Windows updater | .NET 8 Windows Forms, self-contained `win-x64` executable |
@@ -138,31 +131,12 @@ The resulting `tranShilator-plugin/CheckUpdate.exe` is placed beside the extensi
 
 - **JDK 21** for the backend compiler configuration.
 - **Node.js 20+** and npm for the frontend.
-- **Python 3.12** for the OCR worker. The deployment script itself requires a modern Python version supporting the repository's type-hint syntax.
+- **Python** for the local deployment script, which requires a modern Python version supporting the repository's type-hint syntax.
 - **Maven** for the backend build.
 - **OpenSSH** for the deployment workflow.
 - A **DeepSeek API key** if the server should provide the default DeepSeek models or fallback service key.
 
-### 1. Install and start the OCR worker
-
-The OCR source code imports PaddlePaddle and PaddleOCR and initializes the Japanese model. Install those packages explicitly:
-
-```powershell
-cd ocr-worker
-python -m pip install -r requirements.txt
-python ocr_server.py
-```
-
-The worker listens on `http://localhost:5557` by default and provides:
-
-- `GET /health`
-- `POST /ocr` with a multipart file field named `image`
-
-Use `OCR_PORT` and `OCR_THRESHOLD` to override the default port and confidence threshold. The first PaddleOCR startup may download model files. Install a PaddlePaddle build compatible with the installed Python version if the generic package is unavailable for the platform.
-
-> `ocr-worker/requirements.txt` pins the PaddleOCR and PaddlePaddle versions used by this repository. If a platform does not provide these exact wheels, use a separately verified environment rather than silently upgrading production dependencies.
-
-### 2. Start the backend
+### 1. Start the backend
 
 ```powershell
 cd ShizukuTranslate
@@ -172,7 +146,7 @@ mvn spring-boot:run
 
 The backend listens on `http://localhost:5566` and exposes the API under `http://localhost:5566/api/v1`. It serves the frontend from `src/main/resources/static` when a production frontend build has been copied there.
 
-### 3. Start the frontend development server
+### 2. Start the frontend development server
 
 ```powershell
 cd ShizukuTranslate-frontend
@@ -246,7 +220,7 @@ python tools/ship.py --rollback     # restore the most recent backup and restart
 python tools/ship.py --skip-pull    # skip git pull
 ```
 
-`ship.py` reads credentials from `SHIZUKU_HOST` / `SHIZUKU_USER` / `SHIZUKU_PWD` / `SHIZUKU_KEY`, then from `D:\CodeWhaleData\secrets\shizuku_server.json`, then from `~/.ssh/id_rsa`. Both workflows target a Debian host running systemd units `shizuku-backend` (port 5566) and `shizuku-ocr` (port 5557); the nginx virtual host on port 80 proxies to 5566. Both have remote side effects and are not portable local-only build commands.
+`ship.py` reads credentials from `SHIZUKU_HOST` / `SHIZUKU_USER` / `SHIZUKU_PWD` / `SHIZUKU_KEY`, then from `D:\CodeWhaleData\secrets\shizuku_server.json`, then from `~/.ssh/id_rsa`. Both workflows target a Debian host running the `shizuku-backend` systemd unit (port 5566); the nginx virtual host on port 80 proxies to 5566. Both have remote side effects and are not portable local-only build commands.
 
 ## Project structure
 
@@ -255,33 +229,27 @@ Sh1Zuku_Translate/
 ├── ShizukuTranslate/           # Spring Boot backend and production static files
 │   ├── src/main/java/com/shizuku/translate/
 │   │   ├── config/             # Application, CORS, model, and security configuration
-│   │   ├── controller/         # Auth, translation, OCR, history, survey, admin, and announcement APIs
+│   │   ├── controller/         # Auth, translation, history, survey, admin, and announcement APIs
 │   │   ├── dto/                # Request and response DTOs
 │   │   ├── entity/             # JPA entities, model profiles, cache, and usage logs
 │   │   ├── exception/          # Global exception handler and custom exceptions
 │   │   ├── integration/        # AI provider clients and protocol adapters
 │   │   ├── repository/         # Spring Data repositories
 │   │   ├── security/           # JWT and API-key authentication filters
-│   │   └── service/            # Translation, OCR, user, survey, usage, and announcement services
+│   │   └── service/            # Translation, user, survey, usage, and announcement services
 │   └── src/main/resources/
 │       ├── application.yml     # Runtime settings, target languages, glossary, preset seeds
 │       └── static/              # Copied production frontend assets
 ├── ShizukuTranslate-frontend/  # Vue 3 and TypeScript frontend
 │   └── src/
 │       ├── api/                # Axios API client and SSE streaming
-│       ├── components/         # OCR, preset, result, and announcement components
+│       ├── components/         # Preset, result, and announcement components
 │       ├── i18n/               # vue-i18n setup plus per-language message packs
 │       ├── router/              # Vue Router routes and auth guards
 │       ├── stores/              # Pinia stores
 │       ├── types/              # TypeScript interfaces
 │       ├── utils/              # Shared utilities, including Markdown rendering
 │       └── views/               # Translation, history, profile, survey, logs, admin, and auth pages
-├── ocr-worker/                 # Python Flask and PaddleOCR microservice
-│   ├── config.py               # Environment-based port and threshold settings
-│   ├── ocr_server.py           # Flask entry point
-│   ├── ocr_service.py          # PaddleOCR wrapper and line merging
-│   ├── requirements.txt        # Currently stale Flask/EasyOCR dependency list
-│   └── install_ocr.md           # OCR deployment notes
 ├── tranShilator-plugin/        # Chrome/Edge extension and CheckUpdate.exe
 │   └── updatechecking/         # .NET updater source project
 └── tools/                      # Local-only tooling (git-ignored)
@@ -307,8 +275,6 @@ Sh1Zuku_Translate/
 | `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
 | `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
 | `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`; saturation returns a clear request-rejection error. |
-| `OCR_PORT` | OCR worker port. Default: `5557`. |
-| `OCR_THRESHOLD` | OCR confidence threshold. Default: `0.3`. |
 | `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |
 
 Other runtime defaults in `application.yml`:
@@ -316,9 +282,8 @@ Other runtime defaults in `application.yml`:
 - Backend HTTP port: `5566`.
 - DeepSeek base URL: `https://api.deepseek.com/v1`.
 - Default DeepSeek model: `deepseek-flash` (DeepSeek-V4.1-Flash).
-- Site DeepSeek models: `deepseek-flash`, which is natively multimodal and the only site model that can use image model processing, and `deepseek-v4-pro`. The retired names `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` still resolve because the DeepSeek API routes them to V4.1 Flash. Image OCR processing remains available through the OCR worker.
+- Site DeepSeek models: `deepseek-flash`, which is natively multimodal and the only site model that can use image model processing, and `deepseek-v4-pro`. The retired names `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` still resolve because the DeepSeek API routes them to V4.1 Flash.
 - DeepSeek thinking mode: disabled by default; requests may override it.
-- OCR worker URL: `http://localhost:5557`.
 - H2 file database: `./data/translatordb`.
 - Database connection pool: HikariCP, 10 connections, 10 s acquisition timeout, plus a 60 s leak-detection sentinel that logs a stack trace if a connection is ever held longer than that. Two settings keep translation from starving the pool, and both are needed for different reasons. `spring.jpa.open-in-view` is deliberately `false`: while it is enabled Spring binds an EntityManager to the whole request and the connection it acquired is only released when the response is written, so a single slow upstream model call pins a pooled connection and every other request then fails with `HikariPool-1 - Connection is not available`. Separately, no transaction wraps an upstream model call - `TranslationService.translate`/`translateImages` do the HTTP call outside any transaction and hand the database writes to `TranslationResultWriter`, which owns a short one; splitting the transaction alone is not sufficient (the connection is then borrowed on the first query instead of at `doBegin`, and is still held for the whole call), it is the combination that leaves the pool idle. Measured locally with three concurrent 15 s translations against a 3-connection pool: with open-in-view on the pool went to `idle=0` and a fourth request got `500 / Connection is not available`; with it off the pool stayed `idle=3` and the fourth request succeeded. Keep both properties the way they are.
 - Multipart limits: 20 MB per file and 60 MB per request (a multi-image upload arrives as one request).
@@ -368,9 +333,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `POST /translate/stream` | Authenticated or extension API key + email verified | Stream a translation over SSE. Unverified accounts receive HTTP 403. Accepts an optional `targetLanguage` tag. |
 | `GET /translations` | Authenticated | List the current user's translation history. |
 | `GET /translations/{id}` | Authenticated | Read one history record owned by the current user. |
-| `POST /ocr` | Authenticated | Proxy an image to the OCR worker. |
 | `POST /translate/image` | Authenticated + email verified | Translate one or more uploaded images in a single multimodal call. Send repeatable `images` fields (up to 10); the singular `image` field is still accepted for older clients. |
-| `GET /ocr/health` | Authenticated | Check the OCR worker through the backend. |
 | `GET /presets` | Public | Return configured preset names, served from the database. |
 | `GET /admin/presets` | Administrator | List all presets including their prompts. |
 | `POST /admin/presets` | Administrator | Create a preset with a unique name and its prompt text. |
