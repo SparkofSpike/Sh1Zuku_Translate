@@ -18,11 +18,6 @@ export default {
   },
   targetLanguage: 'Target language',
   streaming: 'Stream output',
-  imageMode: {
-    label: 'Image processing:',
-    model: 'Model',
-    ocr: 'OCR'
-  },
   customPrompt: 'Custom extra prompt (optional)',
   start: 'Start translation',
   cancel: 'Cancel translation',
@@ -37,8 +32,6 @@ export default {
   errors: {
     tooManyImages: 'You can upload at most {max} images at a time',
     tooManyImagesKept: 'You can upload at most {max} images at a time; only the first {max} were kept',
-    noText: 'No text recognised',
-    ocrFailed: 'OCR request failed',
     imageModelFailed: 'Image model processing failed',
     translateFailed: 'Translation failed'
   }

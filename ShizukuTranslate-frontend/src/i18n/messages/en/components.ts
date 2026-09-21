@@ -2,16 +2,10 @@ export default {
   presetSelector: {
     label: 'Extra presets (multiple choices allowed)'
   },
-  ocrPreview: {
+  imagePreview: {
     imageAlt: 'Uploaded image {index}',
     removeImage: 'Remove this one',
-    removeAll: 'Remove all',
-    remove: 'Remove',
-    recognizing: 'Recognising...',
-    paddleOcr: 'PaddleOCR',
-    paddleOcrWithCount: 'PaddleOCR ({count} images)',
-    repairSegments: 'Repair segmentation',
-    thresholdLabel: 'Confidence:'
+    removeAll: 'Remove all'
   },
   // Shared by TranslateResult.vue and SseTranslateResult.vue: both render the same result block.
   translateResult: {

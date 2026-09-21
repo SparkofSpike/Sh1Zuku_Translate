@@ -2,16 +2,10 @@ export default {
   presetSelector: {
     label: '附加预设（可多选）'
   },
-  ocrPreview: {
+  imagePreview: {
     imageAlt: '上传的图片 {index}',
     removeImage: '移除这张',
-    removeAll: '移除全部',
-    remove: '移除',
-    recognizing: '识别中...',
-    paddleOcr: 'PaddleOCR',
-    paddleOcrWithCount: 'PaddleOCR（{count} 张）',
-    repairSegments: '修复分段',
-    thresholdLabel: '置信度:'
+    removeAll: '移除全部'
   },
   // Shared by TranslateResult.vue and SseTranslateResult.vue: both render the same result block.
   translateResult: {

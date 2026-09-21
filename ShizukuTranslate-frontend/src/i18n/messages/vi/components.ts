@@ -2,16 +2,10 @@ export default {
   presetSelector: {
     label: 'Preset bổ sung (có thể chọn nhiều)'
   },
-  ocrPreview: {
+  imagePreview: {
     imageAlt: 'Ảnh đã tải lên {index}',
     removeImage: 'Xóa ảnh này',
-    removeAll: 'Xóa tất cả',
-    remove: 'Xóa',
-    recognizing: 'Đang nhận dạng...',
-    paddleOcr: 'PaddleOCR',
-    paddleOcrWithCount: 'PaddleOCR ({count} ảnh)',
-    repairSegments: 'Sửa phân đoạn',
-    thresholdLabel: 'Độ tin cậy:'
+    removeAll: 'Xóa tất cả'
   },
   // Shared by TranslateResult.vue and SseTranslateResult.vue: both render the same result block.
   translateResult: {

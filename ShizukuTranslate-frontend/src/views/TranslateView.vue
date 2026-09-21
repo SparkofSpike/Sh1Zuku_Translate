@@ -21,21 +21,14 @@
 
       <h2 style="margin-top:0; font-weight:600;">{{ t('translate.heading') }}</h2>
 
-    <OcrPreview
-      v-if="ocrPreviews.length"
-      :previews="ocrPreviews"
-      :loading="ocrLoading"
-      :polish="ocrPolish"
-      :threshold="ocrThreshold"
-      :mode="imageProcessingMode"
-      @ocr="doOcr"
+    <ImagePreview
+      v-if="imagePreviews.length"
+      :previews="imagePreviews"
       @clear="clearImages"
       @remove="removeImageAt"
-      @update:polish="ocrPolish = $event"
-      @update:threshold="ocrThreshold = $event"
     />
 
-    <p v-if="ocrError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ ocrError }}</p>
+    <p v-if="imageError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ imageError }}</p>
 
     <div
       class="source-wrap"
@@ -77,13 +70,6 @@
       <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
         <input type="checkbox" v-model="streamingEnabled" />
         {{ t('translate.streaming') }}
-      </label>
-      <label v-if="pendingImageFiles.length" style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
-        {{ t('translate.imageMode.label') }}
-        <select v-model="imageProcessingMode" style="width:auto;">
-          <option value="model">{{ t('translate.imageMode.model') }}</option>
-          <option value="ocr">{{ t('translate.imageMode.ocr') }}</option>
-        </select>
       </label>
     </div>
 
@@ -142,9 +128,9 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import api, { ocrImage, translateImages, translateStream } from '../api'
+import api, { translateImages, translateStream } from '../api'
 import type { Announcement, LanguageOption, TranslateResponse } from '../types'
-import OcrPreview from '../components/OcrPreview.vue'
+import ImagePreview from '../components/ImagePreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
 import SseTranslateResult from '../components/SseTranslateResult.vue'
@@ -252,16 +238,12 @@ const streamingResult = ref<TranslateResponse | null>(null)
 // Cancel
 let cancelFn: (() => void) | null = null
 
-// OCR related
-const ocrPreviews = ref<string[]>([])
-const ocrLoading = ref(false)
-const ocrError = ref('')
-const ocrPolish = ref(false)
-const ocrThreshold = ref(0.3)
+// Image attachments for the multimodal translation path
+const imagePreviews = ref<string[]>([])
+const imageError = ref('')
 const pendingImageFiles = ref<File[]>([])
 /** Mirrors TranslationService.MAX_IMAGES_PER_REQUEST; keep the two in sync. */
 const MAX_IMAGES = 10
-const imageProcessingMode = ref<'model' | 'ocr'>('model')
 
 // Inline upload (button + drag & drop)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -448,27 +430,27 @@ function handleAttachments(files: File[]) {
 }
 
 function handleImageFiles(files: File[]) {
-  ocrError.value = ''
+  imageError.value = ''
   const room = MAX_IMAGES - pendingImageFiles.value.length
   if (room <= 0) {
-    ocrError.value = t('translate.errors.tooManyImages', { max: MAX_IMAGES })
+    imageError.value = t('translate.errors.tooManyImages', { max: MAX_IMAGES })
     return
   }
   const accepted = files.slice(0, room)
   if (accepted.length < files.length) {
-    ocrError.value = t('translate.errors.tooManyImagesKept', { max: MAX_IMAGES })
+    imageError.value = t('translate.errors.tooManyImagesKept', { max: MAX_IMAGES })
   }
   for (const file of accepted) {
     pendingImageFiles.value.push(file)
-    const slot = ocrPreviews.value.length
-    ocrPreviews.value.push('')
+    const slot = imagePreviews.value.length
+    imagePreviews.value.push('')
     const reader = new FileReader()
     reader.onload = (e) => {
       // Resolve the slot by file identity, so deleting a thumbnail while another
       // read is still in flight cannot shift the previews out of order.
       const index = pendingImageFiles.value.indexOf(file)
-      if (index >= 0) ocrPreviews.value[index] = e.target?.result as string
-      else ocrPreviews.value.splice(slot, 1)
+      if (index >= 0) imagePreviews.value[index] = e.target?.result as string
+      else imagePreviews.value.splice(slot, 1)
     }
     reader.readAsDataURL(file)
   }
@@ -476,41 +458,13 @@ function handleImageFiles(files: File[]) {
 
 function removeImageAt(index: number) {
   pendingImageFiles.value.splice(index, 1)
-  ocrPreviews.value.splice(index, 1)
+  imagePreviews.value.splice(index, 1)
 }
 
 function clearImages() {
   pendingImageFiles.value = []
-  ocrPreviews.value = []
-  ocrError.value = ''
-}
-
-async function doOcr() {
-  const files = pendingImageFiles.value.slice()
-  if (!files.length) return
-  ocrLoading.value = true
-  ocrError.value = ''
-  try {
-    // The OCR worker runs single-threaded (Paddle predictors cannot be shared across
-    // threads), so pages go one at a time and are joined in upload order afterwards.
-    const pages: string[] = []
-    for (const file of files) {
-      const res = await ocrImage(file, ocrPolish.value, ocrThreshold.value)
-      const text = res.data.text?.trim()
-      if (text) pages.push(text)
-    }
-    if (pages.length) {
-      sourceText.value = pages.join('\n\n')
-      clearImages()
-    } else {
-      ocrError.value = t('translate.errors.noText')
-    }
-  } catch (e: any) {
-    const msg = e.response?.data?.error || e.message || t('translate.errors.ocrFailed')
-    ocrError.value = msg
-  } finally {
-    ocrLoading.value = false
-  }
+  imagePreviews.value = []
+  imageError.value = ''
 }
 
 function cancel() {
@@ -521,7 +475,7 @@ function cancel() {
 
 async function translate(forceRetranslate = false) {
   if (!sourceText.value.trim() && !pendingImageFiles.value.length) return
-  if (pendingImageFiles.value.length && imageProcessingMode.value === 'model') {
+  if (pendingImageFiles.value.length) {
     try {
       const request = { sourceText: sourceText.value, model: model.value, modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined,
@@ -535,10 +489,6 @@ async function translate(forceRetranslate = false) {
       error.value = e.response?.data?.error || e.message || t('translate.errors.imageModelFailed')
       return
     }
-  }
-  if (pendingImageFiles.value.length && imageProcessingMode.value === 'ocr') {
-    await doOcr()
-    if (!sourceText.value.trim()) return
   }
   status.value = 'preparing'
   error.value = ''
