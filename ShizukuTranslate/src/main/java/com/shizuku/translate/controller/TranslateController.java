@@ -238,7 +238,16 @@ public class TranslateController {
                 } catch (Exception e) {
                     if (!closed.get()) {
                         log.error("Streaming translation failed", e);
-                        emitter.completeWithError(e);
+                        // Report the failure through the stream before closing it. The client
+                        // shows this message; completeWithError alone would surface as an opaque
+                        // connection reset, which reads as "the stream broke" instead of, for
+                        // example, "configure a model API key".
+                        String message = e.getMessage() == null ? "翻译失败" : e.getMessage();
+                        if (sendEvent(emitter, closed, SseEmitter.event().data(writeJson(new SseErrorEvent(message))))) {
+                            emitter.complete();
+                        } else {
+                            emitter.completeWithError(e);
+                        }
                     }
                 }
             });
