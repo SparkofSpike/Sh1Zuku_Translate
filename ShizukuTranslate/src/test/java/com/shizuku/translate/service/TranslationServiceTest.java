@@ -435,6 +435,31 @@ class TranslationServiceTest {
     }
 
     @Test
+    void imageStreamReportsAnEmptyModelAnswerInsteadOfRecordingIt() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-flash", "disabled"));
+        // A stream can finish without ever producing a token (filtered page, upstream hiccup).
+        doAnswer(invocation -> {
+            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(5);
+            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            return null;
+        }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<AiModelClient.ImagePayload> payloads = List.of(
+                new AiModelClient.ImagePayload(new byte[] {1, 2, 3}, "image/png"));
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        List<String> errors = new java.util.ArrayList<>();
+        service.translateImagesStream("alice", request("", null, null), payloads, false,
+                token -> { }, done::add, errors::add, () -> { }, () -> false);
+
+        assertTrue(done.isEmpty());
+        assertEquals(1, errors.size());
+        // An empty answer must not leave an empty row in the user's history.
+        verify(resultWriter, never()).persistTranslate(any(), any(AiModelConfig.class), any(), anyString(), anyString(), any());
+    }
+
+    @Test
     void imageStreamRejectsModelsWithoutVisionAndEmptyUploads() {
         when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
                 .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-v4-pro", "disabled"));

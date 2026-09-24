@@ -135,6 +135,15 @@ public class TranslationService {
                     onToken.accept(token);
                 },
                 usage -> {
+                    // A stream that ends without a single token means the model returned nothing
+                    // (filtered page, upstream hiccup). Recording that as a finished translation
+                    // would show the user an empty result after a long wait, so it is reported as
+                    // a failure instead. The text path is left alone on purpose: the browser
+                    // extension consumes it and this guard is a behaviour change.
+                    if (fullText.length() == 0) {
+                        onError.accept("模型没有返回任何内容，请重试");
+                        return;
+                    }
                     TranslateResponse response = resultWriter.persistTranslate(user, config, usage,
                             fullText.toString(),
                             request.getSourceText() == null ? "" : request.getSourceText(),

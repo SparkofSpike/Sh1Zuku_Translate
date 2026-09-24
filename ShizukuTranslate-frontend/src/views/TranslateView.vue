@@ -564,6 +564,12 @@ async function translatePendingImages() {
   }
 
   // Non-streaming fallback: the same phases and cancel affordance, one response at the end.
+  // The streaming refs are reset here as well, otherwise a previous streaming result would
+  // stay on screen while this request runs (and after a cancel).
+  useStreaming.value = false
+  streamingText.value = ''
+  streamingResult.value = null
+  result.value = null
   const controller = new AbortController()
   cancelFn = () => {
     controller.abort()
