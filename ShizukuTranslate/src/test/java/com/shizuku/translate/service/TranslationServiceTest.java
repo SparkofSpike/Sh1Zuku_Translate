@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -397,5 +398,56 @@ class TranslationServiceTest {
 
         assertTrue(done.get(0).isFromCache());
         assertTrue(done.get(0).isFromSharedTranslation() == false);
+    }
+
+    @Test
+    void imageStreamForwardsTokensAndPersistsWithoutTouchingTheCache() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-flash", "disabled"));
+        TranslateResponse persisted = new TranslateResponse();
+        persisted.setId(42L);
+        persisted.setTranslatedText("译文");
+        when(resultWriter.persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), anyString(), any()))
+                .thenReturn(persisted);
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(4);
+            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(5);
+            onToken.accept("译");
+            onToken.accept("文");
+            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            return null;
+        }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<AiModelClient.ImagePayload> payloads = List.of(
+                new AiModelClient.ImagePayload(new byte[] {1, 2, 3}, "image/png"));
+        List<String> tokens = new java.util.ArrayList<>();
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateImagesStream("alice", request("", null, null), payloads, false,
+                tokens::add, done::add, error -> { }, () -> { }, () -> false);
+
+        assertEquals(List.of("译", "文"), tokens);
+        assertEquals(persisted, done.get(0));
+        // Images carry no stable source text, so the image path records history but never
+        // consults or fills the per-user cache.
+        verify(cacheRepository, never()).findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString());
+        verify(cacheRepository, never()).save(any(com.shizuku.translate.entity.TranslationCache.class));
+    }
+
+    @Test
+    void imageStreamRejectsModelsWithoutVisionAndEmptyUploads() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-v4-pro", "disabled"));
+        List<AiModelClient.ImagePayload> payloads = List.of(
+                new AiModelClient.ImagePayload(new byte[] {1, 2, 3}, "image/png"));
+
+        assertThrows(com.shizuku.translate.exception.BusinessException.class,
+                () -> service.translateImagesStream("alice", request("", null, null), payloads, false,
+                        token -> { }, response -> { }, error -> { }, () -> { }, () -> false));
+        assertThrows(com.shizuku.translate.exception.BusinessException.class,
+                () -> service.translateImagesStream("alice", request("", null, null), List.of(), false,
+                        token -> { }, response -> { }, error -> { }, () -> { }, () -> false));
+        verify(aiModelClient, never()).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
     }
 }

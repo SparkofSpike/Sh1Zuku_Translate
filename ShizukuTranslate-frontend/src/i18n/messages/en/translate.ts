@@ -26,6 +26,7 @@ export default {
   siteModelPrefix: 'Site',
   status: {
     preparing: 'Connecting to the server…',
+    uploadingImages: 'Uploading images…',
     translating: 'AI is translating…',
     translatingWithCount: 'AI is translating… ({count} characters received)'
   },

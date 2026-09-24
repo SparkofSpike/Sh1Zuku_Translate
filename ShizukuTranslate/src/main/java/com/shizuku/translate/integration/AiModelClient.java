@@ -159,6 +159,38 @@ public class AiModelClient {
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError, Runnable onUpstreamConnected,
                            java.util.function.BooleanSupplier cancelled) {
+        streamRequest(requestBody(systemPrompt, userMessage, config, true), config,
+                onToken, onComplete, onError, onUpstreamConnected, cancelled);
+    }
+
+    /**
+     * Streams a multimodal request. The images travel exactly as in {@link #chatWithImages} —
+     * appended to one user message in upload order — but the answer arrives token by token,
+     * so a multi-page upload can start rendering while the model still reads later pages.
+     */
+    public void chatStreamWithImages(String systemPrompt, String userMessage, List<ImagePayload> images,
+                                     AiModelConfig config, Consumer<String> onToken,
+                                     Consumer<TokenUsage> onComplete, Consumer<String> onError,
+                                     Runnable onUpstreamConnected,
+                                     java.util.function.BooleanSupplier cancelled) {
+        Map<String, Object> request = buildVisionRequest(systemPrompt, userMessage, images, config);
+        // The vision builder describes a complete (non-streaming) call, so streaming mode is
+        // opted into here. The usage opt-in matters as much as `stream` itself: providers only
+        // report token usage on a streamed response when asked, and without it the image path
+        // would silently stop recording usage. Mirrors the text path in requestBody().
+        request.put("stream", true);
+        request.put("stream_options", Map.of("include_usage", true));
+        streamRequest(request, config, onToken, onComplete, onError, onUpstreamConnected, cancelled);
+    }
+
+    /**
+     * Shared SSE loop. Retries, cancellation and usage parsing are identical for every payload
+     * shape, so callers only decide which request body goes out.
+     */
+    private void streamRequest(Map<String, Object> request, AiModelConfig config,
+                               Consumer<String> onToken, Consumer<TokenUsage> onComplete,
+                               Consumer<String> onError, Runnable onUpstreamConnected,
+                               java.util.function.BooleanSupplier cancelled) {
         final int maxRetries = 3;
         Thread currentThread = Thread.currentThread();
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -167,7 +199,6 @@ public class AiModelClient {
                     throw new CancellationException("Model request cancelled");
                 }
                 RestClient client = clientFor(config);
-                Map<String, Object> request = requestBody(systemPrompt, userMessage, config, true);
                 client.post()
                         .uri(config.isAnthropic() ? "/messages" : "/chat/completions")
                         .headers(headers -> addAuth(headers, config))

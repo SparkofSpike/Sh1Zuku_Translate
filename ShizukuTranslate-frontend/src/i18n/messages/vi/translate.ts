@@ -26,6 +26,7 @@ export default {
   siteModelPrefix: 'Máy chủ',
   status: {
     preparing: 'Đang kết nối tới máy chủ…',
+    uploadingImages: 'Đang tải ảnh lên…',
     translating: 'AI đang dịch…',
     translatingWithCount: 'AI đang dịch… (đã nhận {count} ký tự)'
   },
