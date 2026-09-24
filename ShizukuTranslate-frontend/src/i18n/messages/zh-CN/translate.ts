@@ -26,6 +26,7 @@ export default {
   siteModelPrefix: '站方',
   status: {
     preparing: '正在连接服务器…',
+    uploadingImages: '正在上传图片…',
     translating: 'AI 正在翻译…',
     translatingWithCount: 'AI 正在翻译…（已接收 {count} 字）'
   },

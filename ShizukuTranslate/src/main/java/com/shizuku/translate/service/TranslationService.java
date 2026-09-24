@@ -61,8 +61,12 @@ public class TranslationService {
         this.resultWriter = resultWriter;
     }
 
-    /** Images travel in a single multimodal call, so this bound also caps the token cost per request. */
-    private static final int MAX_IMAGES_PER_REQUEST = 10;
+    /**
+     * Images travel in a single multimodal call, so this bound also caps the token cost per
+     * request. Public because the streaming image endpoint validates the upload count before
+     * the async job starts.
+     */
+    public static final int MAX_IMAGES_PER_REQUEST = 10;
 
     /**
      * Image translation. The multimodal call and the database writes are deliberately kept
@@ -98,6 +102,57 @@ public class TranslationService {
         return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
                 request.getSourceText() == null ? "" : request.getSourceText(),
                 hideCustomPrompt ? null : request.getCustomPrompt());
+    }
+
+    /**
+     * Streaming variant of {@link #translateImages}: tokens reach the caller while the model is
+     * still working, which is what lets the web UI render pages as they are translated. The
+     * finished text is recorded exactly like the non-streaming path — same prompt, same
+     * "images carry no stable source text, so no target language and no sharing" rule.
+     */
+    public void translateImagesStream(String username, TranslateRequest request,
+                                      List<AiModelClient.ImagePayload> payloads, boolean hideCustomPrompt,
+                                      Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
+                                      Consumer<String> onError, Runnable onUpstreamConnected,
+                                      BooleanSupplier cancelled) {
+        if (payloads == null || payloads.isEmpty()) {
+            throw new com.shizuku.translate.exception.BusinessException("请至少上传一张图片");
+        }
+        if (payloads.size() > MAX_IMAGES_PER_REQUEST) {
+            throw new com.shizuku.translate.exception.BusinessException(
+                    "一次最多处理 " + MAX_IMAGES_PER_REQUEST + " 张图片");
+        }
+        User user = userService.findByUsername(username);
+        AiModelConfig config = userService.resolveAiModelConfig(user, request.getModel(), request.getThinkingType(), request.getModelProfileId());
+        if (!config.isVisual()) throw new com.shizuku.translate.exception.BusinessException("只有视觉模型才能使用模型处理");
+        String systemPrompt = promptTemplateService.buildSystemPrompt(PromptTemplateService.DEFAULT_TRANSLATE_PROMPT,
+                request.getPresets(), request.getCustomPrompt(), request.getTargetLanguage());
+        StringBuilder fullText = new StringBuilder();
+        aiModelClient.chatStreamWithImages(systemPrompt,
+                buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config,
+                token -> {
+                    fullText.append(token);
+                    onToken.accept(token);
+                },
+                usage -> {
+                    // A stream that ends without a single token means the model returned nothing
+                    // (filtered page, upstream hiccup). Recording that as a finished translation
+                    // would show the user an empty result after a long wait, so it is reported as
+                    // a failure instead. The text path is left alone on purpose: the browser
+                    // extension consumes it and this guard is a behaviour change.
+                    if (fullText.length() == 0) {
+                        onError.accept("模型没有返回任何内容，请重试");
+                        return;
+                    }
+                    TranslateResponse response = resultWriter.persistTranslate(user, config, usage,
+                            fullText.toString(),
+                            request.getSourceText() == null ? "" : request.getSourceText(),
+                            hideCustomPrompt ? null : request.getCustomPrompt());
+                    onComplete.accept(response);
+                },
+                error -> onError.accept(error),
+                onUpstreamConnected,
+                cancelled);
     }
 
     /**

@@ -128,7 +128,7 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import api, { translateImages, translateStream } from '../api'
+import api, { translateImages, translateImagesStream, translateStream } from '../api'
 import type { Announcement, LanguageOption, TranslateResponse } from '../types'
 import ImagePreview from '../components/ImagePreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
@@ -215,12 +215,21 @@ const hasReusableResult = ref(false)
 const status = ref<'idle' | 'preparing' | 'ai-processing'>('idle')
 
 /**
+ * Whether the request currently in flight is an image upload. Only the status wording depends
+ * on it: an image request spends the preparing phase uploading the files, not waiting on the
+ * server to answer.
+ */
+const imageRequestInFlight = ref(false)
+
+/**
  * Spelled out next to the button: the button itself carries the action (cancel while a
  * translation is in flight), while this line says what is actually happening. Mirrors
  * the status message the browser extension shows in its popup.
  */
 const statusText = computed(() => {
-  if (status.value === 'preparing') return t('translate.status.preparing')
+  if (status.value === 'preparing') {
+    return imageRequestInFlight.value ? t('translate.status.uploadingImages') : t('translate.status.preparing')
+  }
   if (status.value === 'ai-processing') {
     return streamingText.value
       ? t('translate.status.translatingWithCount', { count: streamingText.value.length })
@@ -473,23 +482,130 @@ function cancel() {
   error.value = ''
 }
 
+/**
+ * Drops only the pages that were just sent. Images the user adds while a request is in flight
+ * are kept, together with their preview slots.
+ */
+function clearSentImages(sent: File[]) {
+  if (pendingImageFiles.value.length === sent.length) {
+    clearImages()
+    return
+  }
+  const sentSet = new Set(sent)
+  const keptFiles: File[] = []
+  const keptPreviews: string[] = []
+  pendingImageFiles.value.forEach((file, index) => {
+    if (!sentSet.has(file)) {
+      keptFiles.push(file)
+      keptPreviews.push(imagePreviews.value[index] ?? '')
+    }
+  })
+  pendingImageFiles.value = keptFiles
+  imagePreviews.value = keptPreviews
+}
+
+/**
+ * Image translation. Streaming is opt-in like the text path, and both modes drive the same
+ * status machine: the button turns into a red cancel action, the status line narrates the
+ * phase, and cancelling aborts the upload or the stream. The image path used to run
+ * fire-and-forget, so a slow vision call looked like a frozen page.
+ */
+async function translatePendingImages() {
+  const files = [...pendingImageFiles.value]
+  const request = {
+    sourceText: sourceText.value,
+    model: model.value,
+    modelProfileId: modelProfileId.value,
+    customPrompt: customPrompt.value || undefined,
+    presets: selectedPresets.value.length ? selectedPresets.value : undefined,
+    targetLanguage: targetLanguage.value
+  }
+
+  status.value = 'preparing'
+  error.value = ''
+  hasReusableResult.value = false
+  imageRequestInFlight.value = true
+
+  if (streamingEnabled.value) {
+    useStreaming.value = true
+    streamingText.value = ''
+    streamingResult.value = null
+    result.value = null
+
+    const ctrl = translateImagesStream(
+      files,
+      request,
+      (token: string) => {
+        if (status.value === 'preparing') status.value = 'ai-processing'
+        streamingText.value += token
+      },
+      (response: TranslateResponse) => {
+        streamingResult.value = response
+        status.value = 'idle'
+        cancelFn = null
+        imageRequestInFlight.value = false
+        clearSentImages(files)
+      },
+      (err: string) => {
+        error.value = err
+        status.value = 'idle'
+        cancelFn = null
+        imageRequestInFlight.value = false
+      }
+    )
+
+    cancelFn = () => {
+      ctrl.abort()
+      status.value = 'idle'
+      cancelFn = null
+      imageRequestInFlight.value = false
+    }
+    return
+  }
+
+  // Non-streaming fallback: the same phases and cancel affordance, one response at the end.
+  // The streaming refs are reset here as well, otherwise a previous streaming result would
+  // stay on screen while this request runs (and after a cancel).
+  useStreaming.value = false
+  streamingText.value = ''
+  streamingResult.value = null
+  result.value = null
+  const controller = new AbortController()
+  cancelFn = () => {
+    controller.abort()
+    status.value = 'idle'
+    cancelFn = null
+    imageRequestInFlight.value = false
+  }
+
+  // Brief delay so the upload phase is visible instead of flashing past.
+  await new Promise(r => setTimeout(r, 300))
+
+  try {
+    if (status.value !== 'preparing') return // was cancelled during the delay
+    status.value = 'ai-processing'
+    const response = await translateImages(files, request, controller.signal)
+    result.value = response.data
+    useStreaming.value = false
+    clearSentImages(files)
+  } catch (e: unknown) {
+    if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
+    const err = e as { response?: { data?: { error?: string } }; message?: string }
+    error.value = err.response?.data?.error || err.message || t('translate.errors.imageModelFailed')
+  } finally {
+    status.value = 'idle'
+    cancelFn = null
+    imageRequestInFlight.value = false
+  }
+}
+
 async function translate(forceRetranslate = false) {
   if (!sourceText.value.trim() && !pendingImageFiles.value.length) return
   if (pendingImageFiles.value.length) {
-    try {
-      const request = { sourceText: sourceText.value, model: model.value, modelProfileId: modelProfileId.value,
-        customPrompt: customPrompt.value || undefined, presets: selectedPresets.value.length ? selectedPresets.value : undefined,
-        targetLanguage: targetLanguage.value }
-      const response = await translateImages(pendingImageFiles.value, request)
-      result.value = response.data
-      useStreaming.value = false
-      clearImages()
-      return
-    } catch (e: any) {
-      error.value = e.response?.data?.error || e.message || t('translate.errors.imageModelFailed')
-      return
-    }
+    await translatePendingImages()
+    return
   }
+  imageRequestInFlight.value = false
   status.value = 'preparing'
   error.value = ''
   hasReusableResult.value = false

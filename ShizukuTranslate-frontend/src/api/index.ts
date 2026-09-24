@@ -14,12 +14,108 @@ api.interceptors.request.use(config => {
   return config
 })
 
-export function translateImages(files: File[], request: TranslateRequest) {
+export function translateImages(files: File[], request: TranslateRequest, signal?: AbortSignal) {
   const formData = new FormData()
   // Repeated `images` fields: the backend appends them to one multimodal request in this order.
   for (const file of files) formData.append('images', file)
   formData.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
-  return api.post<TranslateResponse>('/translate/image', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+  return api.post<TranslateResponse>('/translate/image', formData, { headers: { 'Content-Type': 'multipart/form-data' }, signal })
+}
+
+interface SseState {
+  /** Set by a terminal event, so an aborted or truncated stream is not reported twice. */
+  doneReceived: boolean
+}
+
+/**
+ * Reads one SSE body and forwards its events. Malformed records are ignored: a single bad
+ * chunk must not kill an otherwise healthy stream.
+ */
+async function consumeSseStream(
+  response: Response,
+  state: SseState,
+  onToken: (token: string) => void,
+  onDone: (response: TranslateResponse) => void,
+  onError: (error: string) => void
+) {
+  const reader = response.body?.getReader()
+  if (!reader) { onError('Stream not supported'); state.doneReceived = true; return }
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const processLine = (line: string) => {
+    if (!line.startsWith('data:')) return
+    const data = line.slice(line.indexOf(':') + 1).trim()
+    if (!data) return
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed.token === 'string') onToken(parsed.token)
+      if (parsed.done) { state.doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
+      if (parsed.error) { state.doneReceived = true; onError(parsed.error) }
+    } catch (e) {
+      // Ignore malformed SSE records and continue consuming the stream.
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) processLine(line)
+  }
+
+  // Process a final event even if the server closes without a trailing
+  // newline; otherwise a final `done` record can be lost.
+  buffer += decoder.decode()
+  if (buffer) processLine(buffer)
+}
+
+/**
+ * POSTs a request and consumes the SSE answer. Shared by both streaming endpoints so the
+ * text and image paths cannot drift apart in error or cancellation behaviour.
+ */
+function streamPost(
+  url: string,
+  init: RequestInit,
+  onToken: (token: string) => void,
+  onDone: (response: TranslateResponse) => void,
+  onError: (error: string) => void
+): AbortController {
+  const controller = new AbortController()
+  const state: SseState = { doneReceived: false }
+
+  fetch(url, { ...init, signal: controller.signal })
+    .then(async response => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        // The backend reports failures as `{"error": "..."}`; show that message rather
+        // than a raw status/body pair when it is available.
+        let message = 'SSE error ' + response.status
+        try {
+          const parsed = JSON.parse(text)
+          if (parsed && typeof parsed.error === 'string' && parsed.error) message = parsed.error
+          else if (text) message += ': ' + text
+        } catch (e) {
+          if (text) message += ': ' + text
+        }
+        state.doneReceived = true
+        onError(message)
+        return
+      }
+      await consumeSseStream(response, state, onToken, onDone, onError)
+      if (!state.doneReceived) onError('翻译流意外中断，请重试')
+    })
+    .catch((err: unknown) => {
+      // Abort is the expected cancellation path from the web UI, not an
+      // error that should overwrite the user's cleared state.
+      if (!state.doneReceived && !controller.signal.aborted) {
+        onError(err instanceof Error ? err.message : 'Stream request failed')
+      }
+    })
+
+  return controller
 }
 
 export function translateStream(
@@ -35,68 +131,46 @@ export function translateStream(
   /** Re-translate: bypass both the personal cache and other users' shared translations. */
   skipCache: boolean = false
 ): AbortController {
-  const controller = new AbortController()
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) {
     headers['Authorization'] = 'Bearer ' + token
   }
 
-  let doneReceived = false
-
-  fetch(api.defaults.baseURL + '/translate/stream', {
+  return streamPost(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache } as TranslateRequest),
-    signal: controller.signal
-  }).then(async response => {
-    if (!response.ok) {
-      const text = await response.text().catch(() => '')
-      onError('SSE error ' + response.status + ': ' + text)
-      return
-    }
-    const reader = response.body?.getReader()
-    if (!reader) { onError('Stream not supported'); return }
-    const decoder = new TextDecoder()
-    let buffer = ''
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache } as TranslateRequest)
+  }, onToken, onDone, onError)
+}
 
-    const processLine = (line: string) => {
-      if (!line.startsWith('data:')) return
-      const data = line.slice(line.indexOf(':') + 1).trim()
-      if (!data) return
-      try {
-        const parsed = JSON.parse(data)
-        if (typeof parsed.token === 'string') onToken(parsed.token)
-        if (parsed.done) { doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
-        if (parsed.error) { doneReceived = true; onError(parsed.error) }
-      } catch (e) {
-        // Ignore malformed SSE records and continue consuming the stream.
-      }
-    }
+/**
+ * Streaming image translation. The upload is multipart (repeated `images` fields, same shape as
+ * the non-streaming endpoint) and the answer arrives as SSE, so pages render while the model is
+ * still translating the rest. No explicit Content-Type header: the browser has to add the
+ * multipart boundary itself.
+ */
+export function translateImagesStream(
+  files: File[],
+  request: TranslateRequest,
+  onToken: (token: string) => void,
+  onDone: (response: TranslateResponse) => void,
+  onError: (error: string) => void
+): AbortController {
+  const formData = new FormData()
+  for (const file of files) formData.append('images', file)
+  formData.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
+  const token = localStorage.getItem('token')
+  const headers: Record<string, string> = {}
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token
+  }
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) processLine(line)
-    }
-
-    // Process a final event even if the server closes without a trailing
-    // newline; otherwise a final `done` record can be lost.
-    buffer += decoder.decode()
-    if (buffer) processLine(buffer)
-    if (!doneReceived) onError('翻译流意外中断，请重试')
-  }).catch((err: unknown) => {
-    // Abort is the expected cancellation path from the web UI, not an
-    // error that should overwrite the user's cleared state.
-    if (!doneReceived && !controller.signal.aborted) {
-      onError(err instanceof Error ? err.message : 'Stream request failed')
-    }
-  })
-
-  return controller
+  return streamPost(api.defaults.baseURL + '/translate/image/stream', {
+    method: 'POST',
+    headers,
+    body: formData
+  }, onToken, onDone, onError)
 }
 
 export function sendEmailCode(email: string) {

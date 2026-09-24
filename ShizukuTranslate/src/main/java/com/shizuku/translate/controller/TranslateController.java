@@ -7,6 +7,8 @@ import com.shizuku.translate.dto.SseTokenEvent;
 import com.shizuku.translate.dto.SseStatusEvent;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
+import com.shizuku.translate.exception.BusinessException;
+import com.shizuku.translate.integration.AiModelClient;
 import com.shizuku.translate.service.TranslationService;
 import com.shizuku.translate.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +30,7 @@ import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -70,6 +73,55 @@ public class TranslateController {
         return ResponseEntity.ok(translationService.translateImages(principal.getName(), request, files, isPluginRequest(httpRequest)));
     }
 
+    /**
+     * Streaming image translation. The uploaded pages are read on the request thread (multipart
+     * temp files do not outlive the request, while the streaming job does) and the answer is
+     * sent as SSE, so the web UI renders tokens while the model is still working.
+     */
+    @PostMapping(value = "/translate/image/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter translateImageStream(@RequestPart(value = "images", required = false) List<MultipartFile> images,
+                                           @RequestPart(value = "image", required = false) MultipartFile legacyImage,
+                                           @RequestPart("request") @Valid TranslateRequest request,
+                                           Principal principal, HttpServletRequest httpRequest) throws IOException {
+        String username = principal.getName();
+        boolean pluginRequest = isPluginRequest(httpRequest);
+        userService.requireEmailVerified(username);
+        List<AiModelClient.ImagePayload> payloads = collectImagePayloads(images, legacyImage);
+        return streamOut(sink -> translationService.translateImagesStream(username, request, payloads, pluginRequest,
+                sink.onToken(), sink.onDone(), sink.onError(), sink.onUpstreamConnected(), sink.cancelled()));
+    }
+
+    /**
+     * Reads the uploaded pages while still on the request thread. Multipart temp files are
+     * cleaned up when the request finishes — before the async worker touches them — so the bytes
+     * have to be captured (and validated) here rather than inside the streaming job.
+     */
+    private static List<AiModelClient.ImagePayload> collectImagePayloads(List<MultipartFile> images,
+                                                                         MultipartFile legacyImage) throws IOException {
+        List<MultipartFile> files = new ArrayList<>();
+        if (images != null) {
+            files.addAll(images);
+        }
+        if (legacyImage != null && !legacyImage.isEmpty()) {
+            files.add(legacyImage);
+        }
+        if (files.isEmpty()) {
+            throw new BusinessException("请至少上传一张图片");
+        }
+        if (files.size() > TranslationService.MAX_IMAGES_PER_REQUEST) {
+            throw new BusinessException("一次最多处理 " + TranslationService.MAX_IMAGES_PER_REQUEST + " 张图片");
+        }
+        List<AiModelClient.ImagePayload> payloads = new ArrayList<>();
+        for (MultipartFile file : files) {
+            if (file == null || file.isEmpty()) continue;
+            payloads.add(new AiModelClient.ImagePayload(file.getBytes(), file.getContentType()));
+        }
+        if (payloads.isEmpty()) {
+            throw new BusinessException("请至少上传一张图片");
+        }
+        return payloads;
+    }
+
     @PostMapping("/translate")
     public ResponseEntity<TranslateResponse> translate(@Valid @RequestBody TranslateRequest request,
                                                        Principal principal,
@@ -89,6 +141,17 @@ public class TranslateController {
         // Paid-feature gate: must run before the emitter is created so the
         // failure surfaces as a normal HTTP 403 response instead of a stream.
         userService.requireEmailVerified(username);
+        return streamOut(sink -> translationService.translateStream(username, request, pluginRequest,
+                sink.onToken(), sink.onDone(), sink.onError(), sink.onUpstreamConnected(), sink.cancelled()));
+    }
+
+    /**
+     * Creates the SSE response and runs one streaming job on the shared executor. Every
+     * streaming endpoint behaves identically here: an immediate comment event so the client
+     * sees a connected stream, cooperative cancellation on disconnect or timeout, and a
+     * terminal event on success or failure. Callers only supply the work itself.
+     */
+    private SseEmitter streamOut(StreamWork work) {
         // Long model pre-fill plus generation can exceed five minutes. Keep
         // the SSE request alive long enough for the upstream inactivity
         // timeout; the client can still cancel it at any time.
@@ -137,45 +200,55 @@ public class TranslateController {
             return emitter;
         }
 
+        StreamSink sink = new StreamSink(
+                token -> {
+                    String json = writeJson(new SseTokenEvent(token));
+                    sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
+                },
+                response -> {
+                    if (!closed.get()) {
+                        String json = writeJson(new SseDoneEvent(response.getId(), response.getTranslatedText(),
+                                response.getTokenUsage(), response.isFromSharedTranslation(), response.isFromCache()));
+                        if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
+                            emitter.complete();
+                        }
+                    }
+                },
+                error -> {
+                    if (!closed.get()) {
+                        String json = writeJson(new SseErrorEvent(error));
+                        if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
+                            emitter.complete();
+                        }
+                    }
+                },
+                () -> {
+                    String json = writeJson(new SseStatusEvent("ai-connected"));
+                    sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
+                },
+                closed::get);
+
         try {
             Future<?> task = translationStreamExecutor.submit(() -> {
                 try {
-                translationService.translateStream(username, request, pluginRequest,
-                        token -> {
-                            String json = writeJson(new SseTokenEvent(token));
-                            sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
-                        },
-                        response -> {
-                            if (!closed.get()) {
-                                String json = writeJson(new SseDoneEvent(response.getId(), response.getTranslatedText(),
-                                        response.getTokenUsage(), response.isFromSharedTranslation(), response.isFromCache()));
-                                if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
-                                    emitter.complete();
-                                }
-                            }
-                        },
-                        error -> {
-                            if (!closed.get()) {
-                                String json = writeJson(new SseErrorEvent(error));
-                                if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
-                                    emitter.complete();
-                                }
-                            }
-                        },
-                        () -> {
-                            String json = writeJson(new SseStatusEvent("ai-connected"));
-                            sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
-                        },
-                        closed::get
-                );
-            } catch (ClientDisconnectedException e) {
-                log.info("Streaming translation cancelled by client");
-                closed.set(true);
-            } catch (Exception e) {
-                if (!closed.get()) {
-                    log.error("Streaming translation failed", e);
-                    emitter.completeWithError(e);
-                }
+                    work.run(sink);
+                } catch (ClientDisconnectedException e) {
+                    log.info("Streaming translation cancelled by client");
+                    closed.set(true);
+                } catch (Exception e) {
+                    if (!closed.get()) {
+                        log.error("Streaming translation failed", e);
+                        // Report the failure through the stream before closing it. The client
+                        // shows this message; completeWithError alone would surface as an opaque
+                        // connection reset, which reads as "the stream broke" instead of, for
+                        // example, "configure a model API key".
+                        String message = e.getMessage() == null ? "翻译失败" : e.getMessage();
+                        if (sendEvent(emitter, closed, SseEmitter.event().data(writeJson(new SseErrorEvent(message))))) {
+                            emitter.complete();
+                        } else {
+                            emitter.completeWithError(e);
+                        }
+                    }
                 }
             });
             taskRef.set(task);
@@ -216,6 +289,17 @@ public class TranslateController {
     }
 
     private static class ClientDisconnectedException extends RuntimeException {}
+
+    /** Outbound channels of one SSE stream, closed over the emitter and its cancel state. */
+    private record StreamSink(Consumer<String> onToken, Consumer<TranslateResponse> onDone,
+                              Consumer<String> onError, Runnable onUpstreamConnected,
+                              java.util.function.BooleanSupplier cancelled) {}
+
+    /** The per-endpoint work one stream runs; it reports progress through the sink. */
+    @FunctionalInterface
+    private interface StreamWork {
+        void run(StreamSink sink);
+    }
 
     private boolean isPluginRequest(HttpServletRequest request) {
         return StringUtils.hasText(request.getHeader("X-API-Key"))
