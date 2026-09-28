@@ -23,7 +23,9 @@ class AiModelClientVisionTest {
                 new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/jpeg", config);
 
         assertEquals("deepseek-flash", request.get("model"));
-        assertFalse(request.containsKey("thinking"));
+        // The mode must be on the wire: DeepSeek reasons by default when the field is absent,
+        // so a missing field would mean "thinking on" rather than "off".
+        assertEquals(Map.of("type", "disabled"), request.get("thinking"));
 
         List<Map<String, Object>> messages = messages(request);
         assertEquals("system", messages.get(0).get("role"));

@@ -84,9 +84,7 @@ public class AiModelClient {
         request.put("max_tokens", 100000);
         request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", content)));
-        if ("enabled".equalsIgnoreCase(config.getThinkingType())) {
-            request.put("thinking", Map.of("type", "enabled"));
-        }
+        applyThinkingMode(request, config);
         return request;
     }
 
@@ -302,11 +300,26 @@ public class AiModelClient {
             if (stream) {
                 request.put("stream_options", Map.of("include_usage", true));
             }
-            if ("enabled".equalsIgnoreCase(config.getThinkingType()) && "deepseek".equals(config.getProvider())) {
-                request.put("thinking", Map.of("type", "enabled"));
-            }
+            applyThinkingMode(request, config);
         }
         return request;
+    }
+
+    /**
+     * Sets the thinking mode on the request body explicitly.
+     *
+     * DeepSeek's thinking-capable models reason by default when the field is absent, so an
+     * omitted field does NOT mean "off" — leaving it out to express "disabled" keeps the model
+     * reasoning, and the user waits out the whole deliberation before the first visible token
+     * (tens of seconds on full-novel inputs, while the pre-fill itself takes ~1 second). Sending
+     * "disabled" explicitly is what makes the default fast path actually fast. Providers other
+     * than DeepSeek do not necessarily know this field, so they are left untouched.
+     */
+    private static void applyThinkingMode(Map<String, Object> request, AiModelConfig config) {
+        if ("deepseek".equals(config.getProvider())) {
+            request.put("thinking", Map.of("type",
+                    "enabled".equalsIgnoreCase(config.getThinkingType()) ? "enabled" : "disabled"));
+        }
     }
 
     private RestClient clientFor(AiModelConfig config) {
