@@ -999,13 +999,17 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   // but should still fail eventually instead of hanging forever.
   const firstTokenTimeoutMs = 600000;
   const firstTokenController = new AbortController();
-  const signal = typeof AbortSignal.any === 'function'
+  const canCombineSignals = typeof AbortSignal.any === 'function';
+  const signal = canCombineSignals
     ? AbortSignal.any([controller.signal, firstTokenController.signal])
     : controller.signal;
   // Timer stays harmless after the stream ends (aborting a finished
   // fetch is a no-op), so no explicit cleanup is needed.
   let firstTokenTimer = setTimeout(() => {
     firstTokenController.abort();
+    // Without AbortSignal.any the fetch never sees firstTokenController; cut it
+    // through the main controller so the timeout still ends the wait.
+    if (!canCombineSignals) controller.abort();
   }, firstTokenTimeoutMs);
   console.log('[PNT][request]', {
     separator: inlineSeparator,
@@ -1096,17 +1100,31 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      await processSseLine(line);
+      for (const line of lines) {
+        await processSseLine(line);
+      }
     }
+  } catch (e) {
+    // 这个 abort 可能来自「10 分钟首 token 超时」而不是用户取消。外层 handler 按错误文本
+    // 分类，未翻译的 abort 报错（"... was aborted"）会被当成用户取消静默吞掉 ——
+    // content 端于是永远停在「预填充」上、秒数一路涨（实测出现过 10000+ 秒）。
+    // 按信号来源翻译成明确的错误文本，外层才能正确上报和复位 UI。
+    if (firstTokenController.signal.aborted) {
+      throw new Error('AI 响应超时（10 分钟未收到首个 token），请重试');
+    }
+    if (controller.signal.aborted) {
+      throw new Error('翻译已取消');
+    }
+    throw e;
   }
 
   // A final SSE event is valid even when the server closes without a
