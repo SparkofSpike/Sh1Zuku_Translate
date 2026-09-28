@@ -38,6 +38,9 @@ export default {
     heading: 'Thông báo',
     collapse: 'Thu gọn',
     expand: 'Mở rộng',
+    // Panel-level toggle (the whole list) as opposed to the per-announcement keys above.
+    collapsePanel: 'Thu gọn',
+    expandPanel: 'Mở rộng',
     empty: 'Chưa có thông báo'
   },
   announcementConfirmDialog: {

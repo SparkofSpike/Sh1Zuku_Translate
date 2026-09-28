@@ -1,43 +1,65 @@
 <template>
   <aside class="announcement-panel">
-    <h3 class="announcement-heading">{{ t('components.announcementPanel.heading') }}</h3>
-    <div v-if="announcements.length" class="announcement-list">
-      <article v-for="announcement in announcements" :key="announcement.id" class="announcement-item">
-        <h4>{{ announcement.title }}</h4>
-        <time>{{ formatDate(announcement.createdAt) }}</time>
-        <div
-          class="announcement-markdown"
-          :class="{
-            collapsed: !isExpanded(announcement.id),
-            truncated: overlongIds.has(announcement.id) && !isExpanded(announcement.id),
-          }"
-          :ref="(el) => setContentEl(announcement.id, el)"
-          v-html="renderMarkdown(announcement.content)"
-        ></div>
-        <button
-          v-if="overlongIds.has(announcement.id)"
-          class="announcement-toggle"
-          @click="toggleExpanded(announcement.id)"
-        >
-          {{ isExpanded(announcement.id) ? t('components.announcementPanel.collapse') : t('components.announcementPanel.expand') }}
-        </button>
-      </article>
+    <div class="announcement-header">
+      <h3 class="announcement-heading">{{ t('components.announcementPanel.heading') }}</h3>
+      <button
+        type="button"
+        class="announcement-panel-toggle"
+        :aria-expanded="!panelCollapsed"
+        @click="panelCollapsed = !panelCollapsed"
+      >
+        {{ panelCollapsed ? t('components.announcementPanel.expandPanel') : t('components.announcementPanel.collapsePanel') }}
+      </button>
     </div>
-    <p v-else class="empty-text">{{ t('components.announcementPanel.empty') }}</p>
+    <div v-show="!panelCollapsed" class="announcement-body">
+      <div v-if="recentAnnouncements.length" class="announcement-list">
+        <article v-for="announcement in recentAnnouncements" :key="announcement.id" class="announcement-item">
+          <h4>{{ announcement.title }}</h4>
+          <time>{{ formatDate(announcement.createdAt) }}</time>
+          <div
+            class="announcement-markdown"
+            :class="{
+              collapsed: !isExpanded(announcement.id),
+              truncated: overlongIds.has(announcement.id) && !isExpanded(announcement.id),
+            }"
+            :ref="(el) => setContentEl(announcement.id, el)"
+            v-html="renderMarkdown(announcement.content)"
+          ></div>
+          <button
+            v-if="overlongIds.has(announcement.id)"
+            class="announcement-toggle"
+            @click="toggleExpanded(announcement.id)"
+          >
+            {{ isExpanded(announcement.id) ? t('components.announcementPanel.collapse') : t('components.announcementPanel.expand') }}
+          </button>
+        </article>
+      </div>
+      <p v-else class="empty-text">{{ t('components.announcementPanel.empty') }}</p>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Announcement } from '../types'
 import { renderMarkdown } from '../utils/markdown'
+import { selectRecentAnnouncements } from '../utils/announcements'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   announcements: Announcement[]
 }>()
+
+/**
+ * Panel-level collapse: hides the whole list, but nothing else changes — per-announcement
+ * truncation and its expand buttons keep working exactly as before once reopened.
+ */
+const panelCollapsed = ref(false)
+
+/** The panel is a digest of the newest announcements; the admin view holds the full list. */
+const recentAnnouncements = computed(() => selectRecentAnnouncements(props.announcements))
 
 const expandedIds = ref<Set<number>>(new Set())
 const overlongIds = ref<Set<number>>(new Set())
@@ -79,6 +101,14 @@ watch(
   { immediate: true }
 )
 
+// While the panel is collapsed the list is display:none, where every element reports a zero
+// scrollHeight — measurement cannot see truncation there. Re-measure on reopen so a long
+// announcement loaded in the meantime still gets its expand toggle. (Per-item expand state
+// is deliberately kept: reopening the panel must not discard what the reader unfolded.)
+watch(panelCollapsed, (collapsed) => {
+  if (!collapsed) nextTick(measureOverlong)
+})
+
 function formatDate(value: string) {
   return value.replace('T', ' ').slice(0, 16)
 }
@@ -93,10 +123,38 @@ function formatDate(value: string) {
   background: #fff;
 }
 
+/* Header row: the title stays left, the panel-level collapse toggle sits right. */
+.announcement-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .announcement-heading {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+.announcement-panel-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #666;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.announcement-panel-toggle:hover {
+  /* Overrides the global button:hover dark background, same as the per-item toggle below. */
+  background: transparent;
+  color: #333;
+}
+
+/* The collapsible region under the header; its top margin replaces the former heading margin. */
+.announcement-body {
+  margin-top: 12px;
 }
 
 .announcement-list {
