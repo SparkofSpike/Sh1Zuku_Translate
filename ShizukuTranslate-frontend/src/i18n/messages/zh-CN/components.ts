@@ -38,6 +38,9 @@ export default {
     heading: '公告',
     collapse: '收起',
     expand: '展开',
+    // Panel-level toggle (the whole list) as opposed to the per-announcement keys above.
+    collapsePanel: '收起',
+    expandPanel: '展开',
     empty: '暂无公告'
   },
   announcementConfirmDialog: {

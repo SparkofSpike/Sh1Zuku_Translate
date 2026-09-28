@@ -38,6 +38,9 @@ export default {
     heading: 'Announcements',
     collapse: 'Collapse',
     expand: 'Expand',
+    // Panel-level toggle (the whole list) as opposed to the per-announcement keys above.
+    collapsePanel: 'Collapse',
+    expandPanel: 'Expand',
     empty: 'No announcements'
   },
   announcementConfirmDialog: {
