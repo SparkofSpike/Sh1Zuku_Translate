@@ -682,11 +682,17 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // fullMode translates the WHOLE novel in one request with global
     // paragraph ids; the content script maps ids back to whatever page
     // the user is reading, so flipping pages never needs a re-translate.
-    const sourceText = repairParagraphIds.length
-      ? buildRepairSource(novel.content, repairParagraphIds, currentPage, fullMode, inlineSeparator, repairContext)
-      : (fullMode
-        ? buildFullSource(novel.content, inlineSeparator)
-        : buildPageSource(novel.content, currentPage, numbered, inlineSeparator));
+    const sourceText = (() => {
+      // Resolve against the novel text: a 'p' request on a line-laid-out
+      // novel (no blank lines) falls back to per-line splitting — see the
+      // helper for why. content.js resolves identically for its side.
+      const separator = resolveInlineSeparator(novel.content, inlineSeparator);
+      return repairParagraphIds.length
+        ? buildRepairSource(novel.content, repairParagraphIds, currentPage, fullMode, separator, repairContext)
+        : (fullMode
+          ? buildFullSource(novel.content, separator)
+          : buildPageSource(novel.content, currentPage, numbered, separator));
+    })();
     await streamTranslateApi(
       settings.backendUrl,
       settings.apiKey,
@@ -740,6 +746,24 @@ function splitSourceUnits(text, separator = 'p') {
     .split(separator === 'p-br' ? /\n+/ : /\n{2,}/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+}
+
+// 'p' treats only blank lines (\n\n) as paragraph breaks. Much of the Pixiv
+// catalogue is laid out line by line (single \n, no blank lines); splitting
+// that by blank lines collapses the novel into one unit, the request carries a
+// single [1] marker, and the model — told to emit one JSON line per marker but
+// seeing dozens of visual lines — answers with one line per visual line. The
+// content script then fails its completion validation (“段落编号重复或无效”） and
+// the whole translation is discarded (observed 2026-09-29 with the default 'p'
+// setting). When there is no blank line to split on, the visual lines ARE the
+// paragraphs, so fall back to per-line splitting. content.js runs the same
+// function (resolveInlineSeparator); the two must stay in sync or numbering and
+// DOM-side expectations drift apart.
+function resolveInlineSeparator(text, requested) {
+  if (requested === 'p-br') return 'p-br';
+  const t = String(text || '');
+  if (/\n\s*\n/.test(t)) return 'p';
+  return /\n/.test(t.trim()) ? 'p-br' : 'p';
 }
 
 function buildFullSource(fullText, separator = 'p') {

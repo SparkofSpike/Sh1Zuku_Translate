@@ -22,7 +22,8 @@ let state = {
   novelAuthor: '',
   numberedRequest: false, // true when the response is numbered JSON Lines
   fullMode: false,        // true: translate whole novel once
-  inlineSeparator: 'p',   // 'p' or 'p-br'
+  inlineSeparator: 'p',   // effective separator: 'p' or 'p-br' (see resolveInlineSeparator)
+  requestedSeparator: 'p', // the user's stored choice before the text-aware fallback
   fullTranslations: {},   // global paragraph id -> translated text
   fullEntryMeta: {},      // global paragraph id -> latest JSON line metadata
   pageStartIds: [],       // pageStartIds[p-1] = first global id of page p
@@ -213,6 +214,24 @@ function expectedParagraphCount(originalContent, fullMode, currentPage, separato
     return splitInlineUnits(page, separator).length;
   }
   return splitInlineUnits(originalContent || '', separator).length;
+}
+
+// 'p' treats only blank lines (\n\n) as paragraph breaks. Much of the Pixiv
+// catalogue is laid out line by line (single \n, no blank lines); splitting
+// that by blank lines collapses the novel into one unit, the request carries a
+// single [1] marker, and the model — told to emit one JSON line per marker but
+// seeing dozens of visual lines — answers with one line per visual line. The
+// reply then fails completion validation (“段落编号重复或无效”) and the whole
+// translation is discarded (observed 2026-09-29 on id 29254523 with the default
+// 'p' setting). When there is no blank line to split on, the visual lines ARE
+// the paragraphs, so fall back to per-line splitting. background.js runs the
+// same function over the same novel text; the two must stay in sync or ids and
+// DOM slots drift apart.
+function resolveInlineSeparator(text, requested) {
+  if (requested === 'p-br') return 'p-br';
+  const t = String(text || '');
+  if (/\n\s*\n/.test(t)) return 'p';
+  return /\n/.test(t.trim()) ? 'p-br' : 'p';
 }
 
 function splitInlineUnits(text, separator = state.inlineSeparator) {
@@ -1247,6 +1266,7 @@ async function handleTranslate(skipCache = false) {
   state.fullMode = settings.displayMode === 'inline-full'
     || (settings.displayMode === 'inline' && settings.inlineScope === 'full');
   state.inlineSeparator = settings.inlineSeparator === 'p-br' ? 'p-br' : 'p';
+  state.requestedSeparator = state.inlineSeparator; // effective value is resolved in onNovelLoaded against the novel text
   state.mode = settings.displayMode;
   state.translating = true;
   if (state.inlineWaitCleanup) {
@@ -1361,6 +1381,10 @@ function onNovelLoaded(data) {
   state.originalContent = data.originalContent || '';
   state.numberedRequest = !!data.numberedRequest;
   state.fullMode = !!data.fullMode;
+  // Resolve the effective separator against the actual text before anything
+  // downstream (expected counts, page splits, DOM units, ids) depends on it.
+  // background.js resolves the same way before numbering its request.
+  state.inlineSeparator = resolveInlineSeparator(data.originalContent, state.requestedSeparator || state.inlineSeparator);
   state.expectedParagraphCount = state.numberedRequest
     ? expectedParagraphCount(data.originalContent, state.fullMode, getCurrentNovelPage(), state.inlineSeparator)
     : 0;
@@ -1551,10 +1575,20 @@ function waitForInlineContainer(data) {
       state.transBody.textContent = state.streamingText;
     }
     showToast('未找到原文容器，已改用悬浮窗显示');
-    updateTranslateButton('preparing');
+    // When this fires after completion (translating already false), let
+    // updateTranslateButton('idle') re-derive the pill from the rendered
+    // content instead of forcing it back into a busy state.
+    updateTranslateButton(state.translating ? 'preparing' : 'idle');
   };
 
   const tryBuild = () => {
+    // Nothing to render and no translation running (cancelled, or completed
+    // with an empty stream): building anchors now would only leave blank
+    // placeholder divs on the page. Stop instead.
+    if (!state.translating && !state.streamingText) {
+      cleanup();
+      return true;
+    }
     if (buildInlineParagraphs(data.originalContent)) {
       cleanup();
       // If the stream completed before the DOM became available, the final
@@ -1570,7 +1604,9 @@ function waitForInlineContainer(data) {
       if (state.fullMode) {
         refillInlineFromMap();
       }
-      updateTranslateButton('preparing');
+      // Same as above: on a late build after completion, settle the pill on
+      // the rendered content (关闭翻译) instead of a busy label.
+      updateTranslateButton(state.translating ? 'preparing' : 'idle');
       return true;
     }
     if (Date.now() > deadline) {
@@ -1735,7 +1771,14 @@ function finishTranslate(success, errorMsg, data) {
   state.translating = false;
   if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
   if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
-  if (state.inlineWaitCleanup) {
+  // Keep a pending inline wait alive when the translation finished before the
+  // Pixiv body rendered: tryBuild() builds the anchors and paints the
+  // already-received text as soon as the paragraphs appear (or falls back to
+  // the floating window at its deadline). Cancelling it unconditionally here
+  // is what left fast (cached) translations permanently blank (2026-09-29).
+  const inlineSettled = state.mode !== 'inline'
+    || (state.inlineTransEls && state.inlineTransEls.length > 0);
+  if (state.inlineWaitCleanup && inlineSettled) {
     state.inlineWaitCleanup();
     state.inlineWaitCleanup = null;
   }
@@ -1750,8 +1793,11 @@ function finishTranslate(success, errorMsg, data) {
     const inlineReady = state.mode !== 'inline'
       || (state.inlineTransEls && state.inlineTransEls.length > 0);
     if (!inlineReady) {
-      showToast('翻译完成，但未找到 Pixiv 原文段落，译文未能插入页面；请刷新页面后重试');
-      console.warn('[PNT] translation completed without inline DOM anchors', {
+      // The body may simply not have rendered yet; the pending inline wait
+      // paints the text as soon as it does (and announces a fallback if the
+      // paragraphs never appear). Don't claim failure here.
+      showToast('翻译完成，正在等待页面正文渲染…');
+      console.warn('[PNT] translation completed before inline DOM anchors were ready; waiting for the body', {
         currentPage: getCurrentNovelPage(),
         originalChars: state.originalContent.length,
         translatedChars: state.streamingText.length
