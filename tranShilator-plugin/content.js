@@ -558,12 +558,14 @@ function makeDraggable(w) {
 // 把模型预填充误读成网络问题。
 const PHASE_TEXT = {
   fetching: '正在获取原文',
+  waitingBody: '正在等待页面正文渲染',
   connecting: '正在连接服务器',
   prefill: 'AI 预填充中',
   reasoning: 'AI 推理中'
 };
 const PHASE_COLOR = {
   fetching: '#e03131',
+  waitingBody: '#e03131',
   connecting: '#e03131',
   prefill: '#1971c2',
   reasoning: '#1971c2'
@@ -636,13 +638,21 @@ function normalizeText(s) {
 
 // Pixiv special tags never appear as literal text in the rendered DOM:
 // [chapter:X]/[b:X]/[i:X]/[e:X] render as their inner text X, ruby
-// [rb:漢字,かな] keeps the base text, and control tags ([newpage],
-// [jump:N], [uploadedimage:N], [[jumpuri:…]]…) render as nothing. Convert
-// them the same way before matching source text against the DOM, or
-// tag-led novels (bold/italics formatting update) can never be anchored
-// and every paragraph id would shift by the number of tag paragraphs.
+// [[rb:base> reading]] keeps only the base text, and control tags
+// ([newpage], [jump:N], [uploadedimage:N], [[jumpuri:…]]…) render as
+// nothing. Convert them the same way before matching source text against
+// the DOM, or tag-led novels (bold/italics formatting update) can never be
+// anchored and every paragraph id would shift by the number of tag
+// paragraphs.
+//
+// The double-bracket ruby form is Pixiv's actual syntax and must be handled
+// FIRST: the generic `[rb:…]` rule below would otherwise match from the
+// second "[" and leave a stray "[" plus the reading behind (observed:
+// `[[rb:山咲> やまさき]]もも` became `[山咲> やまさき]もも`, which then never
+// matched the DOM's `山咲もも`).
 function pixivTagText(s) {
   return (s || '')
+    .replace(/\[\[rb:([^>＞,\]]*)(?:[>＞,][^\]]*)?\]\]/gi, '$1')
     .replace(/\[rb:([^,\]]*)[^\]]*\]/gi, '$1')
     .replace(/\[\[[^\]]*\]\]/g, '')
     .replace(/\[(?:jump|newpage|[a-z]*image)[^\]]*\]/gi, '')
@@ -655,6 +665,24 @@ function pixivTagText(s) {
 // same key or a perfectly aligned paragraph would fail to match.
 function paraMatchKey(s) {
   return pixivTagText(s || '').replace(/\s+/g, '');
+}
+
+// Text of a DOM element used for paragraph matching: ruby readings (<rt>/
+// <rp>) are skipped so the DOM side keeps only the base text, mirroring the
+// source side where [[rb:base> reading]] normalises to `base`. Without
+// this, `[[rb:山咲> やまさき]]もも` can never match — its textContent is
+// `山咲やまさきもも`. Plain paragraphs are unchanged (no rt/rp inside).
+function domMatchText(el) {
+  if (!el) return '';
+  let out = '';
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const parent = node.parentElement;
+    if (parent && (parent.tagName === 'RT' || parent.tagName === 'RP')) continue;
+    out += node.nodeValue || '';
+  }
+  return out;
 }
 
 // Order-preserving source-vs-DOM paragraph match: exact equality always
@@ -798,14 +826,14 @@ function findNovelParagraphs(originalContent) {
       );
       while (walker.nextNode()) {
         const node = walker.currentNode;
-        const t = paraMatchKey(node.textContent);
+        const t = paraMatchKey(domMatchText(node));
         if (t && (t.includes(anchor) || (t.length >= 6 && anchor.includes(t.slice(0, 8))))) {
           // Climb up to the element that holds (at most) this paragraph,
           // then collect the run from there.
           let el = node.parentElement;
           let line = el;
           while (el && el !== document.body) {
-            if (paraMatchKey(el.textContent).length > anchorPara.length + 8) break;
+            if (paraMatchKey(domMatchText(el)).length > anchorPara.length + 8) break;
             line = el;
             el = el.parentElement;
           }
@@ -835,7 +863,12 @@ function extractDomLines(element) {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_ALL);
   while (walker.nextNode()) {
     const node = walker.currentNode;
-    if (node.nodeType === Node.TEXT_NODE) buffer += node.nodeValue || '';
+    if (node.nodeType === Node.TEXT_NODE) {
+      // Ruby readings are not part of the source text (see domMatchText).
+      const parent = node.parentElement;
+      if (parent && (parent.tagName === 'RT' || parent.tagName === 'RP')) continue;
+      buffer += node.nodeValue || '';
+    }
     else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
       lines.push(buffer);
       buffer = '';
@@ -925,7 +958,7 @@ function buildInlineParagraphs(originalContent) {
     units.forEach((unit, unitIndex) => {
       const t = state.inlineSeparator === 'p-br' && unit.dataset.pntAnchor
         ? paraMatchKey(extractDomLines(p)[unitIndex] || '')
-        : paraMatchKey(unit.textContent);
+        : paraMatchKey(domMatchText(unit));
       if (!t) return; // empty element (image, ad) — no slot
       let matched = -1;
       const end = Math.min(src.length, si + LOOKAHEAD);
@@ -952,8 +985,8 @@ function buildInlineParagraphs(originalContent) {
     sourceCount: src.length,
     matchedCount: transEls.length,
     unmatchedCount,
-    firstDomKey: paraEls[0] ? paraMatchKey(paraEls[0].textContent).slice(0, 40) : '',
-    lastDomKey: paraEls.length ? paraMatchKey(paraEls[paraEls.length - 1].textContent).slice(0, 40) : '',
+    firstDomKey: paraEls[0] ? paraMatchKey(domMatchText(paraEls[0])).slice(0, 40) : '',
+    lastDomKey: paraEls.length ? paraMatchKey(domMatchText(paraEls[paraEls.length - 1])).slice(0, 40) : '',
     firstSourceKey: src[0]?.key.slice(0, 40) || '',
     lastSourceKey: src[src.length - 1]?.key.slice(0, 40) || '',
     firstPid: transEls[0]?.dataset.pid || '',
@@ -1504,7 +1537,7 @@ function watchPageFlips(originalContent) {
         .filter(Boolean);
       const liveParas = findNovelParagraphs(originalContent) || [];
       const domSignature = liveParas
-        .map(el => paraMatchKey(el.textContent).slice(0, 80))
+        .map(el => paraMatchKey(domMatchText(el)).slice(0, 80))
         .join('|');
       const domChanged = domSignature !== lastDomSignature;
       lastDomSignature = domSignature;
@@ -1564,7 +1597,7 @@ function watchPageFlips(originalContent) {
   // not look like a page flip.
   const initialParas = findNovelParagraphs(originalContent) || [];
   lastDomSignature = initialParas
-    .map(el => paraMatchKey(el.textContent).slice(0, 80))
+    .map(el => paraMatchKey(domMatchText(el)).slice(0, 80))
     .join('|');
   state.pageFlipObserver.observe(document.body, {
     childList: true,
@@ -1914,7 +1947,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case 'GET_CURRENT_PAGE':
       // background.js: a paged request started before the body rendered —
-      // wait (bounded) for the page marker before answering.
+      // wait (bounded) for the page marker before answering. Flip the pill
+      // to say what we are actually waiting for; SSE_NOVEL_LOADED switches
+      // it back to 'connecting' by itself.
+      if (state.translating) {
+        state.phase = 'waitingBody';
+        updateTranslateButton('preparing');
+      }
       waitForCurrentPage().then((page) => sendResponse({ ok: true, page }));
       break;
     case 'MANUAL_TRANSLATE':
