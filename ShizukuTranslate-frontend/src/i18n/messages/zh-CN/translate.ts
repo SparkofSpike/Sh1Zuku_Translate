@@ -9,7 +9,7 @@ export default {
   openSource: {
     lead: '项目已开源：',
     tail: '，你们的 star 和 follow 是我更新的动力！',
-    plugin: '浏览器插件正在锐意研发中，预计九月初正式可用……'
+    plugin: '浏览器插件已可以试用，欢迎体验！'
   },
   placeholder: '粘贴原文，或拖入 TXT / MD / 图片，也可点击右下角按钮上传...',
   upload: {

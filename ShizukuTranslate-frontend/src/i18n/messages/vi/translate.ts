@@ -9,7 +9,7 @@ export default {
   openSource: {
     lead: 'Dự án đã được mở mã nguồn: ',
     tail: ' — star và follow của các bạn là động lực để mình tiếp tục cập nhật!',
-    plugin: 'Tiện ích mở rộng cho trình duyệt đang được gấp rút phát triển, dự kiến ra mắt đầu tháng 9…'
+    plugin: 'Tiện ích mở rộng cho trình duyệt hiện đã có thể dùng thử!'
   },
   placeholder: 'Dán văn bản gốc, hoặc kéo thả tệp TXT / MD / ảnh vào đây, cũng có thể bấm nút ở góc dưới bên phải để tải lên…',
   upload: {

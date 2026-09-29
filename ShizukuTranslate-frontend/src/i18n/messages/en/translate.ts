@@ -9,7 +9,7 @@ export default {
   openSource: {
     lead: 'This project is open source: ',
     tail: ' — your stars and follows keep me motivated to keep updating!',
-    plugin: 'A browser extension is in active development, expected to be ready in early September…'
+    plugin: 'The browser extension is now available to try!'
   },
   placeholder: 'Paste the source text, or drop a TXT / MD / image file here — you can also use the button in the bottom-right corner to upload…',
   upload: {
