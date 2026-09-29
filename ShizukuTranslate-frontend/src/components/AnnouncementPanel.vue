@@ -12,8 +12,8 @@
       </button>
     </div>
     <div v-show="!panelCollapsed" class="announcement-body">
-      <div v-if="recentAnnouncements.length" class="announcement-list">
-        <article v-for="announcement in recentAnnouncements" :key="announcement.id" class="announcement-item">
+      <div v-if="sortedAnnouncements.length" class="announcement-list">
+        <article v-for="announcement in sortedAnnouncements" :key="announcement.id" class="announcement-item">
           <h4>{{ announcement.title }}</h4>
           <time>{{ formatDate(announcement.createdAt) }}</time>
           <div
@@ -44,7 +44,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Announcement } from '../types'
 import { renderMarkdown } from '../utils/markdown'
-import { selectRecentAnnouncements } from '../utils/announcements'
+import { sortAnnouncementsNewestFirst } from '../utils/announcements'
 
 const { t } = useI18n()
 
@@ -58,8 +58,8 @@ const props = defineProps<{
  */
 const panelCollapsed = ref(false)
 
-/** The panel is a digest of the newest announcements; the admin view holds the full list. */
-const recentAnnouncements = computed(() => selectRecentAnnouncements(props.announcements))
+/** Every announcement is listed, newest first; the region scrolls when the list outgrows it. */
+const sortedAnnouncements = computed(() => sortAnnouncementsNewestFirst(props.announcements))
 
 const expandedIds = ref<Set<number>>(new Set())
 const overlongIds = ref<Set<number>>(new Set())
@@ -161,6 +161,13 @@ function formatDate(value: string) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 面板只展示固定高度，超出部分用滚轮查看（此前是直接截断为最近三条） */
+  max-height: 420px;
+  overflow-y: auto;
+  /* 滚到列表尽头时不要让页面跟着一起滚 */
+  overscroll-behavior: contain;
+  /* 滚动条出现时正文不贴着它 */
+  padding-right: 6px;
 }
 
 .announcement-item {
