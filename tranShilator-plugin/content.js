@@ -64,6 +64,28 @@ function getCurrentNovelPage() {
   return 0;
 }
 
+const PAGE_WAIT_TIMEOUT_MS = 15000; // Pixiv's client-side body render varies a lot (observed 6-20s)
+
+// Paged novels: the current page only exists once Pixiv has rendered the body
+// (client-side). background.js asks for it before numbering a request that
+// started while the marker was still missing — poll briefly so the request
+// numbers the actual page instead of the whole novel. Resolves to 0 when the
+// marker never shows up; the caller keeps the old whole-novel behaviour then.
+function waitForCurrentPage(timeoutMs = PAGE_WAIT_TIMEOUT_MS) {
+  const immediate = getCurrentNovelPage();
+  if (immediate > 0) return Promise.resolve(immediate);
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const timer = setInterval(() => {
+      const page = getCurrentNovelPage();
+      if (page > 0 || Date.now() > deadline) {
+        clearInterval(timer);
+        resolve(page > 0 ? page : 0);
+      }
+    }, 250);
+  });
+}
+
 // Split novel text into pages ([newpage]) then into paragraphs (\n\n),
 // exactly like buildFullSource() in background.js. Returns the first
 // global paragraph id of each page (1-based).
@@ -1385,8 +1407,14 @@ function onNovelLoaded(data) {
   // downstream (expected counts, page splits, DOM units, ids) depends on it.
   // background.js resolves the same way before numbering its request.
   state.inlineSeparator = resolveInlineSeparator(data.originalContent, state.requestedSeparator || state.inlineSeparator);
+  // The page background.js actually numbered with (it may have waited for the
+  // marker while the body rendered). Prefer it over our own reading so the
+  // expected paragraph count matches the request even when this callback
+  // fires before the body mounts. Falls back to our own value for older
+  // background versions that do not send the field.
+  const numberedPage = Number(data.currentPage) || getCurrentNovelPage();
   state.expectedParagraphCount = state.numberedRequest
-    ? expectedParagraphCount(data.originalContent, state.fullMode, getCurrentNovelPage(), state.inlineSeparator)
+    ? expectedParagraphCount(data.originalContent, state.fullMode, numberedPage, state.inlineSeparator)
     : 0;
   state.missingParagraphIds = [];
   if (state.fullMode) {
@@ -1396,6 +1424,7 @@ function onNovelLoaded(data) {
     fullMode: state.fullMode,
     inlineSeparator: state.inlineSeparator,
     currentPage: getCurrentNovelPage(),
+    backgroundPage: numberedPage,
     pageCount: String(data.originalContent || '').split(/\\[newpage\\]/i).filter(p => p.trim()).length,
     pageStartIds: state.pageStartIds,
     expectedParagraphCount: state.expectedParagraphCount
@@ -1882,6 +1911,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'SSE_ERROR':
       onStreamError(message.error);
       sendResponse({ ok: true });
+      break;
+    case 'GET_CURRENT_PAGE':
+      // background.js: a paged request started before the body rendered —
+      // wait (bounded) for the page marker before answering.
+      waitForCurrentPage().then((page) => sendResponse({ ok: true, page }));
       break;
     case 'MANUAL_TRANSLATE':
       // Popup explicit trigger: if an auto-translate is already running,

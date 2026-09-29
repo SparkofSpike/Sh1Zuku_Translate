@@ -645,13 +645,31 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     const novel = await fetchNovelFromPixiv(safeNovelId, controller.signal);
     console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
+    // Paged novels: which page gets numbered depends on the page marker,
+    // which lives in Pixiv's client-rendered body. A request started before
+    // the body mounts (fast click, or autoTranslate at 500ms) reports page 0,
+    // and buildPageSource would then number the WHOLE novel while the DOM
+    // only ever shows the current page — wasted tokens, and a whole-novel
+    // completion check that trips on any model slip. Ask the content script
+    // to wait (bounded) for the marker before numbering anything.
+    let effectivePage = currentPage;
+    if (!fullMode && displayMode === 'inline' && !(effectivePage > 0)) {
+      const pageCount = String(novel.content || '').split(/\[newpage\]/i).filter((p) => p.trim()).length;
+      if (pageCount > 1) {
+        effectivePage = await requestCurrentPageFromContent(tabId);
+        console.log('[PNT] STEP1b page resolved late: currentPage=' + effectivePage);
+      }
+    }
+    // A cancel during the page wait must not continue into the request.
+    if (controller.signal.aborted) return;
+
     // Inline modes number their paragraphs and receive JSON Lines output, so
     // the content script can map every translation back to the exact DOM
     // paragraph by id — a model that merges or splits paragraphs can no
     // longer shift the mapping. Panel and paged stay unnumbered: they render
     // raw text instead, and paged needs the [newpage] markers intact to
     // split the result into page blocks.
-    const numbered = fullMode || currentPage > 0 || displayMode === 'inline';
+    const numbered = fullMode || effectivePage > 0 || displayMode === 'inline';
 
     // Notify content script: novel loaded, begin streaming
     await notifyTab(tabId, {
@@ -668,7 +686,10 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
         // can pick the right streaming renderer. Panel and paged render the
         // raw text instead.
         numberedRequest: numbered,
-        fullMode
+        fullMode,
+        // 编号实际使用的页码（分页小说可能在上方才等到）。content 用它计算
+        // 期望段落数 —— 两侧必须同源，否则完成校验会报「缺少第 X 段」。
+        currentPage: effectivePage
       }
     });
 
@@ -688,10 +709,10 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       // helper for why. content.js resolves identically for its side.
       const separator = resolveInlineSeparator(novel.content, inlineSeparator);
       return repairParagraphIds.length
-        ? buildRepairSource(novel.content, repairParagraphIds, currentPage, fullMode, separator, repairContext)
+        ? buildRepairSource(novel.content, repairParagraphIds, effectivePage, fullMode, separator, repairContext)
         : (fullMode
           ? buildFullSource(novel.content, separator)
-          : buildPageSource(novel.content, currentPage, numbered, separator));
+          : buildPageSource(novel.content, effectivePage, numbered, separator));
     })();
     await streamTranslateApi(
       settings.backendUrl,
@@ -868,6 +889,27 @@ async function notifyTab(tabId, message) {
     // Content script may not be injected yet; ignore
     console.warn('[PixivTranslator] notifyTab failed:', e.message);
   }
+}
+
+// Paged novels: the page marker lives in Pixiv's client-rendered body, so a
+// translation started before the body mounts reports page 0. Ask the content
+// script to wait (bounded) for the marker instead of numbering the whole
+// novel. Returns 0 when the page never becomes available — the caller then
+// keeps the old whole-novel numbering.
+const PAGE_REQUEST_TIMEOUT_MS = 18000; // content.js waits up to 15s; allow slack
+async function requestCurrentPageFromContent(tabId) {
+  if (!tabId) return 0;
+  try {
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: 'GET_CURRENT_PAGE' }),
+      new Promise((resolve) => setTimeout(() => resolve(null), PAGE_REQUEST_TIMEOUT_MS)),
+    ]);
+    const page = response && Number(response.page);
+    if (Number.isInteger(page) && page > 0) return page;
+  } catch (e) {
+    console.warn('[PixivTranslator] page request failed:', e && e.message);
+  }
+  return 0;
 }
 
 // ─── Step 1: Fetch Pixiv Novel ───────────────────────────────
