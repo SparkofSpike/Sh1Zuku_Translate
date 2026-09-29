@@ -19,7 +19,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 - **Accounts and access control** with JWT login, API keys for the browser extension, email verification codes, and administrator-only usage and announcement management.
 - **Translation history** stored per user.
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
-- **Markdown announcements** rendered in the web application: the panel shows the three newest entries, long announcements fold to five lines until expanded, and the whole panel can be collapsed. Announcement content is stored as Markdown and raw HTML is not executed.
+- **Markdown announcements** rendered in the web application: the panel lists every announcement in a scrollable region, newest first; long announcements fold to five lines until expanded, and the whole panel can be collapsed. Announcement content is stored as Markdown and raw HTML is not executed.
 - **Feedback submission** through the authenticated survey endpoint.
 
 ### Browser extension
@@ -373,7 +373,7 @@ npm run typecheck
 npm test
 ```
 
-The backend suite covers prompt assembly, translation and cache-replay behavior, streaming vision requests, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, plugin device-code authorization, and JWT issuing. The frontend suite covers the safe Markdown renderer, HTML escaping helpers, the recent-announcement selection, and the SSE streaming client (token framing, multipart image uploads, backend error surfacing).
+The backend suite covers prompt assembly, translation and cache-replay behavior, streaming vision requests, preset CRUD, announcement confirmation toggling, email verification flows, API-key hashing and migration, plugin device-code authorization, and JWT issuing. The frontend suite covers the safe Markdown renderer, HTML escaping helpers, announcement ordering, and the SSE streaming client (token framing, multipart image uploads, backend error surfacing).
 
 ### CI test commands
 
