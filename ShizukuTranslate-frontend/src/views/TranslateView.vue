@@ -30,6 +30,68 @@
 
     <p v-if="imageError" style="color:#e03131; margin-top:8px; font-size:14px;">{{ imageError }}</p>
 
+    <div class="pixiv-import">
+      <input
+        v-model="pixivUrl"
+        type="url"
+        class="pixiv-import-input"
+        :placeholder="t('translate.pixiv.placeholder')"
+        :disabled="pixivLoading"
+        @keyup.enter="importPixiv"
+      />
+      <button
+        type="button"
+        class="pixiv-import-btn"
+        :disabled="pixivLoading || !pixivUrl.trim()"
+        @click="importPixiv"
+      >
+        {{ pixivLoading ? t('translate.pixiv.loading') : t('translate.pixiv.action') }}
+      </button>
+    </div>
+    <p v-if="pixivError" class="pixiv-import-error">{{ pixivError }}</p>
+    <p v-else-if="pixivInfo" class="pixiv-import-info">{{ pixivInfo }}</p>
+
+    <div v-if="pixivMeta" class="pixiv-meta">
+      <dl class="pixiv-meta-list">
+        <template v-if="pixivMeta.title">
+          <dt>{{ t('translate.pixiv.titleLabel') }}</dt>
+          <dd>{{ pixivMeta.title }}</dd>
+        </template>
+        <template v-if="pixivMeta.author">
+          <dt>{{ t('translate.pixiv.authorLabel') }}</dt>
+          <dd>{{ pixivMeta.author }}</dd>
+        </template>
+        <template v-if="pixivMeta.tags.length">
+          <dt>{{ t('translate.pixiv.tagsLabel') }}</dt>
+          <dd><span v-for="tag in pixivMeta.tags" :key="tag" class="pixiv-tag">{{ tag }}</span></dd>
+        </template>
+        <template v-if="pixivMeta.description">
+          <dt>{{ t('translate.pixiv.descriptionLabel') }}</dt>
+          <dd class="pixiv-meta-description">{{ pixivMeta.description }}</dd>
+        </template>
+      </dl>
+      <div class="pixiv-meta-actions">
+        <label class="pixiv-meta-check">
+          <input type="checkbox" v-model="includePixivMetadata" />
+          {{ t('translate.pixiv.includeMetadata') }}
+        </label>
+        <button
+          type="button"
+          class="pixiv-meta-translate"
+          :disabled="!pixivMeta.metadataText || metadataLoading || status !== 'idle'"
+          @click="translatePixivMetadata"
+        >{{ metadataLoading ? t('translate.pixiv.metadataLoading') : t('translate.pixiv.translateMetadata') }}</button>
+      </div>
+      <p v-if="metadataError" class="pixiv-import-error">{{ metadataError }}</p>
+      <div v-if="metadataResult" class="pixiv-meta-result">
+        <div class="pixiv-meta-result-head">
+          <span>{{ t('translate.pixiv.metadataResultTitle') }}</span>
+          <button type="button" class="pixiv-meta-result-close" @click="metadataResult = null">✕</button>
+        </div>
+        <pre class="pixiv-meta-result-text">{{ metadataResult }}</pre>
+      </div>
+    </div>
+
     <div
       class="source-wrap"
       :class="{ 'source-wrap--active': dragActive }"
@@ -128,8 +190,8 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-import api, { translateImages, translateImagesStream, translateStream } from '../api'
-import type { Announcement, LanguageOption, TranslateResponse } from '../types'
+import api, { importPixivNovel, translateImages, translateImagesStream, translateStream } from '../api'
+import type { Announcement, LanguageOption, PixivNovelResponse, TranslateResponse } from '../types'
 import ImagePreview from '../components/ImagePreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
@@ -253,6 +315,19 @@ const imageError = ref('')
 const pendingImageFiles = ref<File[]>([])
 /** Mirrors TranslationService.MAX_IMAGES_PER_REQUEST; keep the two in sync. */
 const MAX_IMAGES = 10
+
+// Pixiv import: paste a novel URL and the backend fetches the text into the textarea.
+const pixivUrl = ref('')
+const pixivLoading = ref(false)
+const pixivError = ref('')
+const pixivInfo = ref('')
+/** Title / author / tags / description of the imported work, shown above the textarea. */
+const pixivMeta = ref<PixivNovelResponse | null>(null)
+/** When on, the imported text is prefixed with the labelled metadata block before translating. */
+const includePixivMetadata = ref(false)
+const metadataResult = ref<string | null>(null)
+const metadataError = ref('')
+const metadataLoading = ref(false)
 
 // Inline upload (button + drag & drop)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -438,6 +513,79 @@ function handleAttachments(files: File[]) {
   if (imageFiles.length) handleImageFiles(imageFiles)
 }
 
+/**
+ * Imports a Pixiv novel's text into the textarea. The request goes through the backend,
+ * which proxies Pixiv (so no CORS problem in the browser) and strips Pixiv's control tags.
+ * The imported text replaces whatever is in the box, matching the text-file upload behaviour.
+ */
+async function importPixiv() {
+  const url = pixivUrl.value.trim()
+  if (!url || pixivLoading.value) return
+  pixivLoading.value = true
+  pixivError.value = ''
+  pixivInfo.value = ''
+  try {
+    const res = await importPixivNovel(url)
+    const novel = res.data
+    sourceText.value = novel.text
+    pixivMeta.value = novel
+    // Metadata is opt-in: importing text alone must not silently change the request payload.
+    includePixivMetadata.value = false
+    metadataResult.value = null
+    metadataError.value = ''
+    const label = novel.title || t('translate.pixiv.untitled')
+    pixivInfo.value = novel.author
+      ? t('translate.pixiv.importedWithAuthor', { title: label, author: novel.author })
+      : t('translate.pixiv.imported', { title: label })
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } }; message?: string }
+    pixivError.value = err.response?.data?.error || t('translate.pixiv.failed')
+  } finally {
+    pixivLoading.value = false
+  }
+}
+
+/**
+ * The text a translate request actually sends. When the Pixiv metadata toggle is on, the
+ * labelled metadata block (title / author / tags / description) is prepended so the model
+ * translates it along with the body in one request.
+ */
+function effectiveSourceText(): string {
+  if (includePixivMetadata.value && pixivMeta.value?.metadataText) {
+    return pixivMeta.value.metadataText + '\n\n' + sourceText.value
+  }
+  return sourceText.value
+}
+
+/**
+ * Translates just the Pixiv metadata (title, author, tags, description) into the current target
+ * language and shows it in a small box. Kept separate from the main translation so reading the
+ * summary does not overwrite the novel result.
+ */
+async function translatePixivMetadata() {
+  const metadataText = pixivMeta.value?.metadataText
+  if (!metadataText || metadataLoading.value || status.value !== 'idle') return
+  metadataLoading.value = true
+  metadataError.value = ''
+  metadataResult.value = null
+  try {
+    const res = await api.post<TranslateResponse>('/translate', {
+      sourceText: metadataText,
+      model: model.value,
+      modelProfileId: modelProfileId.value,
+      customPrompt: customPrompt.value || undefined,
+      presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
+      targetLanguage: targetLanguage.value
+    })
+    metadataResult.value = res.data.translatedText
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } }; message?: string }
+    metadataError.value = err.response?.data?.error || t('translate.pixiv.metadataFailed')
+  } finally {
+    metadataLoading.value = false
+  }
+}
+
 function handleImageFiles(files: File[]) {
   imageError.value = ''
   const room = MAX_IMAGES - pendingImageFiles.value.length
@@ -600,7 +748,8 @@ async function translatePendingImages() {
 }
 
 async function translate(forceRetranslate = false) {
-  if (!sourceText.value.trim() && !pendingImageFiles.value.length) return
+  const requestText = effectiveSourceText()
+  if (!requestText.trim() && !pendingImageFiles.value.length) return
   if (pendingImageFiles.value.length) {
     await translatePendingImages()
     return
@@ -617,7 +766,7 @@ async function translate(forceRetranslate = false) {
     result.value = null
 
     const ctrl = translateStream(
-      sourceText.value,
+      requestText,
       model.value,
       modelProfileId.value,
       customPrompt.value || undefined,
@@ -667,7 +816,7 @@ async function translate(forceRetranslate = false) {
       if (status.value !== 'preparing') return // was cancelled during delay
       status.value = 'ai-processing'
       const res = await api.post<TranslateResponse>('/translate', {
-        sourceText: sourceText.value,
+        sourceText: requestText,
         model: model.value,
         modelProfileId: modelProfileId.value,
         customPrompt: customPrompt.value || undefined,
@@ -814,6 +963,121 @@ async function translate(forceRetranslate = false) {
 
 .upload-btn:hover {
   opacity: 1;
+}
+
+.pixiv-import {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pixiv-import-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pixiv-import-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pixiv-import-error {
+  color: #e03131;
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.pixiv-import-info {
+  color: var(--color-muted, #666);
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.pixiv-meta {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #dee2e6);
+  border-radius: 8px;
+  background: var(--color-surface, #fafafa);
+  font-size: 13px;
+}
+
+.pixiv-meta-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.pixiv-meta-list dt {
+  color: var(--color-muted, #666);
+  white-space: nowrap;
+}
+
+.pixiv-meta-list dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.pixiv-meta-description {
+  white-space: pre-wrap;
+  max-height: 8em;
+  overflow-y: auto;
+}
+
+.pixiv-tag {
+  display: inline-block;
+  margin: 0 6px 4px 0;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--color-border, #e9ecef);
+  font-size: 12px;
+}
+
+.pixiv-meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.pixiv-meta-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.pixiv-meta-result {
+  margin-top: 10px;
+  border-top: 1px solid var(--color-border, #dee2e6);
+  padding-top: 8px;
+}
+
+.pixiv-meta-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--color-muted, #666);
+  margin-bottom: 4px;
+}
+
+.pixiv-meta-result-close {
+  padding: 0 6px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-muted, #666);
+}
+
+.pixiv-meta-result-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
 }
 
 textarea {
