@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { AxiosResponse } from 'axios'
-import type { TranslateRequest, TranslateResponse } from '../types'
+import type { PixivNovelResponse, TranslateRequest, TranslateResponse } from '../types'
 
 const api = axios.create({
   baseURL: (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:5566/api/v1'
@@ -171,6 +171,14 @@ export function translateImagesStream(
     headers,
     body: formData
   }, onToken, onDone, onError)
+}
+
+/**
+ * Imports a Pixiv novel's text by work URL, so the translate box can be filled without
+ * opening Pixiv first. The backend proxies Pixiv's AJAX endpoint and strips its control tags.
+ */
+export function importPixivNovel(url: string) {
+  return api.get<PixivNovelResponse>('/pixiv/novel', { params: { url }, timeout: 45000 })
 }
 
 export function sendEmailCode(email: string) {

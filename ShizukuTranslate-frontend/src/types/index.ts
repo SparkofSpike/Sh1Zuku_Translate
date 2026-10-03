@@ -13,6 +13,19 @@ export interface TranslateRequest {
   skipCache?: boolean
 }
 
+/** A Pixiv novel imported by URL (`GET /pixiv/novel`). */
+export interface PixivNovelResponse {
+  novelId: string
+  title: string
+  author: string
+  /** Work summary as plain text (Pixiv HTML stripped), possibly empty. */
+  description: string
+  tags: string[]
+  text: string
+  /** Title / author / tags / description as a labelled block, ready to send as a translate request. */
+  metadataText: string
+}
+
 /** A target language offered by the backend (`GET /translation/languages`). */
 export interface LanguageOption {
   code: string
