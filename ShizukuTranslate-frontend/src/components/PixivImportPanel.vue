@@ -548,12 +548,12 @@ async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivS
 }
 
 /**
- * Auto search after a screenshot was recognised. All strategies fire in parallel — the two
- * strongest tags ANDed, the first tag alone, and the full title plus its longest clean run
- * — then the results are merged, deduplicated and ranked by scoreCandidate (title match
- * first, tag overlap second). A top candidate with a title match is imported straight away;
- * otherwise the ranked list is shown for one-click confirmation. The user never picks a
- * search mode.
+ * Auto search after a screenshot was recognised. All strategies fire in parallel — each of
+ * the first few concrete tags on its own, the two strongest ANDed, and the full title plus
+ * its longest clean run — then the results are merged, deduplicated and ranked by
+ * scoreCandidate (title match first, tag overlap second). A top candidate with a title
+ * match is imported straight away; otherwise the ranked list is shown for one-click
+ * confirmation. The user never picks a search mode.
  */
 async function autoSearch(info: PixivExtractResponse) {
   const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
@@ -568,13 +568,15 @@ async function autoSearch(info: PixivExtractResponse) {
       searches.push({ promise: runSearch(keyword, 'tag'), trusted: isTrustedKeyword(keyword) })
     }
   }
+  // Every one of the first few concrete tags gets its own query: the decisive tag often
+  // sits further down the list (a work tagged BLACKSOULSⅡ first can only be found via
+  // 紅ずきん third), and a single-tag query matches far more reliably than an AND.
+  for (const tag of concrete.slice(0, 4)) {
+    planTag(tagSearchKeywords([tag]))
+  }
   if (concrete.length >= 2) {
+    // The AND stays as a precision probe when it can work at all.
     planTag(tagSearchKeywords(concrete.slice(0, 2)))
-    // The AND can zero out when one tag rides only on part of the series; also try the
-    // most specific single tag.
-    planTag(tagSearchKeywords([concrete[0]]))
-  } else if (concrete.length === 1) {
-    planTag(tagSearchKeywords(concrete))
   }
   for (const keyword of titleKeywords) {
     searches.push({ promise: runSearch(keyword, 'title'), trusted: false })

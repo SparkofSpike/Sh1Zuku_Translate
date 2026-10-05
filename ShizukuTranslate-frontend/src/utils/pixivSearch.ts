@@ -41,14 +41,22 @@ export function normalizeTitle(value: string): string {
 }
 
 /**
- * True when one title contains the other after normalisation, and the shorter side is long
- * enough to be meaningful (a 2-character title would match half the site).
+ * True when one title contains the other after normalisation, and the shorter side is
+ * distinctive enough to be meaningful. CJK text is information-dense — two characters
+ * already identify a title (熱平衡) — while Latin text needs at least four (a 3-letter
+ * Latin "title" would match half the site).
  */
 export function titleMatches(a: string, b: string): boolean {
   const na = normalizeTitle(a)
   const nb = normalizeTitle(b)
-  if (na.length < 4 || nb.length < 4) return false
+  if (!isDistinctiveRun(na) || !isDistinctiveRun(nb)) return false
   return na.includes(nb) || nb.includes(na)
+}
+
+/** Distinguishing power of a normalised run: ≥2 CJK characters, or ≥4 Latin ones. */
+function isDistinctiveRun(run: string): boolean {
+  if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(run)) return run.length >= 2
+  return run.length >= 4
 }
 
 /** Tag comparison is case-insensitive. */
@@ -57,18 +65,26 @@ export function normalizeTag(tag: string): string {
 }
 
 /**
- * Relevance of one candidate against the recognised metadata. The title dominates — a
- * normalised title match scores 1000 and always outranks any amount of tag overlap — and the
- * count of recognised *concrete* tags the candidate also carries breaks ties below that.
- * Generic catch-alls (R-18 etc.) are excluded from scoring: every second work carries them,
- * so they would flatten the ranking instead of ordering it. Both sides are digit-normalised
- * so a tag read as BLACKSOULSⅡ still matches a work tagged BLACKSOULS2.
+ * Relevance of one candidate against the recognised metadata. The title dominates — an
+ * outright (normalised) title equality scores {@link TITLE_EXACT_SCORE}, a containment
+ * match {@link TITLE_MATCH_SCORE} — and the count of recognised *concrete* tags the
+ * candidate also carries breaks ties below that. Generic catch-alls (R-18 etc.) are
+ * excluded from scoring: every second work carries them, so they would flatten the ranking
+ * instead of ordering it. Both sides are digit-normalised so a tag read as BLACKSOULSⅡ
+ * still matches a work tagged BLACKSOULS2.
  *
  * @param trusted true when the candidate was reached through a digit-normalised (trusted)
  *                keyword; such hits get a small bonus over fuzzy-search neighbours.
  */
 export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem, trusted = false): number {
-  const titleScore = titleMatches(info.title, item.title) ? 1000 : 0
+  const wantedTitle = normalizeTitle(info.title)
+  const candidateTitle = normalizeTitle(item.title)
+  let titleScore = 0
+  if (wantedTitle && wantedTitle === candidateTitle) {
+    titleScore = TITLE_EXACT_SCORE
+  } else if (titleMatches(info.title, item.title)) {
+    titleScore = TITLE_MATCH_SCORE
+  }
   const scoreTags = concreteTags(info.tags || [])
   const wanted = new Set(scoreTags.map(tag => normalizeTagForSearch(normalizeTag(tag))).filter(Boolean))
   const present = new Set((item.tags || []).map(tag => normalizeTagForSearch(normalizeTag(tag))))
@@ -78,6 +94,12 @@ export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem
   }
   return titleScore + Math.min(overlap, 9) * 10 + (trusted ? PRECISE_VARIANT_BONUS : 0)
 }
+
+/** The candidate's title equals the recognised one outright. */
+export const TITLE_EXACT_SCORE = 1200
+
+/** The candidate's title contains (or is contained by) the recognised one. */
+export const TITLE_MATCH_SCORE = 1000
 
 /** A candidate scoring at least this much carries a title match: import it directly. */
 export const AUTO_IMPORT_SCORE = 1000
@@ -149,12 +171,13 @@ export const PRECISE_VARIANT_BONUS = 5
 
 /**
  * Whether the recognised title is worth a title-mode search. A "title" that just repeats one
- * of the tags (the model sometimes promotes a tag to the title) or is too short would only
- * pull in unrelated works.
+ * of the tags (the model sometimes promotes a tag to the title) or has no distinctive run
+ * would only pull in unrelated works — "no distinctive run" is a low bar for CJK, where two
+ * characters already make a title.
  */
 export function isUsableTitle(title: string, tags: string[]): boolean {
   const normalized = normalizeTitle(title)
-  if (normalized.length < 4) return false
+  if (!isDistinctiveRun(normalized)) return false
   for (const tag of tags || []) {
     if (normalizeTitle(tag) === normalized) return false
   }

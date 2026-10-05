@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, normalizeTagForSearch, PRECISE_VARIANT_BONUS, scoreCandidate, tagSearchKeywords, titleMatches, titleSearchChunk, titleSearchKeywords } from '../src/utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, normalizeTagForSearch, PRECISE_VARIANT_BONUS, scoreCandidate, tagSearchKeywords, TITLE_EXACT_SCORE, titleMatches, titleSearchChunk, titleSearchKeywords } from '../src/utils/pixivSearch'
 import type { PixivExtractResponse, PixivSearchItem } from '../src/types'
 
 /**
@@ -52,6 +52,34 @@ describe('screenshot search ranking', () => {
     expect(titleMatches('DEATH NOTE', 'Death Note')).toBe(true)
     // Too short to be meaningful: a 1-character title would match half the site.
     expect(titleMatches('短', '短編集')).toBe(false)
+  })
+
+  it('treats two CJK characters as a distinctive title (熱平衡 case)', () => {
+    // The model read a three-character title; the old four-character floor dropped the
+    // whole title search. CJK is information-dense and must clear a lower bar.
+    expect(titleMatches('熱平衡', '熱平衡')).toBe(true)
+    expect(titleMatches('熱平衡', 'ある夜の熱平衡')).toBe(true)
+    expect(isUsableTitle('熱平衡', ['超かぐや姫!', '酒寄彩葉'])).toBe(true)
+    // Latin stays strict.
+    expect(titleMatches('R-18', 'R-18')).toBe(false)
+  })
+
+  it('prefers an exact title over a containment match (same-title decoy)', () => {
+    const info: PixivExtractResponse = {
+      title: '熱平衡',
+      author: '海鷂魚',
+      tags: ['超かぐや姫!', '酒寄彩葉', '月見ヤチヨ', '現パロ', '曲パロ'],
+      summary: ''
+    }
+    const exact = scoreCandidate(info, item({ id: 'exact', title: '熱平衡', tags: ['超かぐや姫!', '酒寄彩葉', '月見ヤチヨ', '現パロ'] }))
+    const sameTitleOtherWork = scoreCandidate(info, item({ id: 'decoy', title: '熱平衡 ', tags: ['つりライフ', 'つりぷら'] }))
+    const contained = scoreCandidate(info, item({ id: 'contained', title: 'ある夜の熱平衡', tags: ['腐向け'] }))
+    expect(exact).toBeGreaterThanOrEqual(AUTO_IMPORT_SCORE)
+    // The user's screenshot showed the work with the matching tag set; it must win over a
+    // same-titled work with different tags, which in turn beats the containment match.
+    expect(exact).toBeGreaterThan(sameTitleOtherWork)
+    expect(sameTitleOtherWork).toBeGreaterThan(contained)
+    expect(sameTitleOtherWork).toBe(TITLE_EXACT_SCORE)
   })
 
   it('extracts the longest clean title run for title-mode search', () => {
