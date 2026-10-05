@@ -666,7 +666,9 @@ async function searchByKeyword() {
 
 /**
  * Imports the chosen candidate: same path as a link import (text to the parent, metadata kept
- * here), then the screenshot block is emptied so the candidate list folds away.
+ * here). The screenshot block stays visible after a successful import — the user can keep
+ * looking at the image and the candidate list — and the panel's own clear button removes it
+ * when they are done.
  */
 async function importCandidate(item: PixivSearchItem) {
   if (importingId.value) return
@@ -677,7 +679,6 @@ async function importCandidate(item: PixivSearchItem) {
     const res = await importPixivNovel(item.id)
     if (epoch !== shotEpoch) return
     applyImportedNovel(res.data)
-    clearShots()
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
     const err = e as { response?: { data?: { error?: string } } }
