@@ -336,6 +336,13 @@ const MAX_SHOT_IMAGES = 3
 /** The candidate list is capped so one search cannot render an endless page. */
 const MAX_CANDIDATES = 20
 
+/**
+ * A listed candidate must carry at least one concrete signal against the screenshot: a title
+ * match (1000+) or one shared concrete tag (10). Everything below is a fuzzy-search neighbour
+ * with no relation to the image — showing those just buries the useful rows.
+ */
+const MIN_RELEVANT_SCORE = 10
+
 const shotInput = ref<HTMLInputElement | null>(null)
 const shotFiles = ref<File[]>([])
 const shotPreviews = ref<string[]>([])
@@ -617,17 +624,24 @@ async function autoSearch(info: PixivExtractResponse) {
     const ranked = [...byId.values()]
       .map(entry => ({ item: entry.item, score: scoreCandidate(info, entry.item, entry.trusted) }))
       .sort((a, b) => b.score - a.score)
-    candidates.value = ranked.map(entry => entry.item).slice(0, MAX_CANDIDATES)
     searchKeyword.value = concrete[0] || titleKeywords[0] || ''
     searchPerformed.value = true
     const top = ranked[0]
     if (top && top.score >= AUTO_IMPORT_SCORE) {
+      // The work was identified outright: import it and show no candidate list at all —
+      // there is nothing left to pick.
       searchInfo.value = t('translate.pixiv.autoImported', { title: top.item.title })
       await importCandidate(top.item)
-    } else if (candidates.value.length) {
-      searchInfo.value = t('translate.pixiv.autoCandidates', { count: candidates.value.length })
     } else {
-      searchInfo.value = t('translate.pixiv.searchTriedAll', { keyword: searchKeyword.value })
+      // No outright match: fall back to a short list of genuinely related candidates
+      // (one shared concrete tag or better). Fuzzy-search neighbours stay out of the way.
+      candidates.value = ranked
+        .filter(entry => entry.score >= MIN_RELEVANT_SCORE)
+        .map(entry => entry.item)
+        .slice(0, MAX_CANDIDATES)
+      searchInfo.value = candidates.value.length
+        ? t('translate.pixiv.autoCandidates', { count: candidates.value.length })
+        : t('translate.pixiv.searchTriedAll', { keyword: searchKeyword.value })
     }
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
