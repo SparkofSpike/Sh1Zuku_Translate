@@ -9,20 +9,6 @@
   </div>
   <div v-else class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
-    <PixivImportPanel
-      class="pixiv-panel"
-      :include-metadata="includePixivMetadata"
-      :model="model"
-      :model-profile-id="modelProfileId"
-      :custom-prompt="customPrompt"
-      :presets="selectedPresets"
-      :target-language="targetLanguage"
-      :busy="status !== 'idle'"
-      @update:include-metadata="includePixivMetadata = $event"
-      @imported="onPixivImported"
-      @cleared="onPixivCleared"
-    />
-
     <div class="card translation-card">
       <div class="open-source-banner">
         {{ t('translate.openSource.lead') }}<a
@@ -129,6 +115,20 @@
     <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" :model="model" />
     <TranslateResult v-else-if="result" :result="result" :model="model" />
     </div>
+
+    <PixivImportPanel
+      class="pixiv-panel"
+      :include-metadata="includePixivMetadata"
+      :model="model"
+      :model-profile-id="modelProfileId"
+      :custom-prompt="customPrompt"
+      :presets="selectedPresets"
+      :target-language="targetLanguage"
+      :busy="status !== 'idle'"
+      @update:include-metadata="includePixivMetadata = $event"
+      @imported="onPixivImported"
+      @cleared="onPixivCleared"
+    />
 
     <AnnouncementPanel
       v-if="announcements.length"
@@ -909,11 +909,11 @@ async function translate(forceRetranslate = false) {
   margin: 8px 0;
 }
 
-/* The Pixiv import panel is a card of its own, rendered above the translate card; the
+/* The Pixiv import panel is a card of its own, rendered below the translate card; the
    announcements column simply spans both rows so the sidebar starts at the top of the page. */
 .pixiv-panel {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 2;
   width: 100%;
   max-width: 800px;
   margin: 0;
@@ -921,7 +921,7 @@ async function translate(forceRetranslate = false) {
 
 .translation-card {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1;
   min-width: 0;
   width: 100%;
   max-width: 800px;
@@ -998,12 +998,12 @@ textarea {
 
   .translate-layout.has-announcements .pixiv-panel {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 3;
   }
 
   .translate-layout.has-announcements .translation-card {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
   }
 }
 
