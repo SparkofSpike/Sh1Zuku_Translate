@@ -34,7 +34,7 @@ The extension supports:
 - Full-novel inline translation with global paragraph IDs mapped across Pixiv page breaks.
 - Paged mode that translates the whole novel at once and renders it in the floating window, split into blocks at Pixiv's `[newpage]` markers.
 - Chinese, English, and Korean output.
-- Site DeepSeek models and the user's saved model profiles.
+- Site-provided models — DeepSeek and the keyless bilibili Index-Translate — plus the user's saved model profiles.
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
 - Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
@@ -174,7 +174,7 @@ The web application's profile page supports multiple saved model profiles and re
 - A reference to a personal API key (legacy inline keys are migrated lazily).
 - A base URL for compatible providers.
 
-One API key may be used by multiple profiles. The authenticated endpoint `POST /auth/model-profiles/detect` proxies the provider's `/models` endpoint; model detection is optional and manual model entry remains supported. Model selectors use slash-separated labels such as `站方/deepseek-flash`, `站方/deepseek-v4-pro`, and `我的配置/openai/gpt-5.6-sol`.
+One API key may be used by multiple profiles. The authenticated endpoint `POST /auth/model-profiles/detect` proxies the provider's `/models` endpoint; model detection is optional and manual model entry remains supported. Model selectors use slash-separated labels such as `站方/deepseek-flash`, `站方/deepseek-v4-pro`, `站方/Index-Translate-35B-A3B`, and `我的配置/openai/gpt-5.6-sol`.
 
 The defaults are:
 
@@ -283,7 +283,7 @@ Other runtime defaults in `application.yml`:
 - Backend HTTP port: `5566`.
 - DeepSeek base URL: `https://api.deepseek.com/v1`.
 - Default DeepSeek model: `deepseek-flash` (DeepSeek-V4.1-Flash).
-- Site DeepSeek models: `deepseek-flash`, which is natively multimodal and the only site model that can use image model processing, and `deepseek-v4-pro`. The retired names `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` still resolve because the DeepSeek API routes them to V4.1 Flash.
+- Site-provided models: `deepseek-flash`, which is natively multimodal and the only site model that can use image model processing, `deepseek-v4-pro`, and the keyless `Index-Translate-35B-A3B` (bilibili's public translation model, served from `https://index-translate.bilibili.com/v1`). The retired names `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` still resolve because the DeepSeek API routes them to V4.1 Flash.
 - DeepSeek thinking mode: disabled by default; requests may override it.
 - H2 file database: `./data/translatordb`.
 - Database connection pool: HikariCP, 10 connections, 10 s acquisition timeout, plus a 60 s leak-detection sentinel that logs a stack trace if a connection is ever held longer than that. Two settings keep translation from starving the pool, and both are needed for different reasons. `spring.jpa.open-in-view` is deliberately `false`: while it is enabled Spring binds an EntityManager to the whole request and the connection it acquired is only released when the response is written, so a single slow upstream model call pins a pooled connection and every other request then fails with `HikariPool-1 - Connection is not available`. Separately, no transaction wraps an upstream model call - `TranslationService.translate`/`translateImages`/`translateImagesStream` do the HTTP call outside any transaction and hand the database writes to `TranslationResultWriter`, which owns a short one; splitting the transaction alone is not sufficient (the connection is then borrowed on the first query instead of at `doBegin`, and is still held for the whole call), it is the combination that leaves the pool idle. Measured locally with three concurrent 15 s translations against a 3-connection pool: with open-in-view on the pool went to `idle=0` and a fourth request got `500 / Connection is not available`; with it off the pool stayed `idle=3` and the fourth request succeeded. Keep both properties the way they are.

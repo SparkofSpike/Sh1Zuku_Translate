@@ -336,6 +336,14 @@ public class UserService {
         if (Long.valueOf(0L).equals(modelProfileId)) {
             String model = requestedModel == null || requestedModel.isBlank()
                     ? deepSeekProperties.getDefaultModel() : requestedModel.trim();
+            // Index-Translate (bilibili) is a public, keyless OpenAI-compatible endpoint.
+            // The front-end site option sends the real model name, so it is matched here
+            // before the site DeepSeek key check.
+            if ("index-translate".equalsIgnoreCase(model) || "Index-Translate-35B-A3B".equalsIgnoreCase(model)) {
+                return new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
+                        "Index-Translate-35B-A3B",
+                        thinkingType == null ? deepSeekProperties.getThinkingType() : thinkingType);
+            }
             if (deepSeekProperties.getKey() == null || deepSeekProperties.getKey().isBlank()) {
                 throw new BusinessException("站方 DeepSeek API Key 未配置");
             }

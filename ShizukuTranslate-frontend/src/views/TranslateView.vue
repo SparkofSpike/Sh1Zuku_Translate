@@ -226,7 +226,8 @@ interface ModelOption {
 
 const modelOptions = ref<ModelOption[]>([
   { key: 'site:deepseek-flash', id: null as number | null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
-  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' }
+  { key: 'site:deepseek-v4-pro', id: null as number | null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
+  { key: 'site:index-translate', id: null as number | null, model: 'Index-Translate-35B-A3B', label: '站方/Index-Translate-35B-A3B' }
 ])
 
 /** Site models carry a prefix that has to follow the UI language, so it is applied at render time. */
@@ -385,6 +386,7 @@ onMounted(async () => {
     modelOptions.value = [
       { key: 'site:deepseek-flash', id: null, model: 'deepseek-flash', label: '站方/deepseek-flash' },
       { key: 'site:deepseek-v4-pro', id: null, model: 'deepseek-v4-pro', label: '站方/deepseek-v4-pro' },
+      { key: 'site:index-translate', id: null, model: 'Index-Translate-35B-A3B', label: '站方/Index-Translate-35B-A3B' },
       ...profiles.flatMap((item: ModelProfileOption & { provider: string }) => {
         const models = Array.isArray(item.models) && item.models.length ? item.models : [item.model]
         return models.map(modelName => ({

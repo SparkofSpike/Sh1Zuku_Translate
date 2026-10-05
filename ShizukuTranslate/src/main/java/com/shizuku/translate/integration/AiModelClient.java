@@ -287,7 +287,7 @@ public class AiModelClient {
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
         request.put("temperature", 0.3);
-        request.put("max_tokens", config.isAnthropic() ? 8192 : 100000);
+        request.put("max_tokens", config.isAnthropic() ? 8192 : (config.isIndexTranslate() ? 8192 : 100000));
         request.put("stream", stream);
         if (config.isAnthropic()) {
             request.put("system", systemPrompt);
@@ -331,6 +331,11 @@ public class AiModelClient {
     }
 
     private void addAuth(HttpHeaders headers, AiModelConfig config) {
+        if (config.isIndexTranslate()) {
+            // Index-Translate (bilibili) is public and keyless; sending an Authorization
+            // header would inject a meaningless token and the API rejects it on TPM limits.
+            return;
+        }
         if (config.isAnthropic()) {
             headers.set("x-api-key", config.getApiKey());
             headers.set("anthropic-version", ANTHROPIC_VERSION);
@@ -442,6 +447,7 @@ public class AiModelClient {
         public String getModel() { return model; }
         public String getThinkingType() { return thinkingType; }
         public boolean isAnthropic() { return "anthropic".equals(provider); }
+        public boolean isIndexTranslate() { return "index-translate".equals(provider); }
         /**
          * Whether this config accepts image input. DeepSeek merged the retired
          * deepseek-v4-flash and deepseek-v4-flash-vision-exp names into the natively
