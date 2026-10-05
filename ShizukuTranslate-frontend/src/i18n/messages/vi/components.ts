@@ -15,6 +15,15 @@ export default {
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Tiêu thụ Token: Đầu vào {prompt} {'|'} Đầu ra {completion} {'|'} Tổng {total}"
   },
+  // Phản hồi chất lượng dịch: FeedbackRating.vue (chấm sao + thẻ lý do khi điểm thấp).
+  feedbackRating: {
+    label: 'Bản dịch này chất lượng thế nào?',
+    accuracy: 'Chính xác',
+    terminology: 'Thuật ngữ',
+    format: 'Định dạng',
+    tone: 'Giọng điệu',
+    other: 'Khác'
+  },
   export: {
     label: 'Xuất file',
     exporting: 'Đang xuất…',

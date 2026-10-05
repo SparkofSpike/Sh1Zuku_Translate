@@ -9,65 +9,81 @@
         <button class="btn-sm btn-refresh" @click="loadUsage">{{ t('admin.refreshData') }}</button>
       </div>
 
-      <div v-if="usageLoading" class="muted">{{ t('admin.loadingUsage') }}</div>
-      <template v-else>
-        <div class="metric-grid">
-          <div class="metric"><span>{{ t('admin.metrics.totalTokens') }}</span><strong>{{ formatNumber(usage.totalTokens) }}</strong></div>
-          <div class="metric"><span>{{ t('admin.metrics.promptTokens') }}</span><strong>{{ formatNumber(usage.promptTokens) }}</strong></div>
-          <div class="metric"><span>{{ t('admin.metrics.completionTokens') }}</span><strong>{{ formatNumber(usage.completionTokens) }}</strong></div>
-          <div class="metric"><span>{{ t('admin.metrics.requestCount') }}</span><strong>{{ formatNumber(usage.requestCount) }}</strong></div>
-        </div>
+      <div class="admin-tabs" role="tablist" :aria-label="t('admin.tabs.label')">
+        <button
+          v-for="tab in ADMIN_TABS"
+          :key="tab"
+          type="button"
+          class="admin-tab"
+          role="tab"
+          :class="{ active: activeTab === tab }"
+          :aria-selected="activeTab === tab"
+          @click="activeTab = tab"
+        >{{ t('admin.tabs.' + tab) }}</button>
+      </div>
 
-        <div class="charts-grid">
-          <div class="chart-panel">
-            <h3>{{ t('admin.chart.daily') }}</h3>
-            <div class="bar-chart">
-              <div v-for="day in usage.daily" :key="day.date" class="bar-column" :title="t('admin.chart.barTitle', { date: day.date, tokens: formatNumber(day.totalTokens) })">
-                <div class="bar-track"><div class="bar-fill" :style="{ height: barHeight(day.totalTokens) + '%' }"></div></div>
-                <span>{{ shortDate(day.date) }}</span>
+      <!-- One page-level section per tab; v-show keeps the loaded usage data and its sort state alive across switches. -->
+      <div v-show="activeTab === 'usage'">
+        <div v-if="usageLoading" class="muted">{{ t('admin.loadingUsage') }}</div>
+        <template v-else>
+          <div class="metric-grid">
+            <div class="metric"><span>{{ t('admin.metrics.totalTokens') }}</span><strong>{{ formatNumber(usage.totalTokens) }}</strong></div>
+            <div class="metric"><span>{{ t('admin.metrics.promptTokens') }}</span><strong>{{ formatNumber(usage.promptTokens) }}</strong></div>
+            <div class="metric"><span>{{ t('admin.metrics.completionTokens') }}</span><strong>{{ formatNumber(usage.completionTokens) }}</strong></div>
+            <div class="metric"><span>{{ t('admin.metrics.requestCount') }}</span><strong>{{ formatNumber(usage.requestCount) }}</strong></div>
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-panel">
+              <h3>{{ t('admin.chart.daily') }}</h3>
+              <div class="bar-chart">
+                <div v-for="day in usage.daily" :key="day.date" class="bar-column" :title="t('admin.chart.barTitle', { date: day.date, tokens: formatNumber(day.totalTokens) })">
+                  <div class="bar-track"><div class="bar-fill" :style="{ height: barHeight(day.totalTokens) + '%' }"></div></div>
+                  <span>{{ shortDate(day.date) }}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="chart-panel">
-            <h3>{{ t('admin.chart.model') }}</h3>
-            <div v-if="usage.byModel?.length" class="model-chart">
-              <div v-for="item in usage.byModel" :key="item.provider + item.model" class="model-row">
-                <div class="model-name"><span>{{ item.model }}</span><small>{{ providerLabel(item.provider) }}</small></div>
-                <div class="model-bar-track"><div class="model-bar-fill" :style="{ width: modelWidth(item.totalTokens) + '%' }"></div></div>
-                <strong>{{ formatNumber(item.totalTokens) }}</strong>
+            <div class="chart-panel">
+              <h3>{{ t('admin.chart.model') }}</h3>
+              <div v-if="usage.byModel?.length" class="model-chart">
+                <div v-for="item in usage.byModel" :key="item.provider + item.model" class="model-row">
+                  <div class="model-name"><span>{{ item.model }}</span><small>{{ providerLabel(item.provider) }}</small></div>
+                  <div class="model-bar-track"><div class="model-bar-fill" :style="{ width: modelWidth(item.totalTokens) + '%' }"></div></div>
+                  <strong>{{ formatNumber(item.totalTokens) }}</strong>
+                </div>
               </div>
+              <p v-else class="muted">{{ t('admin.chart.noModelUsage') }}</p>
             </div>
-            <p v-else class="muted">{{ t('admin.chart.noModelUsage') }}</p>
           </div>
-        </div>
 
-        <h3 class="subheading">{{ t('admin.users.title') }}</h3>
-        <div class="table-wrap">
-          <table>
-            <thead><tr>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'username' }" @click="cycleSort('username')">{{ t('admin.users.username') }}{{ sortIndicator('username') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'totalTokens' }" @click="cycleSort('totalTokens')">{{ t('admin.users.totalTokens') }}{{ sortIndicator('totalTokens') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'requestCount' }" @click="cycleSort('requestCount')">{{ t('admin.users.requestCount') }}{{ sortIndicator('requestCount') }}</th>
-              <th class="sortable" :class="{ 'sorted': sortKey === 'latestUsedAt' }" @click="cycleSort('latestUsedAt')">{{ t('admin.users.latestUsedAt') }}{{ sortIndicator('latestUsedAt') }}</th>
-              <th></th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="user in sortedUsers" :key="user.id">
-                <td><strong>{{ user.username }}</strong><small>{{ user.email }}</small></td>
-                <td>{{ formatNumber(user.totalTokens) }}</td>
-                <td>{{ user.requestCount }}</td>
-                <td>{{ formatDate(user.latestUsedAt) }}</td>
-                <td><button class="btn-sm btn-detail" @click="showDetails(user)">{{ t('admin.users.detail') }}</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </template>
+          <h3 class="subheading">{{ t('admin.users.title') }}</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th class="sortable" :class="{ 'sorted': sortKey === 'username' }" @click="cycleSort('username')">{{ t('admin.users.username') }}{{ sortIndicator('username') }}</th>
+                <th class="sortable" :class="{ 'sorted': sortKey === 'totalTokens' }" @click="cycleSort('totalTokens')">{{ t('admin.users.totalTokens') }}{{ sortIndicator('totalTokens') }}</th>
+                <th class="sortable" :class="{ 'sorted': sortKey === 'requestCount' }" @click="cycleSort('requestCount')">{{ t('admin.users.requestCount') }}{{ sortIndicator('requestCount') }}</th>
+                <th class="sortable" :class="{ 'sorted': sortKey === 'latestUsedAt' }" @click="cycleSort('latestUsedAt')">{{ t('admin.users.latestUsedAt') }}{{ sortIndicator('latestUsedAt') }}</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="user in sortedUsers" :key="user.id">
+                  <td><strong>{{ user.username }}</strong><small>{{ user.email }}</small></td>
+                  <td>{{ formatNumber(user.totalTokens) }}</td>
+                  <td>{{ user.requestCount }}</td>
+                  <td>{{ formatDate(user.latestUsedAt) }}</td>
+                  <td><button class="btn-sm btn-detail" @click="showDetails(user)">{{ t('admin.users.detail') }}</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
 
       <p v-if="error" class="error">{{ error }}</p>
     </section>
 
-    <section class="card admin-card announcement-section">
+    <section v-show="activeTab === 'announcements'" class="card admin-card announcement-section">
       <h3 class="section-title">{{ t('admin.announce.publish') }}</h3>
       <input v-model.trim="title" type="text" maxlength="100" :placeholder="t('admin.announce.titlePlaceholder')" />
       <div class="markdown-editor">
@@ -123,7 +139,7 @@
       <p v-else class="muted">{{ t('admin.announce.empty') }}</p>
     </section>
 
-    <section class="card admin-card preset-section">
+    <section v-show="activeTab === 'presets'" class="card admin-card preset-section">
       <h3 class="section-title">{{ t('admin.presets.title') }}</h3>
       <p class="muted">{{ t('admin.presets.subtitle') }}</p>
       <div class="preset-editor">
@@ -152,6 +168,11 @@
       <p v-else class="muted">{{ t('admin.presets.empty') }}</p>
       <p v-if="presetError" class="error">{{ presetError }}</p>
       <p v-if="presetSuccess" class="success">{{ presetSuccess }}</p>
+    </section>
+
+    <!-- v-if rather than v-show: the panel fetches on mount, so an unopened tab costs no request. -->
+    <section v-if="activeTab === 'feedback'" class="card admin-card feedback-section">
+      <FeedbackAdminPanel />
     </section>
 
     <div v-if="detailUser" class="modal-backdrop" @click.self="detailUser = null">
@@ -212,6 +233,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '../api'
+import FeedbackAdminPanel from '../components/FeedbackAdminPanel.vue'
 import { renderMarkdown } from '../utils/markdown'
 import type { AdminPreset } from '../utils/html'
 import type { Announcement, UsageDay, UsageLog, UsageModel, UsageUser } from '../types'
@@ -245,6 +267,11 @@ interface AckModal {
 }
 
 const { t } = useI18n()
+
+/** Page-level tabs, in display order; the first one is selected when the page opens. */
+const ADMIN_TABS = ['usage', 'announcements', 'presets', 'feedback'] as const
+type AdminTab = (typeof ADMIN_TABS)[number]
+const activeTab = ref<AdminTab>('usage')
 
 const usage = ref<AdminUsage>({ totalTokens: 0, promptTokens: 0, completionTokens: 0, requestCount: 0, daily: [], byModel: [], users: [] })
 
@@ -536,6 +563,7 @@ h3 { font-size: 16px; font-weight: 600; }
 th.sortable { cursor: pointer; user-select: none; transition: color .15s; }th.sortable:hover { color: #222; }
 th.sorted { color: #222; font-weight: 600; }
 .btn-refresh, .btn-detail { background: #fff; color: #333; border-color: #bbb; }.btn-refresh:hover, .btn-detail:hover { background: #eee; }
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0 0; border-bottom: 1px solid #eee; }.admin-tab { padding: 9px 16px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #666; font-size: 14px; }.admin-tab:hover:not(:disabled) { background: #f0f0f0; color: #222; }.admin-tab.active { border-bottom-color: #222; color: #222; font-weight: 600; }
 .markdown-editor { margin: 12px 0 12px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }.markdown-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid #eee; background: #fafafa; }.markdown-tab { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #666; font-size: 13px; }.markdown-tab:hover { background: #f0f0f0; color: #222; }.markdown-tab.active { border-bottom-color: #222; color: #222; font-weight: 600; }.markdown-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; margin: 0; border: 0; border-radius: 0; resize: vertical; }.announcement-markdown.markdown-preview { min-height: 140px; margin: 0; padding: 10px 12px; }.markdown-preview-empty { min-height: 140px; margin: 0; padding: 10px 12px; color: #999; font-size: 13px; }.section-title { margin: 0 0 12px; }.announcement-list { display: flex; flex-direction: column; }.announcement-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }.announcement-content { min-width: 0; flex: 1; }.announcement-item h4 { margin: 0; font-size: 15px; }.announcement-item time { color: #999; font-size: 12px; }.announcement-markdown { margin: 7px 0 0; color: #555; overflow-wrap: anywhere; }.announcement-markdown :deep(p), .announcement-markdown :deep(ul), .announcement-markdown :deep(ol), .announcement-markdown :deep(blockquote), .announcement-markdown :deep(pre) { margin: 0 0 7px; }.announcement-markdown :deep(p:last-child), .announcement-markdown :deep(ul:last-child), .announcement-markdown :deep(ol:last-child), .announcement-markdown :deep(blockquote:last-child), .announcement-markdown :deep(pre:last-child) { margin-bottom: 0; }.announcement-markdown :deep(ul), .announcement-markdown :deep(ol) { padding-left: 20px; }.announcement-markdown :deep(blockquote) { padding-left: 10px; border-left: 3px solid #ddd; color: #777; }.announcement-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: #f1f1f1; font-size: 12px; }.announcement-markdown :deep(pre) { padding: 8px 10px; overflow-x: auto; border-radius: 4px; background: #f5f5f5; }.announcement-markdown :deep(pre code) { padding: 0; background: transparent; }.announcement-markdown :deep(a) { color: #444; text-decoration: underline; }
 .ack-checkbox { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #555; font-size: 13px; cursor: pointer; }.ack-checkbox input { width: auto; margin: 0; }.badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 10px; background: #fff3bf; color: #9a6700; font-size: 11px; font-weight: 600; vertical-align: middle; }.announcement-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .success { color: #2b8a3e; }.error { color: #e03131; }.detail-summary { display: flex; gap: 18px; margin: 14px 0; color: #777; font-size: 13px; }.detail-summary strong { color: #222; font-size: 20px; }.log-table { max-height: 390px; overflow-y: auto; }

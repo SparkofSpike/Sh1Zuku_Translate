@@ -45,6 +45,10 @@ public class SecurityConfig {
                         // Read-only Pixiv novel import for the web translate box; proxies a
                         // public Pixiv endpoint and stores nothing.
                         .requestMatchers("/api/v1/pixiv/**").permitAll()
+                        // Anonymous feedback collection: rating a translation and reporting
+                        // copy / re-translate events must work without a login (acceptance
+                        // requirement); abuse is capped per device inside the service.
+                        .requestMatchers("/api/v1/feedback/**").permitAll()
                         // Device-code flow: the plugin has no credentials yet when it asks for a
                         // code (POST) and when it polls (GET). Approval is a POST to
                         // /api/v1/plugin/device-code/approve, which the exact-path matcher below

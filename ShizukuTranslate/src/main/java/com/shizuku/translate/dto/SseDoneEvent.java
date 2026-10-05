@@ -4,6 +4,7 @@ public class SseDoneEvent {
     private boolean done;
     private Long id;
     private String translatedText;
+    private String requestId;
     private TokenUsage tokenUsage;
     /** @see TranslateResponse#fromSharedTranslation */
     private boolean fromSharedTranslation;
@@ -17,6 +18,14 @@ public class SseDoneEvent {
         this.id = id;
         this.translatedText = translatedText;
         this.tokenUsage = tokenUsage;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
     }
 
     public SseDoneEvent(Long id, String translatedText, TokenUsage tokenUsage,

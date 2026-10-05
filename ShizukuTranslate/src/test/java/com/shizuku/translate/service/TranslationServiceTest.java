@@ -11,6 +11,7 @@ import com.shizuku.translate.integration.AiModelClient.DeepSeekResult;
 import com.shizuku.translate.repository.PresetRepository;
 import com.shizuku.translate.repository.TranslationCacheRepository;
 import com.shizuku.translate.repository.TranslationRecordRepository;
+import com.shizuku.translate.service.feedback.TranslationFeedbackService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -72,6 +73,10 @@ class TranslationServiceTest {
     @InjectMocks
     private TranslationService service;
 
+    /** The feedback pipeline is fire-and-forget; tests only need it to be a no-op mock. */
+    @Mock
+    private TranslationFeedbackService feedbackService;
+
     private User user;
 
     @BeforeEach
@@ -84,9 +89,19 @@ class TranslationServiceTest {
         // the shared mocks injected.
         promptTemplateService = new PromptTemplateService(new AppConfigStub(), new GlossaryService(null), presetRepository);
         service = new TranslationService(aiModelClient, recordRepository, cacheRepository,
-                userService, promptTemplateService, usageService, resultWriter);
+                userService, promptTemplateService, usageService, resultWriter, feedbackService);
         lenient().when(presetRepository.findAll()).thenReturn(List.of(
                 Preset.builder().id(1L).name("NSFW破甲").prompt("preset-rule").build()));
+        // The writer normally returns the persisted response; give the mock one so the
+        // feedback registration that follows can read its request id.
+        lenient().when(resultWriter.persistTranslate(any(), any(), any(), any(), any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    TranslateResponse response = new TranslateResponse();
+                    response.setTranslatedText(invocation.getArgument(3));
+                    response.setModel("m");
+                    response.setRequestId("test-request-id");
+                    return response;
+                });
         // TranslationService looks the user up by name before every path.
         lenient().when(userService.findByUsername("alice")).thenReturn(user);
     }

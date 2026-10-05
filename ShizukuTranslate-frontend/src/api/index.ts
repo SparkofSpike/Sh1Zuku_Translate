@@ -129,7 +129,9 @@ export function translateStream(
   onDone: (response: TranslateResponse) => void,
   onError: (error: string) => void,
   /** Re-translate: bypass both the personal cache and other users' shared translations. */
-  skipCache: boolean = false
+  skipCache: boolean = false,
+  /** requestId of the result being re-translated; lets the backend link old and new for feedback. */
+  retranslatedFrom?: string
 ): AbortController {
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -140,7 +142,7 @@ export function translateStream(
   return streamPost(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache } as TranslateRequest)
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache, retranslatedFrom } as TranslateRequest)
   }, onToken, onDone, onError)
 }
 

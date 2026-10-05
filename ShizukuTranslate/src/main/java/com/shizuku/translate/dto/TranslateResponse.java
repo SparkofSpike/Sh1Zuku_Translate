@@ -6,6 +6,11 @@ public class TranslateResponse {
     private Long id;
     private String translatedText;
     private String model;
+    /**
+     * Correlation id for the feedback pipeline (see the feedback module); echoed so the client
+     * can attach ratings and behaviour events to exactly this response.
+     */
+    private String requestId;
     private LocalDateTime createdAt;
     private TokenUsage tokenUsage;
 
@@ -25,6 +30,8 @@ public class TranslateResponse {
     public void setTranslatedText(String translatedText) { this.translatedText = translatedText; }
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
+    public String getRequestId() { return requestId; }
+    public void setRequestId(String requestId) { this.requestId = requestId; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public TokenUsage getTokenUsage() { return tokenUsage; }

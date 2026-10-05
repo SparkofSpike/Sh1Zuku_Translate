@@ -2,6 +2,13 @@ export default {
   heading: 'Admin panel',
   subtitle: 'Model usage overview',
   refreshData: 'Refresh data',
+  tabs: {
+    label: 'Admin page sections',
+    usage: 'Usage',
+    announcements: 'Announcements',
+    presets: 'Presets',
+    feedback: 'Feedback'
+  },
   loading: 'Loading...',
   loadingUsage: 'Loading usage...',
   loadingLogs: 'Loading logs...',
@@ -25,6 +32,49 @@ export default {
     requestCount: 'Requests',
     latestUsedAt: 'Last used',
     detail: 'Details'
+  },
+  feedback: {
+    title: 'Translation quality feedback',
+    subtitle: 'Sampling and user feedback events from the last {days} days',
+    refresh: 'Refresh feedback',
+    loading: 'Loading feedback data...',
+    loadFailed: 'Failed to load feedback data',
+    empty: 'No data',
+    summary: {
+      sampleCount: 'Samples',
+      eventCount: 'Events',
+      ratingCount: 'Ratings',
+      ratingAverage: 'Average score',
+      lowRate: 'Low-score rate',
+      distribution: 'Score distribution',
+      origin: 'Sample origin',
+      languagePairs: 'Language pairs',
+      models: 'Models'
+    },
+    samples: {
+      title: 'Latest samples',
+      total: '{count} in total',
+      empty: 'No samples',
+      time: 'Time',
+      model: 'Model',
+      origin: 'Sampled by',
+      length: 'Length bucket',
+      chars: 'Characters',
+      latency: 'Latency',
+      requestId: 'Request ID',
+      source: 'Source',
+      target: 'Translation'
+    },
+    events: {
+      title: 'Latest events',
+      total: '{count} in total',
+      empty: 'No events',
+      time: 'Time',
+      event: 'Event',
+      requestId: 'Request ID',
+      comment: 'Comment',
+      rating: 'Score {rating}'
+    }
   },
   announce: {
     publish: 'Publish announcement',

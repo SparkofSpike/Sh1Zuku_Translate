@@ -37,6 +37,13 @@ public class TranslationRecord {
      */
     @Column(length = 32)
     private String targetLanguage;
+    /**
+     * Client-visible correlation id (UUID) for the feedback pipeline: translation samples,
+     * behaviour events and ratings all join on this value. Nullable so rows written before
+     * the column existed (or by legacy paths) simply have none.
+     */
+    @Column(length = 36)
+    private String requestId;
     private LocalDateTime createdAt;
 
     @PrePersist

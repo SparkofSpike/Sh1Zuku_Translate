@@ -8,6 +8,7 @@
         <button @click="copyResult" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
         <ExportBar v-if="result.translatedText" :text="result.translatedText" :model="model" />
       </div>
+      <FeedbackRating v-if="result.requestId" :request-id="result.requestId" :model="model" />
     </div>
     <pre style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
 
@@ -21,6 +22,8 @@
 import { useI18n } from 'vue-i18n'
 import type { TranslateResponse } from '../types'
 import ExportBar from './ExportBar.vue'
+import FeedbackRating from './FeedbackRating.vue'
+import { reportFeedbackEvent } from '../utils/feedback'
 
 const { t } = useI18n()
 
@@ -45,6 +48,8 @@ function copyResult() {
     document.execCommand('copy')
     document.body.removeChild(textArea)
   }
+  // Usage signal for the feedback pipeline; a failure here must not affect the copy itself.
+  if (props.result.requestId) reportFeedbackEvent(props.result.requestId, 'copy')
 }
 </script>
 

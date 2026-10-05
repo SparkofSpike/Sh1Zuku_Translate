@@ -9,6 +9,8 @@ import com.shizuku.translate.repository.TranslationRecordRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 /**
  * Persists the result of a translation in a short, dedicated transaction.
  *
@@ -60,6 +62,9 @@ public class TranslationResultWriter {
         record.setModel(config.getModel());
         record.setCustomPrompt(customPrompt);
         record.setTargetLanguage(targetLanguage);
+        // Correlation id for the feedback pipeline; echoed to the client so ratings and
+        // behaviour events can join back to this translation.
+        record.setRequestId(UUID.randomUUID().toString());
         record = recordRepository.save(record);
 
         TranslateResponse response = new TranslateResponse();
@@ -67,6 +72,7 @@ public class TranslationResultWriter {
         response.setTranslatedText(translatedText);
         response.setModel(config.getModel());
         response.setCreatedAt(record.getCreatedAt());
+        response.setRequestId(record.getRequestId());
         if (usage != null) {
             response.setTokenUsage(usage);
         }

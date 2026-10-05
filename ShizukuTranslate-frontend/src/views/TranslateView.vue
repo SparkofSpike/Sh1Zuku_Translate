@@ -191,7 +191,7 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import api, { importPixivNovel, translateImages, translateImagesStream, translateStream } from '../api'
-import type { Announcement, LanguageOption, PixivNovelResponse, TranslateResponse } from '../types'
+import type { Announcement, LanguageOption, PixivNovelResponse, TokenUsage, TranslateResponse } from '../types'
 import ImagePreview from '../components/ImagePreview.vue'
 import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
@@ -267,6 +267,93 @@ const announcements = ref<Announcement[]>([])
 
 const result = ref<TranslateResponse | null>(null)
 const error = ref('')
+
+/**
+ * 最近一次成功翻译的上下文。打分与埋点全靠 requestId 关联，所以它必须活过刷新：
+ * 结果正文可以从 localStorage 回填，重译时则用它填 retranslatedFrom。
+ */
+interface TranslateContext {
+  requestId: string
+  sourceText: string
+  translatedText: string
+  model: string
+  tokenUsage?: TokenUsage
+  createdAt: string
+  fromCache?: boolean
+  fromSharedTranslation?: boolean
+  targetLanguage: string
+  savedAt: number
+}
+
+const LAST_REQUEST_ID_KEY = 'lastRequestId'
+const LAST_TRANSLATE_CONTEXT_KEY = 'lastTranslateContext'
+/** 超过一周的旧结果不再回填：模型、目标语言与站点本身都可能已经变了。 */
+const CONTEXT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+/** localStorage 容量有限，正文按约定上限截断后再存。 */
+const CONTEXT_SOURCE_LIMIT = 4000
+const CONTEXT_TRANSLATED_LIMIT = 200000
+
+/** 当前结果（含刚回填的结果）的 requestId：重译时作为 retranslatedFrom 上报。 */
+const currentRequestId = ref('')
+
+/**
+ * 记录最近一次成功翻译的上下文。整段用 try/catch 包住：localStorage 写满或被禁用时静默放弃，
+ * 不能影响已经拿到的翻译结果。
+ */
+function rememberTranslateContext(response: TranslateResponse) {
+  if (!response?.requestId) return
+  currentRequestId.value = response.requestId
+  try {
+    const savedAt = Date.now()
+    localStorage.setItem(LAST_REQUEST_ID_KEY, JSON.stringify({ requestId: response.requestId, savedAt }))
+    const context: TranslateContext = {
+      requestId: response.requestId,
+      sourceText: effectiveSourceText().slice(0, CONTEXT_SOURCE_LIMIT),
+      translatedText: (response.translatedText || '').slice(0, CONTEXT_TRANSLATED_LIMIT),
+      model: response.model,
+      tokenUsage: response.tokenUsage,
+      createdAt: response.createdAt,
+      fromCache: response.fromCache,
+      fromSharedTranslation: response.fromSharedTranslation,
+      targetLanguage: targetLanguage.value,
+      savedAt
+    }
+    localStorage.setItem(LAST_TRANSLATE_CONTEXT_KEY, JSON.stringify(context))
+  } catch (e) {
+    console.debug('无法保存上次翻译上下文', e)
+  }
+}
+
+/**
+ * 刷新后回填上一次的结果：翻译结果本身无法重算，但打分 UI 必须仍然可用，
+ * requestId 也要继续对得上（否则刷新即丢失反馈入口）。
+ */
+function restoreLastTranslateContext() {
+  try {
+    const raw = localStorage.getItem(LAST_TRANSLATE_CONTEXT_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw) as Partial<TranslateContext> | null
+    if (!saved?.requestId || !saved.translatedText) return
+    if (!saved.savedAt || Date.now() - saved.savedAt > CONTEXT_MAX_AGE_MS) return
+    currentRequestId.value = saved.requestId
+    result.value = {
+      id: undefined as unknown as number,
+      translatedText: saved.translatedText,
+      model: saved.model || '',
+      createdAt: saved.createdAt || '',
+      tokenUsage: saved.tokenUsage,
+      fromSharedTranslation: saved.fromSharedTranslation,
+      fromCache: saved.fromCache,
+      requestId: saved.requestId
+    }
+    useStreaming.value = false
+    status.value = 'idle'
+    hasReusableResult.value = false
+  } catch (e) {
+    // 旧格式或损坏的 JSON：当作没有历史结果，不影响其它初始化。
+    console.debug('无法恢复上次翻译上下文', e)
+  }
+}
 
 /**
  * True while the finished result on screen came from someone else's translation or the
@@ -351,6 +438,10 @@ interface ModelProfileOption {
 const INIT_REQUEST_TIMEOUT_MS = 15000
 
 onMounted(async () => {
+  // 先回填上一次的翻译结果，让刷新后的打分 UI 与 requestId 关联仍然可用；
+  // 这一步只读 localStorage，不参与下面的网络初始化。
+  restoreLastTranslateContext()
+
   const [meResult, presetsResult, languagesResult, profilesResult, announcementsResult] =
     await Promise.allSettled([
       api.get('/auth/me', { timeout: INIT_REQUEST_TIMEOUT_MS }),
@@ -695,6 +786,7 @@ async function translatePendingImages() {
         cancelFn = null
         imageRequestInFlight.value = false
         clearSentImages(files)
+        rememberTranslateContext(response)
       },
       (err: string) => {
         error.value = err
@@ -738,6 +830,7 @@ async function translatePendingImages() {
     result.value = response.data
     useStreaming.value = false
     clearSentImages(files)
+    rememberTranslateContext(response.data)
   } catch (e: unknown) {
     if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
     const err = e as { response?: { data?: { error?: string } }; message?: string }
@@ -752,6 +845,9 @@ async function translatePendingImages() {
 async function translate(forceRetranslate = false) {
   const requestText = effectiveSourceText()
   if (!requestText.trim() && !pendingImageFiles.value.length) return
+  // 重译埋点：必须在发起前取旧的 requestId（成功响应后 rememberTranslateContext 会覆盖它），
+  // 仅在确实存在上一次结果时携带。
+  const retranslatedFrom = forceRetranslate && currentRequestId.value ? currentRequestId.value : undefined
   if (pendingImageFiles.value.length) {
     await translatePendingImages()
     return
@@ -783,13 +879,15 @@ async function translate(forceRetranslate = false) {
         hasReusableResult.value = true
         status.value = 'idle'
         cancelFn = null
+        rememberTranslateContext(response)
       },
       (err: string) => {
         error.value = err
         status.value = 'idle'
         cancelFn = null
       },
-      forceRetranslate
+      forceRetranslate,
+      retranslatedFrom
     )
 
     cancelFn = () => {
@@ -824,10 +922,12 @@ async function translate(forceRetranslate = false) {
         customPrompt: customPrompt.value || undefined,
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
         targetLanguage: targetLanguage.value,
-        skipCache: forceRetranslate || undefined
+        skipCache: forceRetranslate || undefined,
+        retranslatedFrom
       }, { signal: controller.signal })
       result.value = res.data
       hasReusableResult.value = true
+      rememberTranslateContext(res.data)
     } catch (e: unknown) {
       if (axios.isCancel(e) || (e instanceof DOMException && e.name === 'AbortError')) return
       const err = e as { response?: { data?: { error?: string } } }

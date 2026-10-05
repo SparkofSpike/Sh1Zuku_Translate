@@ -2,6 +2,13 @@ export default {
   heading: '管理员面板',
   subtitle: '模型调用用量概览',
   refreshData: '刷新数据',
+  tabs: {
+    label: '管理员页面分区',
+    usage: '用量统计',
+    announcements: '公告管理',
+    presets: '翻译预设',
+    feedback: '质量反馈'
+  },
   loading: '加载中...',
   loadingUsage: '加载用量中...',
   loadingLogs: '加载日志中...',
@@ -25,6 +32,49 @@ export default {
     requestCount: '调用次数',
     latestUsedAt: '最新使用',
     detail: '查看详情'
+  },
+  feedback: {
+    title: '翻译质量反馈',
+    subtitle: '近 {days} 天的采样与用户反馈事件',
+    refresh: '刷新反馈数据',
+    loading: '加载反馈数据中...',
+    loadFailed: '加载反馈数据失败',
+    empty: '暂无数据',
+    summary: {
+      sampleCount: '样本数',
+      eventCount: '事件数',
+      ratingCount: '评分次数',
+      ratingAverage: '平均分',
+      lowRate: '低分率',
+      distribution: '评分分布',
+      origin: '样本来源',
+      languagePairs: '语言对',
+      models: '模型'
+    },
+    samples: {
+      title: '最近样本',
+      total: '共 {count} 条',
+      empty: '暂无样本',
+      time: '时间',
+      model: '模型',
+      origin: '采集方式',
+      length: '长度档位',
+      chars: '字符数',
+      latency: '耗时',
+      requestId: '请求 ID',
+      source: '原文',
+      target: '译文'
+    },
+    events: {
+      title: '最近事件',
+      total: '共 {count} 条',
+      empty: '暂无事件',
+      time: '时间',
+      event: '事件类型',
+      requestId: '请求 ID',
+      comment: '留言',
+      rating: '{rating} 分'
+    }
   },
   announce: {
     publish: '发布公告',

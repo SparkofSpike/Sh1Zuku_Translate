@@ -27,6 +27,12 @@ public class TranslateRequest {
      * to the server default instead of failing the request.
      */
     private String targetLanguage;
+    /**
+     * The {@code requestId} of the previous result this request is a re-translation of, when the
+     * user pressed "re-translate". Lets the feedback pipeline keep the previous sample in full
+     * (a re-translation is a dissatisfaction signal, not a random draw).
+     */
+    private String retranslatedFrom;
 
     public String getSourceText() { return sourceText; }
     public void setSourceText(String sourceText) { this.sourceText = sourceText; }
@@ -44,5 +50,7 @@ public class TranslateRequest {
     public void setSkipCache(boolean skipCache) { this.skipCache = skipCache; }
     public String getTargetLanguage() { return targetLanguage; }
     public void setTargetLanguage(String targetLanguage) { this.targetLanguage = targetLanguage; }
+    public String getRetranslatedFrom() { return retranslatedFrom; }
+    public void setRetranslatedFrom(String retranslatedFrom) { this.retranslatedFrom = retranslatedFrom; }
 
 }

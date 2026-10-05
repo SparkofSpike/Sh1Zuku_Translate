@@ -88,6 +88,27 @@ app:
     core-pool-size: ${STREAM_CORE_POOL_SIZE:4}
     max-pool-size: ${STREAM_MAX_POOL_SIZE:16}
     queue-capacity: ${STREAM_QUEUE_CAPACITY:64}
+
+  # ── Translation quality feedback pipeline ─────────────────────────────────
+  # Samples + behaviour events are appended as UTC-dated JSONL files under
+  # `dir`; the admin UI reads them back and tools/export_feedback.py exports
+  # them. Text is redacted (e-mail / phone / ID / card / URL query / mention +
+  # `redaction.extra-terms`) in the writer thread, strictly before anything is
+  # persisted. `sample-rate` keeps ordinary traffic; dissatisfaction signals
+  # (rating <= 3, re-translate, edit) keep the whole sample regardless.
+  feedback:
+    enabled: ${FEEDBACK_ENABLED:true}
+    sample-rate: ${FEEDBACK_SAMPLE_RATE:0.02}
+    daily-sample-cap: ${FEEDBACK_DAILY_CAP:5000}
+    pending-cache-size: ${FEEDBACK_PENDING_SIZE:5000}
+    pending-ttl-minutes: ${FEEDBACK_PENDING_TTL_MINUTES:1440}
+    queue-capacity: ${FEEDBACK_QUEUE_CAPACITY:20000}
+    dir: ${FEEDBACK_DIR:./data/feedback}
+    max-pending-text-chars: 20000
+    max-stored-text-chars: 50000
+    redaction:
+      enabled: true
+      extra-terms: []
   admin-usernames:
     - shizuku
     - Shizuku

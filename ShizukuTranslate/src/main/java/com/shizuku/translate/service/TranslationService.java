@@ -44,6 +44,7 @@ public class TranslationService {
     private final PromptTemplateService promptTemplateService;
     private final UsageService usageService;
     private final TranslationResultWriter resultWriter;
+    private final com.shizuku.translate.service.feedback.TranslationFeedbackService feedbackService;
 
     public TranslationService(AiModelClient aiModelClient,
                               TranslationRecordRepository recordRepository,
@@ -51,7 +52,8 @@ public class TranslationService {
                               UserService userService,
                               PromptTemplateService promptTemplateService,
                               UsageService usageService,
-                              TranslationResultWriter resultWriter) {
+                              TranslationResultWriter resultWriter,
+                              com.shizuku.translate.service.feedback.TranslationFeedbackService feedbackService) {
         this.aiModelClient = aiModelClient;
         this.recordRepository = recordRepository;
         this.cacheRepository = cacheRepository;
@@ -59,6 +61,7 @@ public class TranslationService {
         this.promptTemplateService = promptTemplateService;
         this.usageService = usageService;
         this.resultWriter = resultWriter;
+        this.feedbackService = feedbackService;
     }
 
     /**
@@ -177,6 +180,10 @@ public class TranslationService {
      */
     public TranslateResponse translate(String username, TranslateRequest request, boolean hideCustomPrompt) {
         requireSourceText(request);
+        long startedAt = System.currentTimeMillis();
+        // A re-translation is a dissatisfaction signal for the previous result: record it
+        // (and keep that sample in full) before anything else can fail.
+        feedbackService.onRetranslate(request.getRetranslatedFrom());
         User user = userService.findByUsername(username);
         String resolvedTargetLanguage = promptTemplateService.resolveTargetLanguage(request.getTargetLanguage());
 
@@ -190,7 +197,15 @@ public class TranslationService {
                     .orElse(null);
             if (shared != null) {
                 log.info("Serving shared translation for user {} from record {}", user.getId(), shared.getId());
-                return sharedResponse(shared);
+                TranslateResponse response = sharedResponse(shared);
+                // The replay creates no record of its own; a fresh correlation id still lets the
+                // result be rated, and the pending registration keeps this exact text so a low
+                // rating can retain the sample in full.
+                response.setRequestId(java.util.UUID.randomUUID().toString());
+                feedbackService.registerTranslation(response.getRequestId(), request.getSourceText(),
+                        shared.getTranslatedText(), "shared", shared.getModel(), null,
+                        resolvedTargetLanguage, System.currentTimeMillis() - startedAt, false);
+                return response;
             }
         }
 
@@ -204,9 +219,13 @@ public class TranslationService {
 
         DeepSeekResult result = aiModelClient.chat(systemPrompt, request.getSourceText(), config);
 
-        return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
+        TranslateResponse response = resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
                 request.getSourceText(), hideCustomPrompt ? null : request.getCustomPrompt(),
                 resolvedTargetLanguage);
+        feedbackService.registerTranslation(response.getRequestId(), request.getSourceText(),
+                result.getContent(), config.getProvider(), config.getModel(), config.getThinkingType(),
+                resolvedTargetLanguage, System.currentTimeMillis() - startedAt, true);
+        return response;
     }
 
     /** Builds the response for a translation reused from another user's history. */
@@ -256,6 +275,8 @@ public class TranslationService {
                                 Consumer<String> onError, Runnable onUpstreamConnected,
                                 BooleanSupplier cancelled) {
         requireSourceText(request);
+        long startedAt = System.currentTimeMillis();
+        feedbackService.onRetranslate(request.getRetranslatedFrom());
         User user = userService.findByUsername(username);
 
         String systemPrompt = promptTemplateService.buildSystemPrompt(
@@ -293,6 +314,7 @@ public class TranslationService {
                 ownRecord.setModel(config.getModel());
                 ownRecord.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
                 ownRecord.setTargetLanguage(resolvedTargetLanguage);
+                ownRecord.setRequestId(java.util.UUID.randomUUID().toString());
                 ownRecord = recordRepository.save(ownRecord);
 
                 TranslateResponse response = new TranslateResponse();
@@ -301,6 +323,10 @@ public class TranslationService {
                 response.setModel(config.getModel());
                 response.setCreatedAt(ownRecord.getCreatedAt());
                 response.setFromSharedTranslation(true);
+                response.setRequestId(ownRecord.getRequestId());
+                feedbackService.registerTranslation(ownRecord.getRequestId(), request.getSourceText(),
+                        shared.getTranslatedText(), "shared", shared.getModel(), null,
+                        resolvedTargetLanguage, System.currentTimeMillis() - startedAt, false);
                 onComplete.accept(response);
                 return;
             }
@@ -328,6 +354,7 @@ public class TranslationService {
             record.setModel(config.getModel());
             record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
             record.setTargetLanguage(promptTemplateService.resolveTargetLanguage(request.getTargetLanguage()));
+            record.setRequestId(java.util.UUID.randomUUID().toString());
             record = recordRepository.save(record);
 
             TranslateResponse response = new TranslateResponse();
@@ -336,6 +363,7 @@ public class TranslationService {
             response.setModel(config.getModel());
             response.setCreatedAt(record.getCreatedAt());
             response.setFromCache(true);
+            response.setRequestId(record.getRequestId());
             // Older cache rows may miss individual token counts; unboxing a
             // null field must not crash a cache-hit replay.
             if (cached.getTotalTokens() != null && cached.getTotalTokens() > 0) {
@@ -345,6 +373,9 @@ public class TranslationService {
                 usage.setTotalTokens(cached.getTotalTokens());
                 response.setTokenUsage(usage);
             }
+            feedbackService.registerTranslation(record.getRequestId(), request.getSourceText(),
+                    cached.getTranslatedText(), "cache", cached.getModel(), null,
+                    resolvedTargetLanguage, System.currentTimeMillis() - startedAt, false);
             onComplete.accept(response);
             return;
         }
@@ -371,6 +402,7 @@ public class TranslationService {
                     record.setModel(config.getModel());
                     record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
                     record.setTargetLanguage(resolvedTargetLanguage);
+                    record.setRequestId(java.util.UUID.randomUUID().toString());
                     record = recordRepository.save(record);
 
                     TranslateResponse response = new TranslateResponse();
@@ -378,9 +410,14 @@ public class TranslationService {
                     response.setTranslatedText(fullText.toString());
                     response.setModel(config.getModel());
                     response.setCreatedAt(record.getCreatedAt());
+                    response.setRequestId(record.getRequestId());
                     if (usage != null) {
                         response.setTokenUsage(usage);
                     }
+                    feedbackService.registerTranslation(record.getRequestId(), request.getSourceText(),
+                            fullText.toString(), config.getProvider(), config.getModel(),
+                            config.getThinkingType(), resolvedTargetLanguage,
+                            System.currentTimeMillis() - startedAt, true);
                     try {
                         TranslationCache cache = TranslationCache.builder()
                                 .userId(user.getId())

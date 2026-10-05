@@ -2,6 +2,13 @@ export default {
   heading: 'Bảng quản trị',
   subtitle: 'Tổng quan tiêu thụ khi gọi mô hình',
   refreshData: 'Làm mới dữ liệu',
+  tabs: {
+    label: 'Các khu vực của trang quản trị',
+    usage: 'Thống kê sử dụng',
+    announcements: 'Thông báo',
+    presets: 'Cài đặt dịch',
+    feedback: 'Phản hồi chất lượng'
+  },
   loading: 'Đang tải...',
   loadingUsage: 'Đang tải dữ liệu tiêu thụ...',
   loadingLogs: 'Đang tải nhật ký...',
@@ -25,6 +32,49 @@ export default {
     requestCount: 'Số lần gọi',
     latestUsedAt: 'Lần dùng gần nhất',
     detail: 'Xem chi tiết'
+  },
+  feedback: {
+    title: 'Phản hồi chất lượng dịch',
+    subtitle: 'Dữ liệu lấy mẫu và sự kiện phản hồi trong {days} ngày gần đây',
+    refresh: 'Làm mới phản hồi',
+    loading: 'Đang tải dữ liệu phản hồi...',
+    loadFailed: 'Tải dữ liệu phản hồi thất bại',
+    empty: 'Chưa có dữ liệu',
+    summary: {
+      sampleCount: 'Số mẫu',
+      eventCount: 'Số sự kiện',
+      ratingCount: 'Số lượt chấm điểm',
+      ratingAverage: 'Điểm trung bình',
+      lowRate: 'Tỷ lệ điểm thấp',
+      distribution: 'Phân bố điểm',
+      origin: 'Nguồn mẫu',
+      languagePairs: 'Cặp ngôn ngữ',
+      models: 'Mô hình'
+    },
+    samples: {
+      title: 'Mẫu gần đây',
+      total: 'Tổng cộng {count} mục',
+      empty: 'Chưa có mẫu',
+      time: 'Thời gian',
+      model: 'Mô hình',
+      origin: 'Cách lấy mẫu',
+      length: 'Nhóm độ dài',
+      chars: 'Số ký tự',
+      latency: 'Thời gian xử lý',
+      requestId: 'ID yêu cầu',
+      source: 'Nguyên văn',
+      target: 'Bản dịch'
+    },
+    events: {
+      title: 'Sự kiện gần đây',
+      total: 'Tổng cộng {count} mục',
+      empty: 'Chưa có sự kiện',
+      time: 'Thời gian',
+      event: 'Loại sự kiện',
+      requestId: 'ID yêu cầu',
+      comment: 'Bình luận',
+      rating: 'Điểm {rating}'
+    }
   },
   announce: {
     publish: 'Đăng thông báo',

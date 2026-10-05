@@ -8,6 +8,7 @@
         <button v-if="streamingText" @click="copyStreaming" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
         <ExportBar v-if="exportText" :text="exportText" :model="model" />
       </div>
+      <FeedbackRating v-if="finalRequestId" :request-id="finalRequestId" :model="model" />
     </div>
     <pre v-if="streamingText" style="margin-top: 12px; white-space: pre-wrap;">{{ streamingText }}</pre>
     <pre v-else-if="result" style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
@@ -23,6 +24,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TranslateResponse } from '../types'
 import ExportBar from './ExportBar.vue'
+import FeedbackRating from './FeedbackRating.vue'
+import { reportFeedbackEvent } from '../utils/feedback'
 
 // Shares the `components.translateResult.*` keys with TranslateResult.vue: same result block.
 const { t } = useI18n()
@@ -43,6 +46,10 @@ const badgesFinal = computed(() => !!props.result && (!props.streamingText || pr
 const showSharedBadge = computed(() => badgesFinal.value && !!props.result?.fromSharedTranslation)
 const showCacheBadge = computed(() => badgesFinal.value && !props.result?.fromSharedTranslation && !!props.result?.fromCache)
 
+// Rating needs a finished result: mid-stream the `done` event (and with it the requestId) has
+// not arrived yet, so there is nothing to attach a score to.
+const finalRequestId = computed(() => (badgesFinal.value && props.result?.requestId) || '')
+
 function copyStreaming() {
   const text = props.streamingText
   if (!text) return
@@ -58,6 +65,8 @@ function copyStreaming() {
     document.execCommand('copy')
     document.body.removeChild(textArea)
   }
+  // Usage signal for the feedback pipeline; only possible once the final result is known.
+  if (props.result?.requestId) reportFeedbackEvent(props.result.requestId, 'copy')
 }
 </script>
 

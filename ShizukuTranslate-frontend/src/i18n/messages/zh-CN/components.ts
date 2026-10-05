@@ -15,6 +15,15 @@ export default {
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Token 用量：输入 {prompt} {'|'} 输出 {completion} {'|'} 合计 {total}"
   },
+  // 翻译质量反馈：FeedbackRating.vue（五档评分 + 低分原因标签）。
+  feedbackRating: {
+    label: '这对翻译质量如何？',
+    accuracy: '准确',
+    terminology: '术语',
+    format: '格式',
+    tone: '语气',
+    other: '其他'
+  },
   export: {
     label: '导出',
     exporting: '导出中…',

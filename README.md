@@ -22,6 +22,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 - **Token usage tracking** for live model calls, with personal totals and administrator charts, per-user summaries, and detailed logs.
 - **Markdown announcements** rendered in the web application: the panel lists every announcement in a scrollable region, newest first; long announcements fold to five lines until expanded, and the whole panel can be collapsed. Announcement content is stored as Markdown and raw HTML is not executed.
 - **Feedback submission** through the authenticated survey endpoint.
+- **Translation quality feedback pipeline**: every displayed result carries a `requestId`, so a low-key one-click rating widget (one click submits 1–5; scores of 3 or below offer optional reason tags) and behaviour events (copy / re-translate / edit) all join back to the exact translation. Ordinary traffic is rate-sampled (2% by default) while dissatisfaction signals — a low rating, a re-translation, an edit — retain that sample in full. All text is redacted (e-mail, phone, Chinese ID, bank card, URL query values, mentions, plus a configurable term list) before anything is persisted, and everything is stored as UTC-dated JSONL under `app.feedback.dir`. The administrator panel's **Feedback** tab reads it back, and `tools/export_feedback.py` + `tools/verify_feedback_export.py` export and validate a date range.
 
 ### Browser extension
 
@@ -307,6 +308,10 @@ The backend uses an H2 file database with Hibernate schema updates enabled. The 
 
 Live model responses that report token usage are logged with the provider, model, input tokens, output tokens, total tokens, source type, estimate flag, and timestamp. Cache hits return cached translations without creating a new live provider usage event. On startup, the historical migration service can backfill cache usage and estimate older translation records that do not contain provider usage data; estimated entries are marked separately in the administrator log view.
 
+### Translation feedback data
+
+The feedback pipeline appends two JSONL streams under `app.feedback.dir` (default `./data/feedback`), dated by UTC day: `samples_YYYYMMDD.jsonl` (redacted source/target pairs with engine, model, latency and sampling origin) and `events_YYYYMMDD.jsonl` (ratings and behaviour events). Sampling rate, daily cap, pending-retention window, queue size, text truncation and the redaction term list are configured under `app.feedback.*` in `application.yml`. Redaction runs in the writer thread immediately before anything touches disk — never at export time. A rating at or below 3, a re-translation or an edit promotes the pending sample to a full, always-kept row regardless of the sample rate. The admin panel's Feedback tab reads the same files through `/admin/feedback/*`, and `tools/export_feedback.py` merges a date range into per-day `feedback_YYYYMMDD.jsonl` files plus a `summary.json` (rate events deduplicated per request+device), which `tools/verify_feedback_export.py` validates line by line.
+
 ### Main API routes
 
 All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use `Authorization: Bearer <token>`. The browser extension uses `X-API-Key`.
@@ -347,6 +352,11 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 | `GET /announcements/pending` | Authenticated | Return announcements flagged as requiring confirmation that the current user has not confirmed yet. |
 | `POST /announcements/{id}/acknowledge` | Authenticated | Record that the current user confirmed the announcement (idempotent). |
 | `POST /survey` | Authenticated | Submit translation and experience feedback. |
+| `POST /feedback/rate` | Public | Record one anonymous rating (`requestId`, `rating` 1–5, optional `tags`/`comment`, `deviceFp`). Re-submitting an unchanged value is ignored; a change overwrites. Frequency-capped per device. |
+| `POST /feedback/event` | Public | Record a behaviour event (`copy`, `retranslate`, `edit`) against a `requestId`. |
+| `GET /admin/feedback/summary` | Administrator | Aggregate sample / event / rating counts over `days` (default 7). Ratings are deduplicated per (request, device), latest wins. |
+| `GET /admin/feedback/samples` | Administrator | Return the newest samples, most recent first (`limit`, default 50, max 200). |
+| `GET /admin/feedback/events` | Administrator | Return the newest behaviour events, most recent first (`limit`, default 50, max 200). |
 | `GET /stats/users` | Authenticated | Return the registered-user count. |
 | `GET /admin/usage` | Administrator | Return global token totals, charts, and per-user summaries. |
 | `GET /admin/usage/users/{userId}` | Administrator | Return one user's token log. |
@@ -365,7 +375,7 @@ All backend API routes use the `/api/v1` prefix. JWT-authenticated requests use 
 A push/PR triggered GitHub Actions workflow (`.github/workflows/test.yml`) runs the backend tests and the frontend typecheck plus unit tests on every change; the deploy workflow remains manually triggered.
 
 ```powershell
-# Backend (JUnit, 54 tests)
+# Backend (JUnit, 119 tests)
 cd ShizukuTranslate
 mvn test
 
