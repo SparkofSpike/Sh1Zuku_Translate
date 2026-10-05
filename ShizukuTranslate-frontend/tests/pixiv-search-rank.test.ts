@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, normalizeTagForSearch, PRECISE_VARIANT_BONUS, scoreCandidate, tagSearchKeywords, titleMatches, titleSearchChunk } from '../src/utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, normalizeTagForSearch, PRECISE_VARIANT_BONUS, scoreCandidate, tagSearchKeywords, titleMatches, titleSearchChunk, titleSearchKeywords } from '../src/utils/pixivSearch'
 import type { PixivExtractResponse, PixivSearchItem } from '../src/types'
 
 /**
@@ -57,6 +57,15 @@ describe('screenshot search ranking', () => {
   it('extracts the longest clean title run for title-mode search', () => {
     expect(titleSearchChunk('第四篇（中） 未知的命运，未尽的余韵，未卜的前路--X.命运之轮（逆位）')).toBe('未知的命运')
     expect(titleSearchChunk('私の幸せな日々')).toBe('私の幸せな日々')
+  })
+
+  it('builds title search keywords: the full title first, the longest run as fallback', () => {
+    // The regression case: the model read only the tail of the title. The full string as
+    // read is searched first (Pixiv matches it as-is), and the longest clean run backs it up.
+    expect(titleSearchKeywords('紅ずきんとグリムの秘話　ラドヴィッジ市街上層にて'))
+      .toEqual(['紅ずきんとグリムの秘話　ラドヴィッジ市街上層にて', 'ラドヴィッジ市街上層にて'])
+    expect(titleSearchKeywords('私の幸せな日々')).toEqual(['私の幸せな日々'])
+    expect(titleSearchKeywords('')).toEqual([])
   })
 })
 

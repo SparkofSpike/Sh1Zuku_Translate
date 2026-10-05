@@ -140,15 +140,14 @@ public class PixivNovelService {
     }
 
     /**
-     * Searches Pixiv novels by keyword (the screenshot-import flow searches with tags first and
-     * falls back to a title fragment). Returns the first page of results; an empty list when
-     * Pixiv matched nothing. R-18 results only appear when a session cookie is configured.
+     * Searches Pixiv novels by keyword (used by the screenshot-import flow and the manual
+     * search box). Returns the first page of results; an empty list when Pixiv matched
+     * nothing. R-18 results only appear when a session cookie is configured.
      *
-     * @param mode {@code "tag"} (default) searches tags with partial matching, which is what
-     *             Pixiv's own UI does and what reliably matches multi-tag AND queries;
-     *             {@code "title"} searches titles/summaries and only matches when the keyword
-     *             is a clean substring — mixed title+tag strings match neither mode, which is
-     *             exactly the bug this parameter exists to avoid.
+     * <p>Every query goes through Pixiv's default novel-search mode {@code s_tag}, which
+     * matches tags, titles and descriptions with partial matching — the same mode pixiv's
+     * own search box uses. See {@link #sModeValue(String)} for why the other values are
+     * not used.
      */
     public List<PixivSearchItem> searchNovels(String keyword) {
         return searchNovels(keyword, "tag");
@@ -183,9 +182,17 @@ public class PixivNovelService {
         return parseSearchResults(raw);
     }
 
-    /** Maps the public mode name onto Pixiv's {@code s_mode} value. */
+    /**
+     * Maps the public mode name onto Pixiv's {@code s_mode} value. Deliberately a single
+     * mapping: for novels, {@code s_tag} matches tags + title + description with partial
+     * matching and is the only mode that finds ordinary keywords. The two previously used
+     * values were wrong and made long title keywords unfindable — verified against the
+     * live API on 2026-10-06: a 12-character title fragment returns the target work on
+     * {@code s_tag}, 0 results on {@code s_tag_full} (exact-tag matching) and 0 on
+     * {@code s_tc} (body-text matching, which also chokes on long keywords).
+     */
     static String sModeValue(String mode) {
-        return "title".equalsIgnoreCase(mode) ? "s_tc" : "s_tag_full";
+        return "s_tag";
     }
 
     /** Parses {@code body.novel.data[]} out of the search response; malformed input yields an empty list. */

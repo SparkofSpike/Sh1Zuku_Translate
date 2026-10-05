@@ -63,12 +63,15 @@ class PixivSearchParsingTest {
 
     @Test
     void mapsPublicModeNamesToPixivSModes() {
-        // Tag mode (partial-match) is the default: it is what Pixiv's own UI uses and the only
-        // mode that reliably matches multi-tag AND queries.
-        assertEquals("s_tag_full", PixivNovelService.sModeValue(null));
-        assertEquals("s_tag_full", PixivNovelService.sModeValue("tag"));
-        assertEquals("s_tag_full", PixivNovelService.sModeValue("anything"));
-        assertEquals("s_tc", PixivNovelService.sModeValue("title"));
-        assertEquals("s_tc", PixivNovelService.sModeValue("TITLE"));
+        // Pixiv's novel search has one useful mode: s_tag matches tags, title and description
+        // with partial matching (the mode pixiv's own search box sends). The old values were
+        // wrong: s_tag_full is exact-tag matching and s_tc searches the body text — long title
+        // keywords return 0 results on both (verified against the live API on 2026-10-06:
+        // a 12-character title fragment finds the work on s_tag only).
+        assertEquals("s_tag", PixivNovelService.sModeValue(null));
+        assertEquals("s_tag", PixivNovelService.sModeValue("tag"));
+        assertEquals("s_tag", PixivNovelService.sModeValue("anything"));
+        assertEquals("s_tag", PixivNovelService.sModeValue("title"));
+        assertEquals("s_tag", PixivNovelService.sModeValue("TITLE"));
     }
 }

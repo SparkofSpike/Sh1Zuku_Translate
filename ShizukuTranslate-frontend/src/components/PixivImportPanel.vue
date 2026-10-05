@@ -199,7 +199,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { extractPixivNovelInfo, importPixivNovel, searchPixivNovels } from '../api'
-import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, scoreCandidate, tagSearchKeywords, titleSearchChunk } from '../utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, scoreCandidate, tagSearchKeywords, titleSearchKeywords } from '../utils/pixivSearch'
 import type {
   PixivExtractResponse,
   PixivNovelResponse,
@@ -549,10 +549,11 @@ async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivS
 
 /**
  * Auto search after a screenshot was recognised. All strategies fire in parallel — the two
- * strongest tags ANDed, the first tag alone, and the longest title run in title mode — then
- * the results are merged, deduplicated and ranked by scoreCandidate (title match first, tag
- * overlap second). A top candidate with a title match is imported straight away; otherwise
- * the ranked list is shown for one-click confirmation. The user never picks a search mode.
+ * strongest tags ANDed, the first tag alone, and the full title plus its longest clean run
+ * — then the results are merged, deduplicated and ranked by scoreCandidate (title match
+ * first, tag overlap second). A top candidate with a title match is imported straight away;
+ * otherwise the ranked list is shown for one-click confirmation. The user never picks a
+ * search mode.
  */
 async function autoSearch(info: PixivExtractResponse) {
   const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
@@ -560,7 +561,7 @@ async function autoSearch(info: PixivExtractResponse) {
   // Search by title only when the recognised "title" is genuinely a title — the model
   // sometimes promotes a tag (R-18, BLACKSOULSⅡ) to the title field, and searching that
   // would pull in the whole tag's catalogue instead of the work.
-  const chunk = isUsableTitle(info.title, tags) ? titleSearchChunk(info.title) : ''
+  const titleKeywords = isUsableTitle(info.title, tags) ? titleSearchKeywords(info.title) : []
   const searches: Array<{ promise: Promise<PixivSearchItem[]>; trusted: boolean }> = []
   const planTag = (keywords: string[]) => {
     for (const keyword of keywords) {
@@ -575,7 +576,9 @@ async function autoSearch(info: PixivExtractResponse) {
   } else if (concrete.length === 1) {
     planTag(tagSearchKeywords(concrete))
   }
-  if (chunk) searches.push({ promise: runSearch(chunk, 'title'), trusted: false })
+  for (const keyword of titleKeywords) {
+    searches.push({ promise: runSearch(keyword, 'title'), trusted: false })
+  }
   if (!searches.length) {
     candidates.value = []
     searchPerformed.value = true
@@ -613,7 +616,7 @@ async function autoSearch(info: PixivExtractResponse) {
       .map(entry => ({ item: entry.item, score: scoreCandidate(info, entry.item, entry.trusted) }))
       .sort((a, b) => b.score - a.score)
     candidates.value = ranked.map(entry => entry.item).slice(0, MAX_CANDIDATES)
-    searchKeyword.value = concrete[0] || chunk
+    searchKeyword.value = concrete[0] || titleKeywords[0] || ''
     searchPerformed.value = true
     const top = ranked[0]
     if (top && top.score >= AUTO_IMPORT_SCORE) {
@@ -633,7 +636,8 @@ async function autoSearch(info: PixivExtractResponse) {
   }
 }
 
-/** Manual search from the keyword box: tags first, titles as an automatic fallback. */
+/** Manual search from the keyword box: a single query — Pixiv's own search matches
+ *  keywords, title fragments and tag words alike in its default mode. */
 async function searchByKeyword() {
   const keyword = searchKeyword.value.trim()
   if (!keyword || searching.value) return
@@ -642,12 +646,8 @@ async function searchByKeyword() {
   searchError.value = ''
   candidates.value = []
   try {
-    let items = await runSearch(keyword, 'tag')
+    const items = await runSearch(keyword, 'tag')
     if (epoch !== shotEpoch) return
-    if (!items.length) {
-      items = await runSearch(keyword, 'title')
-      if (epoch !== shotEpoch) return
-    }
     candidates.value = items
     searchInfo.value = items.length
       ? t('translate.pixiv.searchMatched', { keyword, count: items.length })

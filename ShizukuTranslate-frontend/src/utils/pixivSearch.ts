@@ -19,6 +19,20 @@ export function titleSearchChunk(title: string): string {
   return parts.reduce((longest, part) => (part.length > longest.length ? part : longest))
 }
 
+/**
+ * Keywords used to search for a recognised title. The full title goes first — Pixiv's
+ * default novel search matches it as-is, spaces and all — and the longest clean run is
+ * kept as a second attempt for titles wrapped in heavy decoration. (Searching one long
+ * fragment alone was the old behaviour; it silently found nothing for titles the model
+ * read with a prefix, because Pixiv never received the full string.)
+ */
+export function titleSearchKeywords(title: string): string[] {
+  const full = (title || '').trim()
+  if (!full) return []
+  const chunk = titleSearchChunk(full)
+  return chunk && chunk !== full ? [full, chunk] : [full]
+}
+
 /** Lower-cased title with spaces and punctuation removed, for tolerant comparison. */
 export function normalizeTitle(value: string): string {
   return (value || '')
