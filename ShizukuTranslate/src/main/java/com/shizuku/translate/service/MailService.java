@@ -54,4 +54,31 @@ public class MailService {
             throw new BusinessException("验证码发送失败，请稍后重试或联系管理员");
         }
     }
+
+    /**
+     * Sends a plain-text alert to an administrator address. Deliberately never throws — an
+     * alert about a broken integration must not itself become a failure inside a scheduled
+     * check. Returns whether the mail actually went out.
+     */
+    public boolean sendAdminAlert(String toEmail, String subject, String body) {
+        if (!props.isConfigured()) {
+            log.warn("邮件服务未配置，无法发送告警：{}", subject);
+            return false;
+        }
+        String from = StringUtils.hasText(props.getFrom()) ? props.getFrom() : props.getUsername();
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, "UTF-8");
+            helper.setFrom(from);
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            helper.setText(body, false);
+            mailSender.send(message);
+            log.info("Admin alert sent to {}", toEmail);
+            return true;
+        } catch (MailException | MessagingException e) {
+            log.error("Failed to send admin alert to {}", toEmail, e);
+            return false;
+        }
+    }
 }

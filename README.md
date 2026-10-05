@@ -277,7 +277,7 @@ Sh1Zuku_Translate/
 | `STREAM_CORE_POOL_SIZE` | Core threads for streaming translations. Default: `4`. |
 | `STREAM_MAX_POOL_SIZE` | Maximum streaming translation threads. Default: `16`. |
 | `STREAM_QUEUE_CAPACITY` | Queued streaming requests before rejection. Default: `64`; saturation returns a clear request-rejection error. |
-| `PIXIV_SESSION_COOKIE` | `PHPSESSID` value of a server-side Pixiv account (with R-18 display enabled in that account's settings). With it set, the importer can fetch login-gated (R-18) novels and the search endpoint returns R-18 results; blank means public works only. The value is only ever sent to `pixiv.net`. |
+| `PIXIV_SESSION_COOKIE` | `PHPSESSID` value of a server-side Pixiv account (with R-18 display enabled in that account's settings). With it set, the importer can fetch login-gated (R-18) novels and the search endpoint returns R-18 results; blank means public works only. The value is only ever sent to `pixiv.net`. A daily health check probes the session and e-mails the administrators (once per outage, auto-cleared on recovery) when it expires — no silent breakage. |
 | `VITE_API_BASE_URL` | Frontend build/development API base URL override. Default: `http://localhost:5566/api/v1`. |
 
 Other runtime defaults in `application.yml`:
