@@ -49,8 +49,11 @@ export function normalizeTag(tag: string): string {
  * Generic catch-alls (R-18 etc.) are excluded from scoring: every second work carries them,
  * so they would flatten the ranking instead of ordering it. Both sides are digit-normalised
  * so a tag read as BLACKSOULSⅡ still matches a work tagged BLACKSOULS2.
+ *
+ * @param trusted true when the candidate was reached through a digit-normalised (trusted)
+ *                keyword; such hits get a small bonus over fuzzy-search neighbours.
  */
-export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem): number {
+export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem, trusted = false): number {
   const titleScore = titleMatches(info.title, item.title) ? 1000 : 0
   const scoreTags = concreteTags(info.tags || [])
   const wanted = new Set(scoreTags.map(tag => normalizeTagForSearch(normalizeTag(tag))).filter(Boolean))
@@ -59,7 +62,7 @@ export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem
   for (const tag of wanted) {
     if (present.has(tag)) overlap++
   }
-  return titleScore + Math.min(overlap, 9) * 10
+  return titleScore + Math.min(overlap, 9) * 10 + (trusted ? PRECISE_VARIANT_BONUS : 0)
 }
 
 /** A candidate scoring at least this much carries a title match: import it directly. */
@@ -106,15 +109,29 @@ export function concreteTags(tags: string[]): string[] {
 }
 
 /**
- * Keywords to try for a set of tags: the joined tags as-is, plus the digit-normalised form
- * when it differs. Both variants are searched and merged, so either transcription is covered.
+ * Keywords to try for a set of tags. When the digits differ, the digit-normalised form comes
+ * first: the vision model's roman/full-width digits are the suspect transcription, so the
+ * ASCII form is the more trustworthy query (and its hits rank higher in the merge).
  */
 export function tagSearchKeywords(tags: string[]): string[] {
   const joined = (tags || []).join(' ').trim()
   if (!joined) return []
   const normalized = normalizeTagForSearch(joined)
-  return normalized !== joined ? [joined, normalized] : [joined]
+  return normalized !== joined ? [normalized, joined] : [joined]
 }
+
+/**
+ * Whether a search keyword is already in its trusted (digit-normalised) form. Hits from such
+ * queries rank slightly higher: a query that needed digit correction may have matched
+ * Pixiv's fuzzy search, and works merely *tagged* with the roman form are not what the
+ * user's screenshot actually showed.
+ */
+export function isTrustedKeyword(keyword: string): boolean {
+  return !!keyword && normalizeTagForSearch(keyword) === keyword
+}
+
+/** Candidates reached through a trusted keyword get this small ranking bonus. */
+export const PRECISE_VARIANT_BONUS = 5
 
 /**
  * Whether the recognised title is worth a title-mode search. A "title" that just repeats one

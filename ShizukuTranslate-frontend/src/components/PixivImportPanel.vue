@@ -199,7 +199,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { extractPixivNovelInfo, importPixivNovel, searchPixivNovels } from '../api'
-import { AUTO_IMPORT_SCORE, concreteTags, isUsableTitle, scoreCandidate, tagSearchKeywords, titleSearchChunk } from '../utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, scoreCandidate, tagSearchKeywords, titleSearchChunk } from '../utils/pixivSearch'
 import type {
   PixivExtractResponse,
   PixivNovelResponse,
@@ -561,22 +561,21 @@ async function autoSearch(info: PixivExtractResponse) {
   // sometimes promotes a tag (R-18, BLACKSOULSⅡ) to the title field, and searching that
   // would pull in the whole tag's catalogue instead of the work.
   const chunk = isUsableTitle(info.title, tags) ? titleSearchChunk(info.title) : ''
-  const searches: Array<Promise<PixivSearchItem[]>> = []
-  if (concrete.length >= 2) {
-    for (const keyword of tagSearchKeywords(concrete.slice(0, 2))) {
-      searches.push(runSearch(keyword, 'tag'))
-    }
-    // The AND can zero out when one tag rides only on part of the series; also try the
-    // most specific single tag.
-    for (const keyword of tagSearchKeywords([concrete[0]])) {
-      searches.push(runSearch(keyword, 'tag'))
-    }
-  } else if (concrete.length === 1) {
-    for (const keyword of tagSearchKeywords(concrete)) {
-      searches.push(runSearch(keyword, 'tag'))
+  const searches: Array<{ promise: Promise<PixivSearchItem[]>; trusted: boolean }> = []
+  const planTag = (keywords: string[]) => {
+    for (const keyword of keywords) {
+      searches.push({ promise: runSearch(keyword, 'tag'), trusted: isTrustedKeyword(keyword) })
     }
   }
-  if (chunk) searches.push(runSearch(chunk, 'title'))
+  if (concrete.length >= 2) {
+    planTag(tagSearchKeywords(concrete.slice(0, 2)))
+    // The AND can zero out when one tag rides only on part of the series; also try the
+    // most specific single tag.
+    planTag(tagSearchKeywords([concrete[0]]))
+  } else if (concrete.length === 1) {
+    planTag(tagSearchKeywords(concrete))
+  }
+  if (chunk) searches.push({ promise: runSearch(chunk, 'title'), trusted: false })
   if (!searches.length) {
     candidates.value = []
     searchPerformed.value = true
@@ -587,14 +586,18 @@ async function autoSearch(info: PixivExtractResponse) {
   searchError.value = ''
   candidates.value = []
   try {
-    const settled = await Promise.allSettled(searches)
+    const settled = await Promise.allSettled(searches.map(entry => entry.promise))
     if (epoch !== shotEpoch) return
-    const byId = new Map<string, PixivSearchItem>()
+    const byId = new Map<string, { item: PixivSearchItem; trusted: boolean }>()
     let failures = 0
-    for (const result of settled) {
+    for (let i = 0; i < settled.length; i++) {
+      const result = settled[i]
+      const trusted = searches[i].trusted
       if (result.status === 'fulfilled') {
         for (const item of result.value) {
-          if (!byId.has(item.id)) byId.set(item.id, item)
+          const existing = byId.get(item.id)
+          if (!existing) byId.set(item.id, { item, trusted })
+          else if (trusted) existing.trusted = true
         }
       } else {
         failures++
@@ -607,7 +610,7 @@ async function autoSearch(info: PixivExtractResponse) {
       return
     }
     const ranked = [...byId.values()]
-      .map(item => ({ item, score: scoreCandidate(info, item) }))
+      .map(entry => ({ item: entry.item, score: scoreCandidate(info, entry.item, entry.trusted) }))
       .sort((a, b) => b.score - a.score)
     candidates.value = ranked.map(entry => entry.item).slice(0, MAX_CANDIDATES)
     searchKeyword.value = concrete[0] || chunk

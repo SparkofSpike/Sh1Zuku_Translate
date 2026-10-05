@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AUTO_IMPORT_SCORE, concreteTags, isUsableTitle, normalizeTagForSearch, scoreCandidate, tagSearchKeywords, titleMatches, titleSearchChunk } from '../src/utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isTrustedKeyword, isUsableTitle, normalizeTagForSearch, PRECISE_VARIANT_BONUS, scoreCandidate, tagSearchKeywords, titleMatches, titleSearchChunk } from '../src/utils/pixivSearch'
 import type { PixivExtractResponse, PixivSearchItem } from '../src/types'
 
 /**
@@ -67,10 +67,30 @@ describe('tag normalisation and generic filtering (the R-18 / BLACKSOULSⅡ regr
     expect(normalizeTagForSearch('１２３')).toBe('123')
   })
 
-  it('builds both keyword variants when digits differ', () => {
-    expect(tagSearchKeywords(['BLACKSOULSⅡ'])).toEqual(['BLACKSOULSⅡ', 'BLACKSOULS2'])
+  it('builds both keyword variants when digits differ, trusted form first', () => {
+    expect(tagSearchKeywords(['BLACKSOULSⅡ'])).toEqual(['BLACKSOULS2', 'BLACKSOULSⅡ'])
     expect(tagSearchKeywords(['私の幸せな日々'])).toEqual(['私の幸せな日々'])
     expect(tagSearchKeywords([])).toEqual([])
+  })
+
+  it('flags which keywords are trustworthy', () => {
+    expect(isTrustedKeyword('BLACKSOULS2')).toBe(true)
+    expect(isTrustedKeyword('私の幸せな日々')).toBe(true)
+    expect(isTrustedKeyword('BLACKSOULSⅡ')).toBe(false)
+    expect(isTrustedKeyword('VOL.Ⅲ')).toBe(false)
+  })
+
+  it('ranks a trusted-query hit above a work merely tagged with the roman form', () => {
+    // The regression pair from production: 28610144 literally carries the roman tag, while
+    // 28032455 is the work the screenshot actually showed (tagged BLACKSOULS2). Both overlap
+    // one recognised tag; the trusted hit must come first.
+    const info: PixivExtractResponse = { title: '', author: '', tags: ['R-18', 'BLACKSOULSⅡ'], summary: '' }
+    const romanTagged = item({ id: '28610144', title: '第 二 乃幕 【確認】', tags: ['BLACKSOULSⅡ'] })
+    const target = item({ id: '28032455', title: '私の幸せな日々', tags: ['BLACKSOULS2'] })
+    const scoreRoman = scoreCandidate(info, romanTagged, false)
+    const scoreTarget = scoreCandidate(info, target, true)
+    expect(scoreTarget).toBeGreaterThan(scoreRoman)
+    expect(scoreTarget - scoreRoman).toBe(PRECISE_VARIANT_BONUS)
   })
 
   it('filters generic tags from search planning', () => {
@@ -78,7 +98,7 @@ describe('tag normalisation and generic filtering (the R-18 / BLACKSOULSⅡ regr
     // concrete tag alone is the query that actually finds it.
     const concrete = concreteTags(['R-18', 'BLACKSOULSⅡ'])
     expect(concrete).toEqual(['BLACKSOULSⅡ'])
-    expect(tagSearchKeywords(concrete)).toEqual(['BLACKSOULSⅡ', 'BLACKSOULS2'])
+    expect(tagSearchKeywords(concrete)).toEqual(['BLACKSOULS2', 'BLACKSOULSⅡ'])
     // All-generic input falls back to the original list rather than searching nothing.
     expect(concreteTags(['R-18', 'オリジナル'])).toEqual(['R-18', 'オリジナル'])
   })
