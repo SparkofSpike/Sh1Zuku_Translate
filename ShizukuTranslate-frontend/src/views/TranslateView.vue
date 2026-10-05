@@ -9,15 +9,32 @@
   </div>
   <div v-else class="translate-layout" :class="{ 'has-announcements': announcements.length > 0 }">
 
+    <!-- Page-top notice, then the import panel, then the translate card: the page reads
+         notice → import → translate, top to bottom. -->
+    <div class="card open-source-banner">
+      {{ t('translate.openSource.lead') }}<a
+        href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Sh1Zuku_Translate</a>{{ t('translate.openSource.tail') }}
+      <br />{{ t('translate.openSource.plugin') }}
+    </div>
+
+    <PixivImportPanel
+      class="pixiv-panel"
+      :include-metadata="includePixivMetadata"
+      :model="model"
+      :model-profile-id="modelProfileId"
+      :custom-prompt="customPrompt"
+      :presets="selectedPresets"
+      :target-language="targetLanguage"
+      :busy="status !== 'idle'"
+      @update:include-metadata="includePixivMetadata = $event"
+      @imported="onPixivImported"
+      @cleared="onPixivCleared"
+    />
+
     <div class="card translation-card">
-      <div class="open-source-banner">
-        {{ t('translate.openSource.lead') }}<a
-          href="https://github.com/SparkofSpike/Sh1Zuku_Translate"
-          target="_blank"
-          rel="noopener noreferrer"
-        >Sh1Zuku_Translate</a>{{ t('translate.openSource.tail') }}
-        <br />{{ t('translate.openSource.plugin') }}
-      </div>
 
       <h2 style="margin-top:0; font-weight:600;">{{ t('translate.heading') }}</h2>
 
@@ -115,20 +132,6 @@
     <SseTranslateResult v-if="useStreaming" :streaming-text="streamingText" :result="streamingResult" :model="model" />
     <TranslateResult v-else-if="result" :result="result" :model="model" />
     </div>
-
-    <PixivImportPanel
-      class="pixiv-panel"
-      :include-metadata="includePixivMetadata"
-      :model="model"
-      :model-profile-id="modelProfileId"
-      :custom-prompt="customPrompt"
-      :presets="selectedPresets"
-      :target-language="targetLanguage"
-      :busy="status !== 'idle'"
-      @update:include-metadata="includePixivMetadata = $event"
-      @imported="onPixivImported"
-      @cleared="onPixivCleared"
-    />
 
     <AnnouncementPanel
       v-if="announcements.length"
@@ -921,7 +924,7 @@ async function translate(forceRetranslate = false) {
 
 .translation-card {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 3;
   min-width: 0;
   width: 100%;
   max-width: 800px;
@@ -930,13 +933,18 @@ async function translate(forceRetranslate = false) {
 
 .announcement-right {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
 }
 
+/* Page-top notice: an independent card above the import panel and the translate card. */
 .open-source-banner {
-  margin: -4px 0 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-border);
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  max-width: 800px;
+  margin: 0;
+  padding: 14px 20px;
+  box-sizing: border-box;
   color: var(--color-muted);
   font-size: 13px;
 }
@@ -996,6 +1004,11 @@ textarea {
     grid-row: 1;
   }
 
+  .translate-layout.has-announcements .open-source-banner {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
   .translate-layout.has-announcements .pixiv-panel {
     grid-column: 1;
     grid-row: 3;
@@ -1003,7 +1016,7 @@ textarea {
 
   .translate-layout.has-announcements .translation-card {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 4;
   }
 }
 
