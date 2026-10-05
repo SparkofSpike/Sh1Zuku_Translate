@@ -44,6 +44,8 @@ export default {
     searchAction: 'Search again',
     modeTag: 'By tag',
     modeTitle: 'By title',
+    searchMatched: 'Searched {keyword} by {mode}: {count} result(s)',
+    searchTriedAll: 'Tried {count} search strategies, but nothing matched',
     searching: 'Searching…',
     searchFailed: 'Search failed — please try again',
     searchNoResult: 'No matching work found — try a different keyword',

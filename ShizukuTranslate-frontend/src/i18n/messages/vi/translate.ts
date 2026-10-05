@@ -44,6 +44,8 @@ export default {
     searchAction: 'Tìm lại',
     modeTag: 'Theo thẻ',
     modeTitle: 'Theo tiêu đề',
+    searchMatched: 'Đã tìm "{keyword}" theo {mode}: {count} kết quả',
+    searchTriedAll: 'Đã thử {count} cách tìm kiếm nhưng không có kết quả',
     searching: 'Đang tìm…',
     searchFailed: 'Tìm kiếm thất bại — vui lòng thử lại',
     searchNoResult: 'Không tìm thấy tác phẩm phù hợp — thử từ khoá khác nhé',

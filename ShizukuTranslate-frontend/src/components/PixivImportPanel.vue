@@ -130,7 +130,9 @@
 
           <p v-if="searching" class="pixiv-info">{{ t('translate.pixiv.searching') }}</p>
           <p v-else-if="searchError" class="pixiv-error">{{ searchError }}</p>
-          <ul v-else-if="candidates.length" class="pixiv-candidates">
+          <template v-else>
+            <p v-if="searchInfo" class="pixiv-search-info">{{ searchInfo }}</p>
+            <ul v-if="candidates.length" class="pixiv-candidates">
             <li v-for="item in candidates" :key="item.id" class="pixiv-candidate">
               <div class="pixiv-candidate-body">
                 <div class="pixiv-candidate-title">
@@ -151,7 +153,7 @@
               >{{ importingId === item.id ? t('translate.pixiv.loading') : t('translate.pixiv.candidateImport') }}</button>
             </li>
           </ul>
-          <p v-else-if="searchPerformed" class="pixiv-info">{{ t('translate.pixiv.searchNoResult') }}</p>
+          </template>
         </div>
       </template>
 
@@ -359,6 +361,8 @@ const searchKeyword = ref('')
 const searching = ref(false)
 const searchError = ref('')
 const searchPerformed = ref(false)
+/** One-line explanation of the last search: which strategy matched, or that all failed. */
+const searchInfo = ref('')
 const candidates = ref<PixivSearchItem[]>([])
 const importingId = ref('')
 
@@ -369,11 +373,11 @@ function isImageFile(file: File) {
 }
 
 /**
- * Document-level paste handling for screenshots. Only image pastes are considered at all, and
- * when the focus is in a text field the event is left alone: the translate textarea already
- * turns pasted images into attachments, and the URL/keyword inputs must keep plain text paste.
- * Everywhere else the browser's "paste an image into a page" behaviour is blocked, because the
- * panel consumes the image instead.
+ * Document-level paste handling for screenshots. Only image pastes are considered at all.
+ * The translate card owns pasted images while the event lands inside it (there an image
+ * becomes an attachment for image translation, which is that block's existing behaviour).
+ * Everywhere else — including this panel's own URL/keyword inputs, where a text-field guard
+ * used to swallow the paste silently — the panel consumes the image and starts recognition.
  */
 function onDocumentPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
@@ -386,8 +390,8 @@ function onDocumentPaste(e: ClipboardEvent) {
     }
   }
   if (!images.length) return
-  const activeTag = (document.activeElement as HTMLElement | null)?.tagName
-  if (activeTag === 'TEXTAREA' || activeTag === 'INPUT') return
+  const el = (e.target instanceof HTMLElement ? e.target : document.activeElement) as HTMLElement | null
+  if (el && typeof el.closest === 'function' && el.closest('.translation-card')) return
   e.preventDefault()
   acceptImages(images)
 }
@@ -474,6 +478,7 @@ function resetRecognitionResults() {
   searchKeyword.value = ''
   searchPerformed.value = false
   searchError.value = ''
+  searchInfo.value = ''
   searching.value = false
   candidates.value = []
   importingId.value = ''
@@ -566,11 +571,36 @@ async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivS
   return (res.data || []).slice(0, MAX_CANDIDATES)
 }
 
+/** Lower-cased title with spaces and punctuation removed, for tolerant comparison. */
+function normalizeTitle(value: string): string {
+  return (value || '')
+    .toLowerCase()
+    .replace(/[\s、。，,.!！?？…·:：;；\-—ー～~「」『』【】()（）\[\]・／\/｜|#]/g, '')
+}
+
+/**
+ * True when one title contains the other after normalisation, and the shorter side is long
+ * enough to be meaningful (a 2-character title would match half the site).
+ */
+function titleMatches(a: string, b: string): boolean {
+  const na = normalizeTitle(a)
+  const nb = normalizeTitle(b)
+  if (na.length < 4 || nb.length < 4) return false
+  return na.includes(nb) || nb.includes(na)
+}
+
+/** The display name of a search mode, for the status line. */
+function modeLabel(mode: 'tag' | 'title'): string {
+  return mode === 'tag' ? t('translate.pixiv.modeTag') : t('translate.pixiv.modeTitle')
+}
+
 /**
  * Auto search after a screenshot was recognised. Strategics are tried in order, first hit
  * wins: two tags ANDed (most precise) → the first tag alone → the longest title fragment in
  * title mode. The keyword box is left showing whichever attempt matched, so the user can
- * tweak it and re-run manually.
+ * tweak it and re-run manually. A hit whose top candidate title matches the recognised title
+ * is imported immediately (the flow promises "find the work and pull it in"); any title
+ * mismatch leaves the candidate list for the user to choose from.
  */
 async function autoSearch(info: PixivExtractResponse) {
   const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
@@ -597,6 +627,12 @@ async function autoSearch(info: PixivExtractResponse) {
         searchKeyword.value = attempt.keyword
         searchMode.value = attempt.mode
         searchPerformed.value = true
+        searchInfo.value = t('translate.pixiv.searchMatched', {
+          mode: modeLabel(attempt.mode), keyword: attempt.keyword, count: items.length
+        })
+        if (titleMatches(info.title, items[0].title)) {
+          await importCandidate(items[0])
+        }
         return
       }
     }
@@ -605,6 +641,7 @@ async function autoSearch(info: PixivExtractResponse) {
     searchKeyword.value = first.keyword
     searchMode.value = first.mode
     searchPerformed.value = true
+    searchInfo.value = t('translate.pixiv.searchTriedAll', { count: attempts.length })
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
     const err = e as { response?: { data?: { error?: string } } }
@@ -623,9 +660,25 @@ async function searchByKeyword() {
   searchError.value = ''
   candidates.value = []
   try {
-    const items = await runSearch(keyword, searchMode.value)
+    let mode = searchMode.value
+    let items = await runSearch(keyword, mode)
     if (epoch !== shotEpoch) return
+    // A manual search must not dead-end on the wrong mode: a tag search that finds nothing is
+    // retried in title mode (and vice versa) before reporting an empty result.
+    if (!items.length) {
+      const fallback: 'tag' | 'title' = mode === 'tag' ? 'title' : 'tag'
+      const fallbackItems = await runSearch(keyword, fallback)
+      if (epoch !== shotEpoch) return
+      if (fallbackItems.length) {
+        mode = fallback
+        items = fallbackItems
+        searchMode.value = fallback
+      }
+    }
     candidates.value = items
+    searchInfo.value = items.length
+      ? t('translate.pixiv.searchMatched', { mode: modeLabel(mode), keyword, count: items.length })
+      : t('translate.pixiv.searchTriedAll', { count: 2 })
     searchPerformed.value = true
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
@@ -921,6 +974,13 @@ const hasPanelState = computed(() =>
 .pixiv-search-input {
   flex: 1;
   min-width: 160px;
+}
+
+/* Status line: which strategy matched (or that all failed). */
+.pixiv-search-info {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-muted, #888);
 }
 
 .pixiv-candidates {
