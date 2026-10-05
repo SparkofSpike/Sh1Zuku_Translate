@@ -100,20 +100,6 @@
         <div class="pixiv-search">
           <div class="pixiv-search-bar">
             <label class="pixiv-search-label" for="pixiv-search-keyword">{{ t('translate.pixiv.searchKeywordLabel') }}</label>
-            <div class="pixiv-search-modes" role="group" :aria-label="t('translate.pixiv.searchKeywordLabel')">
-              <button
-                type="button"
-                class="pixiv-mode-btn"
-                :class="{ 'is-active': searchMode === 'tag' }"
-                @click="searchMode = 'tag'"
-              >{{ t('translate.pixiv.modeTag') }}</button>
-              <button
-                type="button"
-                class="pixiv-mode-btn"
-                :class="{ 'is-active': searchMode === 'title' }"
-                @click="searchMode = 'title'"
-              >{{ t('translate.pixiv.modeTitle') }}</button>
-            </div>
             <input
               id="pixiv-search-keyword"
               v-model="searchKeyword"
@@ -213,6 +199,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { extractPixivNovelInfo, importPixivNovel, searchPixivNovels } from '../api'
+import { AUTO_IMPORT_SCORE, scoreCandidate, titleSearchChunk } from '../utils/pixivSearch'
 import type {
   PixivExtractResponse,
   PixivNovelResponse,
@@ -547,23 +534,12 @@ async function recognize() {
 }
 
 /**
- * Pixiv's search modes. 标签 (partial tag match; spaces AND the tags together) is what the
- * site's own UI uses and the only mode that hits reliably; 标题 (s_tc) matches only a clean
- * substring of the title — a whole title with punctuation matches nothing, and a mixed
- * "title + tags" string matches neither mode. That mixed string was the original bug where
- * every auto search came back empty.
+ * Search design: the recognised work is located without any user-selected mode. A mixed
+ * "title + tags" keyword matches neither Pixiv mode (that combination was the original bug),
+ * so the panel runs several searches in parallel and ranks the merged result — title match
+ * first (the strongest signal, per product direction), tag overlap second. Manual searches
+ * try tags first and fall back to titles automatically.
  */
-const searchMode = ref<'tag' | 'title'>('tag')
-
-/** Longest punctuation-free run of the title — the best keyword for title-mode search. */
-function titleSearchChunk(title: string): string {
-  const parts = (title || '')
-    .split(/[\s、。，,.!！?？…·:：;；\-—ー～~「」『』【】()（）\[\]]+/)
-    .map(part => part.trim())
-    .filter(part => part.length >= 2)
-  if (!parts.length) return (title || '').trim().slice(0, 20)
-  return parts.reduce((longest, part) => (part.length > longest.length ? part : longest))
-}
 
 /** One search call; returns at most MAX_CANDIDATES items. */
 async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivSearchItem[]> {
@@ -571,45 +547,21 @@ async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivS
   return (res.data || []).slice(0, MAX_CANDIDATES)
 }
 
-/** Lower-cased title with spaces and punctuation removed, for tolerant comparison. */
-function normalizeTitle(value: string): string {
-  return (value || '')
-    .toLowerCase()
-    .replace(/[\s、。，,.!！?？…·:：;；\-—ー～~「」『』【】()（）\[\]・／\/｜|#]/g, '')
-}
-
 /**
- * True when one title contains the other after normalisation, and the shorter side is long
- * enough to be meaningful (a 2-character title would match half the site).
- */
-function titleMatches(a: string, b: string): boolean {
-  const na = normalizeTitle(a)
-  const nb = normalizeTitle(b)
-  if (na.length < 4 || nb.length < 4) return false
-  return na.includes(nb) || nb.includes(na)
-}
-
-/** The display name of a search mode, for the status line. */
-function modeLabel(mode: 'tag' | 'title'): string {
-  return mode === 'tag' ? t('translate.pixiv.modeTag') : t('translate.pixiv.modeTitle')
-}
-
-/**
- * Auto search after a screenshot was recognised. Strategics are tried in order, first hit
- * wins: two tags ANDed (most precise) → the first tag alone → the longest title fragment in
- * title mode. The keyword box is left showing whichever attempt matched, so the user can
- * tweak it and re-run manually. A hit whose top candidate title matches the recognised title
- * is imported immediately (the flow promises "find the work and pull it in"); any title
- * mismatch leaves the candidate list for the user to choose from.
+ * Auto search after a screenshot was recognised. All strategies fire in parallel — the two
+ * strongest tags ANDed, the first tag alone, and the longest title run in title mode — then
+ * the results are merged, deduplicated and ranked by scoreCandidate (title match first, tag
+ * overlap second). A top candidate with a title match is imported straight away; otherwise
+ * the ranked list is shown for one-click confirmation. The user never picks a search mode.
  */
 async function autoSearch(info: PixivExtractResponse) {
   const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
-  const attempts: Array<{ keyword: string; mode: 'tag' | 'title' }> = []
-  if (tags.length >= 2) attempts.push({ keyword: tags.slice(0, 2).join(' '), mode: 'tag' })
-  if (tags.length >= 1) attempts.push({ keyword: tags[0], mode: 'tag' })
   const chunk = titleSearchChunk(info.title)
-  if (chunk) attempts.push({ keyword: chunk, mode: 'title' })
-  if (!attempts.length) {
+  const searches: Array<Promise<PixivSearchItem[]>> = []
+  if (tags.length >= 2) searches.push(runSearch(tags.slice(0, 2).join(' '), 'tag'))
+  if (tags.length >= 1) searches.push(runSearch(tags[0], 'tag'))
+  if (chunk) searches.push(runSearch(chunk, 'title'))
+  if (!searches.length) {
     candidates.value = []
     searchPerformed.value = true
     return
@@ -619,29 +571,40 @@ async function autoSearch(info: PixivExtractResponse) {
   searchError.value = ''
   candidates.value = []
   try {
-    for (const attempt of attempts) {
-      const items = await runSearch(attempt.keyword, attempt.mode)
-      if (epoch !== shotEpoch) return
-      if (items.length) {
-        candidates.value = items
-        searchKeyword.value = attempt.keyword
-        searchMode.value = attempt.mode
-        searchPerformed.value = true
-        searchInfo.value = t('translate.pixiv.searchMatched', {
-          mode: modeLabel(attempt.mode), keyword: attempt.keyword, count: items.length
-        })
-        if (titleMatches(info.title, items[0].title)) {
-          await importCandidate(items[0])
+    const settled = await Promise.allSettled(searches)
+    if (epoch !== shotEpoch) return
+    const byId = new Map<string, PixivSearchItem>()
+    let failures = 0
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        for (const item of result.value) {
+          if (!byId.has(item.id)) byId.set(item.id, item)
         }
-        return
+      } else {
+        failures++
       }
     }
-    // No strategy matched: leave the first attempt in the box for manual tweaking.
-    const first = attempts[0]
-    searchKeyword.value = first.keyword
-    searchMode.value = first.mode
+    if (failures === settled.length) {
+      const reason = (settled[0] as PromiseRejectedResult).reason as
+        { response?: { data?: { error?: string } } } | undefined
+      searchError.value = reason?.response?.data?.error || t('translate.pixiv.searchFailed')
+      return
+    }
+    const ranked = [...byId.values()]
+      .map(item => ({ item, score: scoreCandidate(info, item) }))
+      .sort((a, b) => b.score - a.score)
+    candidates.value = ranked.map(entry => entry.item).slice(0, MAX_CANDIDATES)
+    searchKeyword.value = tags.length >= 2 ? tags.slice(0, 2).join(' ') : (tags[0] || chunk)
     searchPerformed.value = true
-    searchInfo.value = t('translate.pixiv.searchTriedAll', { count: attempts.length })
+    const top = ranked[0]
+    if (top && top.score >= AUTO_IMPORT_SCORE) {
+      searchInfo.value = t('translate.pixiv.autoImported', { title: top.item.title })
+      await importCandidate(top.item)
+    } else if (candidates.value.length) {
+      searchInfo.value = t('translate.pixiv.autoCandidates', { count: candidates.value.length })
+    } else {
+      searchInfo.value = t('translate.pixiv.searchTriedAll', { keyword: searchKeyword.value })
+    }
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
     const err = e as { response?: { data?: { error?: string } } }
@@ -651,7 +614,7 @@ async function autoSearch(info: PixivExtractResponse) {
   }
 }
 
-/** Manual search from the keyword box, honouring the selected mode. */
+/** Manual search from the keyword box: tags first, titles as an automatic fallback. */
 async function searchByKeyword() {
   const keyword = searchKeyword.value.trim()
   if (!keyword || searching.value) return
@@ -660,25 +623,16 @@ async function searchByKeyword() {
   searchError.value = ''
   candidates.value = []
   try {
-    let mode = searchMode.value
-    let items = await runSearch(keyword, mode)
+    let items = await runSearch(keyword, 'tag')
     if (epoch !== shotEpoch) return
-    // A manual search must not dead-end on the wrong mode: a tag search that finds nothing is
-    // retried in title mode (and vice versa) before reporting an empty result.
     if (!items.length) {
-      const fallback: 'tag' | 'title' = mode === 'tag' ? 'title' : 'tag'
-      const fallbackItems = await runSearch(keyword, fallback)
+      items = await runSearch(keyword, 'title')
       if (epoch !== shotEpoch) return
-      if (fallbackItems.length) {
-        mode = fallback
-        items = fallbackItems
-        searchMode.value = fallback
-      }
     }
     candidates.value = items
     searchInfo.value = items.length
-      ? t('translate.pixiv.searchMatched', { mode: modeLabel(mode), keyword, count: items.length })
-      : t('translate.pixiv.searchTriedAll', { count: 2 })
+      ? t('translate.pixiv.searchMatched', { keyword, count: items.length })
+      : t('translate.pixiv.searchTriedAll', { keyword })
     searchPerformed.value = true
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
@@ -944,32 +898,6 @@ const hasPanelState = computed(() =>
   white-space: nowrap;
 }
 
-/* Search-mode toggle: tag search (Pixiv's reliable default) vs title search. */
-.pixiv-search-modes {
-  display: inline-flex;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.pixiv-mode-btn {
-  border: none;
-  background: #f7f7f7;
-  color: #555;
-  padding: 6px 10px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.pixiv-mode-btn + .pixiv-mode-btn {
-  border-left: 1px solid #ccc;
-}
-
-.pixiv-mode-btn.is-active {
-  background: #1a1a1a;
-  color: #fff;
-}
 
 .pixiv-search-input {
   flex: 1;
