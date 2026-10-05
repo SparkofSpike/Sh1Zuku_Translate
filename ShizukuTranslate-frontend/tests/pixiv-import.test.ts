@@ -63,8 +63,16 @@ describe('searchPixivNovels', () => {
 
     expect(captured?.url).toBe('/pixiv/search')
     expect(String(captured?.method).toLowerCase()).toBe('get')
-    expect(captured?.params).toEqual({ keyword: 'タイトル タグ1' })
+    expect(captured?.params).toEqual({ keyword: 'タイトル タグ1', mode: 'tag' })
     expect(res.data).toEqual([CANDIDATE])
+  })
+
+  it('passes the title mode through as a query parameter', async () => {
+    stubAdapter([])
+
+    await searchPixivNovels('未知的命运', 'title')
+
+    expect(captured?.params).toEqual({ keyword: '未知的命运', mode: 'title' })
   })
 
   it('accepts an empty result set', async () => {

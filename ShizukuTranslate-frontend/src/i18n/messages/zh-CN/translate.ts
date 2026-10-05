@@ -42,6 +42,8 @@ export default {
     extractedInfo: '识别到的作品信息',
     searchKeywordLabel: '搜索关键词',
     searchAction: '重新搜索',
+    modeTag: '按标签',
+    modeTitle: '按标题',
     searching: '搜索中…',
     searchFailed: '搜索失败，请稍后重试',
     searchNoResult: '没有找到匹配的作品，换个关键词试试',

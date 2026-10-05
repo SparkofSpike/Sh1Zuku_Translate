@@ -187,8 +187,8 @@ export function importPixivNovel(url: string) {
  * Searches Pixiv works by keyword. Used by the screenshot-import flow to turn "what the vision
  * model read off the screenshots" into a list of importable works.
  */
-export function searchPixivNovels(keyword: string) {
-  return api.get<PixivSearchItem[]>('/pixiv/search', { params: { keyword }, timeout: 45000 })
+export function searchPixivNovels(keyword: string, mode: 'tag' | 'title' = 'tag') {
+  return api.get<PixivSearchItem[]>('/pixiv/search', { params: { keyword, mode }, timeout: 45000 })
 }
 
 /**

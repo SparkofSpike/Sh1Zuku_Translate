@@ -100,6 +100,20 @@
         <div class="pixiv-search">
           <div class="pixiv-search-bar">
             <label class="pixiv-search-label" for="pixiv-search-keyword">{{ t('translate.pixiv.searchKeywordLabel') }}</label>
+            <div class="pixiv-search-modes" role="group" :aria-label="t('translate.pixiv.searchKeywordLabel')">
+              <button
+                type="button"
+                class="pixiv-mode-btn"
+                :class="{ 'is-active': searchMode === 'tag' }"
+                @click="searchMode = 'tag'"
+              >{{ t('translate.pixiv.modeTag') }}</button>
+              <button
+                type="button"
+                class="pixiv-mode-btn"
+                :class="{ 'is-active': searchMode === 'title' }"
+                @click="searchMode = 'title'"
+              >{{ t('translate.pixiv.modeTitle') }}</button>
+            </div>
             <input
               id="pixiv-search-keyword"
               v-model="searchKeyword"
@@ -516,8 +530,7 @@ async function recognize() {
     const res = await extractPixivNovelInfo(shotFiles.value)
     if (epoch !== shotEpoch) return
     extracted.value = res.data
-    searchKeyword.value = buildKeyword(res.data)
-    if (searchKeyword.value) searchByKeyword()
+    await autoSearch(res.data)
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
     const err = e as { response?: { status?: number; data?: { error?: string } } }
@@ -528,12 +541,80 @@ async function recognize() {
   }
 }
 
-/** The keyword Pixiv is searched with: the read title plus its first few tags. */
-function buildKeyword(info: PixivExtractResponse) {
-  return [info.title || '', (info.tags || []).slice(0, 4).join(' ')].filter(Boolean).join(' ').trim()
+/**
+ * Pixiv's search modes. 标签 (partial tag match; spaces AND the tags together) is what the
+ * site's own UI uses and the only mode that hits reliably; 标题 (s_tc) matches only a clean
+ * substring of the title — a whole title with punctuation matches nothing, and a mixed
+ * "title + tags" string matches neither mode. That mixed string was the original bug where
+ * every auto search came back empty.
+ */
+const searchMode = ref<'tag' | 'title'>('tag')
+
+/** Longest punctuation-free run of the title — the best keyword for title-mode search. */
+function titleSearchChunk(title: string): string {
+  const parts = (title || '')
+    .split(/[\s、。，,.!！?？…·:：;；\-—ー～~「」『』【】()（）\[\]]+/)
+    .map(part => part.trim())
+    .filter(part => part.length >= 2)
+  if (!parts.length) return (title || '').trim().slice(0, 20)
+  return parts.reduce((longest, part) => (part.length > longest.length ? part : longest))
 }
 
-/** Searches Pixiv with the keyword box's contents and shows the candidates. */
+/** One search call; returns at most MAX_CANDIDATES items. */
+async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivSearchItem[]> {
+  const res = await searchPixivNovels(keyword, mode)
+  return (res.data || []).slice(0, MAX_CANDIDATES)
+}
+
+/**
+ * Auto search after a screenshot was recognised. Strategics are tried in order, first hit
+ * wins: two tags ANDed (most precise) → the first tag alone → the longest title fragment in
+ * title mode. The keyword box is left showing whichever attempt matched, so the user can
+ * tweak it and re-run manually.
+ */
+async function autoSearch(info: PixivExtractResponse) {
+  const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
+  const attempts: Array<{ keyword: string; mode: 'tag' | 'title' }> = []
+  if (tags.length >= 2) attempts.push({ keyword: tags.slice(0, 2).join(' '), mode: 'tag' })
+  if (tags.length >= 1) attempts.push({ keyword: tags[0], mode: 'tag' })
+  const chunk = titleSearchChunk(info.title)
+  if (chunk) attempts.push({ keyword: chunk, mode: 'title' })
+  if (!attempts.length) {
+    candidates.value = []
+    searchPerformed.value = true
+    return
+  }
+  const epoch = shotEpoch
+  searching.value = true
+  searchError.value = ''
+  candidates.value = []
+  try {
+    for (const attempt of attempts) {
+      const items = await runSearch(attempt.keyword, attempt.mode)
+      if (epoch !== shotEpoch) return
+      if (items.length) {
+        candidates.value = items
+        searchKeyword.value = attempt.keyword
+        searchMode.value = attempt.mode
+        searchPerformed.value = true
+        return
+      }
+    }
+    // No strategy matched: leave the first attempt in the box for manual tweaking.
+    const first = attempts[0]
+    searchKeyword.value = first.keyword
+    searchMode.value = first.mode
+    searchPerformed.value = true
+  } catch (e: unknown) {
+    if (epoch !== shotEpoch) return
+    const err = e as { response?: { data?: { error?: string } } }
+    searchError.value = err.response?.data?.error || t('translate.pixiv.searchFailed')
+  } finally {
+    if (epoch === shotEpoch) searching.value = false
+  }
+}
+
+/** Manual search from the keyword box, honouring the selected mode. */
 async function searchByKeyword() {
   const keyword = searchKeyword.value.trim()
   if (!keyword || searching.value) return
@@ -542,9 +623,9 @@ async function searchByKeyword() {
   searchError.value = ''
   candidates.value = []
   try {
-    const res = await searchPixivNovels(keyword)
+    const items = await runSearch(keyword, searchMode.value)
     if (epoch !== shotEpoch) return
-    candidates.value = (res.data || []).slice(0, MAX_CANDIDATES)
+    candidates.value = items
     searchPerformed.value = true
   } catch (e: unknown) {
     if (epoch !== shotEpoch) return
@@ -808,6 +889,33 @@ const hasPanelState = computed(() =>
   font-size: 13px;
   color: var(--color-muted, #666);
   white-space: nowrap;
+}
+
+/* Search-mode toggle: tag search (Pixiv's reliable default) vs title search. */
+.pixiv-search-modes {
+  display: inline-flex;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.pixiv-mode-btn {
+  border: none;
+  background: #f7f7f7;
+  color: #555;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pixiv-mode-btn + .pixiv-mode-btn {
+  border-left: 1px solid #ccc;
+}
+
+.pixiv-mode-btn.is-active {
+  background: #1a1a1a;
+  color: #fff;
 }
 
 .pixiv-search-input {

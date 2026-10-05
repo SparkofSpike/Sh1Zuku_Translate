@@ -54,8 +54,9 @@ public class PixivController {
     }
 
     @GetMapping("/pixiv/search")
-    public List<PixivSearchItem> searchNovels(@RequestParam("keyword") String keyword) {
-        return pixivNovelService.searchNovels(keyword);
+    public List<PixivSearchItem> searchNovels(@RequestParam("keyword") String keyword,
+                                              @RequestParam(value = "mode", defaultValue = "tag") String mode) {
+        return pixivNovelService.searchNovels(keyword, mode);
     }
 
     /** Screenshot → vision model → {title, author, tags[], summary}. */

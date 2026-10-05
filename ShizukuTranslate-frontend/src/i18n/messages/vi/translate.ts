@@ -42,6 +42,8 @@ export default {
     extractedInfo: 'Thông tin đọc được từ ảnh chụp',
     searchKeywordLabel: 'Từ khoá tìm kiếm',
     searchAction: 'Tìm lại',
+    modeTag: 'Theo thẻ',
+    modeTitle: 'Theo tiêu đề',
     searching: 'Đang tìm…',
     searchFailed: 'Tìm kiếm thất bại — vui lòng thử lại',
     searchNoResult: 'Không tìm thấy tác phẩm phù hợp — thử từ khoá khác nhé',

@@ -60,4 +60,15 @@ class PixivSearchParsingTest {
     void emptyDataArrayYieldsEmptyList() {
         assertEquals(0, service().parseSearchResults("{\"body\":{\"novel\":{\"data\":[]}}}").size());
     }
+
+    @Test
+    void mapsPublicModeNamesToPixivSModes() {
+        // Tag mode (partial-match) is the default: it is what Pixiv's own UI uses and the only
+        // mode that reliably matches multi-tag AND queries.
+        assertEquals("s_tag_full", PixivNovelService.sModeValue(null));
+        assertEquals("s_tag_full", PixivNovelService.sModeValue("tag"));
+        assertEquals("s_tag_full", PixivNovelService.sModeValue("anything"));
+        assertEquals("s_tc", PixivNovelService.sModeValue("title"));
+        assertEquals("s_tc", PixivNovelService.sModeValue("TITLE"));
+    }
 }

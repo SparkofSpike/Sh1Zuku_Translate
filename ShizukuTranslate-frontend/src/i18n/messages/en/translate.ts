@@ -42,6 +42,8 @@ export default {
     extractedInfo: 'What we read from the screenshot',
     searchKeywordLabel: 'Search keyword',
     searchAction: 'Search again',
+    modeTag: 'By tag',
+    modeTitle: 'By title',
     searching: 'Searching…',
     searchFailed: 'Search failed — please try again',
     searchNoResult: 'No matching work found — try a different keyword',
