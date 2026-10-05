@@ -22,7 +22,8 @@ export default {
     terminology: '术语',
     format: '格式',
     tone: '语气',
-    other: '其他'
+    other: '其他',
+    reasonPlaceholder: '补充理由（可选）'
   },
   export: {
     label: '导出',

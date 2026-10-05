@@ -22,7 +22,8 @@ export default {
     terminology: 'Thuật ngữ',
     format: 'Định dạng',
     tone: 'Giọng điệu',
-    other: 'Khác'
+    other: 'Khác',
+    reasonPlaceholder: 'Thêm lý do (không bắt buộc)'
   },
   export: {
     label: 'Xuất file',

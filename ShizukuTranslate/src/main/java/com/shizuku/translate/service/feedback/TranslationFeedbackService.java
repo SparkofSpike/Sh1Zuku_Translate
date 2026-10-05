@@ -155,8 +155,12 @@ public class TranslationFeedbackService {
             throw new BusinessException("评分过于频繁，请稍后再试");
         }
         List<String> safeTags = tags == null ? List.of() : List.copyOf(tags);
+        String safeComment = sanitizeComment(comment);
         String key = requestId + "|" + (deviceFp == null ? "" : deviceFp);
-        String signature = rating + "|" + String.join(",", safeTags);
+        // The comment is part of the signature: "rated 3, then typed why" must land as its
+        // own event instead of being swallowed as a duplicate of the bare rating.
+        String signature = rating + "|" + String.join(",", safeTags) + "|"
+                + (safeComment == null ? "" : safeComment);
         synchronized (ratingDedup) {
             String previous = ratingDedup.get(key);
             if (signature.equals(previous)) {
@@ -175,13 +179,34 @@ public class TranslationFeedbackService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("rating", rating);
         payload.put("tags", safeTags);
-        payload.put("comment", comment);
+        payload.put("comment", safeComment);
         payload.put("device_fp", deviceFp);
         payload.put("permalink", permalink);
         store.submitEvent(new FeedbackEvent(requestId, Instant.now(), "rate", payload));
         if (rating <= 3) {
             keepPending(requestId, "low_rating");
         }
+    }
+
+    /** Rating comments are optional free text; capped so one voter cannot bloat the event log. */
+    static final int MAX_COMMENT_CODE_POINTS = 500;
+
+    /**
+     * Trims the optional reason, treats blank as absent, and caps the text at
+     * {@link #MAX_COMMENT_CODE_POINTS} code points without splitting surrogate pairs.
+     */
+    static String sanitizeComment(String comment) {
+        if (comment == null) {
+            return null;
+        }
+        String trimmed = comment.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.codePointCount(0, trimmed.length()) <= MAX_COMMENT_CODE_POINTS) {
+            return trimmed;
+        }
+        return trimmed.substring(0, trimmed.offsetByCodePoints(0, MAX_COMMENT_CODE_POINTS));
     }
 
     /**

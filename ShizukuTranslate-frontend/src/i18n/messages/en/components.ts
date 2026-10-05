@@ -22,7 +22,8 @@ export default {
     terminology: 'Terminology',
     format: 'Format',
     tone: 'Tone',
-    other: 'Other'
+    other: 'Other',
+    reasonPlaceholder: 'Add a reason (optional)'
   },
   export: {
     label: 'Export',

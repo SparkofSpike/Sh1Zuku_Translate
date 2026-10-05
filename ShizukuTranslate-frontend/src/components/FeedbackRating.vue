@@ -25,6 +25,19 @@
         @click="toggleTag(tag.value)"
       >{{ t(tag.labelKey) }}</button>
     </div>
+    <!-- Optional free-text reason: appears once a rating exists, goes out on blur/Enter. -->
+    <div v-if="rating >= 1" class="feedback-rating__reason">
+      <input
+        v-model="comment"
+        class="feedback-rating__comment"
+        type="text"
+        maxlength="500"
+        :placeholder="t('components.feedbackRating.reasonPlaceholder')"
+        :aria-label="t('components.feedbackRating.reasonPlaceholder')"
+        @keydown.enter.prevent="submitComment"
+        @blur="submitComment"
+      />
+    </div>
   </div>
 </template>
 
@@ -59,6 +72,10 @@ const TAG_KEYS: { value: string; labelKey: string }[] = [
 
 const rating = ref(0)
 const tags = ref<string[]>([])
+/** Optional free-text reason for the rating; submitted together with the vote. */
+const comment = ref('')
+/** Last comment value the server has accepted, so a no-op blur does not re-post. */
+let submittedComment = ''
 /** Hover preview only; the submitted value always comes from `rating`. */
 const hoverRating = ref(0)
 
@@ -73,12 +90,16 @@ onMounted(() => {
   try {
     const raw = localStorage.getItem(storageKey())
     if (!raw) return
-    const saved = JSON.parse(raw) as { rating?: number; tags?: string[] } | null
+    const saved = JSON.parse(raw) as { rating?: number; tags?: string[]; comment?: string } | null
     if (saved && typeof saved.rating === 'number' && saved.rating >= 1 && saved.rating <= 5) {
       rating.value = saved.rating
     }
     if (Array.isArray(saved?.tags)) {
       tags.value = saved.tags.filter(tag => TAG_KEYS.some(known => known.value === tag))
+    }
+    if (typeof saved?.comment === 'string') {
+      comment.value = saved.comment
+      submittedComment = saved.comment
     }
   } catch (e) {
     // A stale or hand-edited record is treated as "not rated yet".
@@ -98,22 +119,25 @@ function toggleTag(tag: string) {
 }
 
 /**
- * Sends the current vote. Repeats are expected and overwrite server-side, so every interaction
- * just re-posts. Failures are swallowed to a debug log: feedback is a side channel and must
- * never interrupt the translation flow with an error.
+ * Sends the current vote (stars, reason tags, free-text reason). Repeats are expected and
+ * overwrite server-side, so every interaction just re-posts. Failures are swallowed to a
+ * debug log: feedback is a side channel and must never interrupt the translation flow.
  */
 function submit() {
+  const value = comment.value.trim()
   api
     .post('/feedback/rate', {
       requestId: props.requestId,
       rating: rating.value,
       tags: tags.value,
+      comment: value || undefined,
       deviceFp: getDeviceFp(),
       permalink: window.location.pathname
     })
     .then(() => {
+      submittedComment = value
       try {
-        localStorage.setItem(storageKey(), JSON.stringify({ rating: rating.value, tags: tags.value }))
+        localStorage.setItem(storageKey(), JSON.stringify({ rating: rating.value, tags: tags.value, comment: value }))
       } catch (e) {
         // Storage full or disabled: the vote is already recorded server-side.
       }
@@ -121,6 +145,12 @@ function submit() {
     .catch(err => {
       console.debug('反馈评分提交失败', err)
     })
+}
+
+/** Comment edits go out on blur or Enter; the dirty check keeps no-op blurs silent. */
+function submitComment() {
+  if (comment.value.trim() === submittedComment) return
+  submit()
 }
 </script>
 
@@ -191,5 +221,27 @@ function submit() {
   background: #e7f5ff;
   border-color: #a5c8f0;
   color: #1864ab;
+}
+
+.feedback-rating__reason {
+  width: 100%;
+}
+
+.feedback-rating__comment {
+  width: 100%;
+  max-width: 380px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border, #dee2e6);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.feedback-rating__comment:focus {
+  outline: none;
+  border-color: #a5c8f0;
 }
 </style>

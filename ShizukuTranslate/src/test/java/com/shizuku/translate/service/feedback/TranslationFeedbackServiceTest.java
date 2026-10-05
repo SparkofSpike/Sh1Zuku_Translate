@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -134,6 +135,28 @@ class TranslationFeedbackServiceTest {
         service.submitRate("r-1", 4, List.of("tone"), null, "fp-1", "/translate");
 
         verify(store, times(1)).submitEvent(any());
+    }
+
+    @Test
+    void typingAReasonAfterRatingWritesASecondEvent() {
+        properties.setSampleRate(0.0);
+        service.submitRate("r-1", 3, List.of(), null, "fp-1", "/translate");
+        service.submitRate("r-1", 3, List.of(), "术语不对", "fp-1", "/translate");
+
+        // The reason edit is a real change, not a duplicate of the bare rating.
+        verify(store, times(2)).submitEvent(any());
+    }
+
+    @Test
+    void commentIsTrimmedBlankDroppedAndCapped() {
+        properties.setSampleRate(0.0);
+        service.submitRate("r-1", 3, List.of(), "   ", "fp-1", "/translate");
+        service.submitRate("r-2", 3, List.of(), "x".repeat(600), "fp-1", "/translate");
+
+        ArgumentCaptor<FeedbackEvent> captor = ArgumentCaptor.forClass(FeedbackEvent.class);
+        verify(store, times(2)).submitEvent(captor.capture());
+        assertNull(captor.getAllValues().get(0).payload().get("comment"));
+        assertEquals(500, ((String) captor.getAllValues().get(1).payload().get("comment")).length());
     }
 
     @Test
