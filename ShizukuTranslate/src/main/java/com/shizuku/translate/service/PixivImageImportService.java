@@ -37,9 +37,10 @@ public class PixivImageImportService {
             请提取图中的小说信息，并只输出一个 JSON 对象，不要输出任何其他文字或标记（不要 markdown 代码块）：
             {"title": "小说标题", "author": "作者名", "tags": ["标签1", "标签2"], "summary": "作品简介"}
             规则：
-            - title 必填，用图中原文（通常是日文）；如果图中确实没有标题，返回空字符串 ""。
+            - title 必须是作品标题区域的大字标题；绝不能把标签当成标题。如果图中没有标题区域，返回空字符串 ""。
             - author、summary 看不到就返回空字符串 ""。
-            - tags 是图中的标签列表，最多 10 个；看不到就返回空数组 []。
+            - tags 是图中的标签列表（通常以 # 开头），尽量完整地提取，最多 10 个；看不到就返回空数组 []。
+            - 标签必须原样转录：数字一律用半角阿拉伯数字（例如 BLACKSOULS2，不要写成 BLACKSOULSⅡ）。
             """;
 
     private final AiModelClient aiModelClient;
@@ -103,9 +104,6 @@ public class PixivImageImportService {
             throw new BusinessException("无法从图片中识别出小说信息，请确认截图包含小说标题", e);
         }
         String title = node.path("title").asText("").trim();
-        if (title.isBlank()) {
-            throw new BusinessException("无法从图片中识别出小说标题，请确认截图包含标题后重试");
-        }
         String author = node.path("author").asText("").trim();
         String summary = node.path("summary").asText("").trim();
         List<String> tags = new ArrayList<>();
@@ -120,6 +118,21 @@ public class PixivImageImportService {
                     tags.add(value);
                 }
             }
+        }
+        // A "title" that merely repeats one of the tags is the model promoting a tag (R-18,
+        // BLACKSOULSⅡ) to the title field; treat it as absent so the search does not run
+        // against the tag's whole catalogue.
+        if (!title.isEmpty()) {
+            for (String tag : tags) {
+                if (tag.equalsIgnoreCase(title)) {
+                    title = "";
+                    break;
+                }
+            }
+        }
+        // With neither a title nor any tag there is nothing to search Pixiv with.
+        if (title.isBlank() && tags.isEmpty()) {
+            throw new BusinessException("无法从图片中识别出小说标题或标签，请确认截图包含作品信息后重试");
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("title", title);

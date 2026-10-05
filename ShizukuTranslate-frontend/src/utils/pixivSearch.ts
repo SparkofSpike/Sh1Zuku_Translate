@@ -45,12 +45,16 @@ export function normalizeTag(tag: string): string {
 /**
  * Relevance of one candidate against the recognised metadata. The title dominates — a
  * normalised title match scores 1000 and always outranks any amount of tag overlap — and the
- * number of recognised tags the candidate also carries breaks ties below that.
+ * count of recognised *concrete* tags the candidate also carries breaks ties below that.
+ * Generic catch-alls (R-18 etc.) are excluded from scoring: every second work carries them,
+ * so they would flatten the ranking instead of ordering it. Both sides are digit-normalised
+ * so a tag read as BLACKSOULSⅡ still matches a work tagged BLACKSOULS2.
  */
 export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem): number {
   const titleScore = titleMatches(info.title, item.title) ? 1000 : 0
-  const wanted = new Set((info.tags || []).map(normalizeTag).filter(Boolean))
-  const present = new Set((item.tags || []).map(normalizeTag))
+  const scoreTags = concreteTags(info.tags || [])
+  const wanted = new Set(scoreTags.map(tag => normalizeTagForSearch(normalizeTag(tag))).filter(Boolean))
+  const present = new Set((item.tags || []).map(tag => normalizeTagForSearch(normalizeTag(tag))))
   let overlap = 0
   for (const tag of wanted) {
     if (present.has(tag)) overlap++
@@ -60,3 +64,68 @@ export function scoreCandidate(info: PixivExtractResponse, item: PixivSearchItem
 
 /** A candidate scoring at least this much carries a title match: import it directly. */
 export const AUTO_IMPORT_SCORE = 1000
+
+/**
+ * Catch-all tags that only dilute a tag search: R-18 alone matches tens of thousands of
+ * works, so ANDing it either zeroes the result (the target may not carry it) or floods the
+ * candidate list. Concrete tags are what actually locate a work.
+ */
+const GENERIC_TAGS = new Set([
+  'r-18', 'r18', 'r-18g', 'r18g', '成人向け', '全年齢', 'r指定',
+  'オリジナル', '二次創作', '短編', '長編', '連載', '完結', 'シリーズ',
+  '小説', 'novel', '漫画', 'イラスト', 'fanart', 'その他'
+].map(tag => tag.toLowerCase()))
+
+/** Roman numerals and full-width digits map to plain ASCII digits. */
+const ROMAN_DIGITS: Record<string, string> = {
+  'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5', 'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8', 'Ⅸ': '9', 'Ⅹ': '10',
+  'ⅰ': '1', 'ⅱ': '2', 'ⅲ': '3', 'ⅳ': '4', 'ⅴ': '5', 'ⅵ': '6', 'ⅶ': '7', 'ⅷ': '8', 'ⅸ': '9', 'ⅹ': '10'
+}
+
+/**
+ * Digit normalisation for search keywords: the vision model unpredictably transcribes a tag
+ * like {@code BLACKSOULS2} as {@code BLACKSOULSⅡ}, and Pixiv treats the roman form as a
+ * fuzzy query returning unrelated works — the transcription alone can make the original
+ * work unfindable. Converting to ASCII digits before searching fixes that.
+ */
+export function normalizeTagForSearch(tag: string): string {
+  let text = tag || ''
+  for (const [roman, digit] of Object.entries(ROMAN_DIGITS)) {
+    if (text.includes(roman)) text = text.split(roman).join(digit)
+  }
+  // Full-width digits ０-９ → ASCII digits.
+  text = text.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+  return text
+}
+
+/** Tags worth searching with: concrete tags when any exist, otherwise the full list. */
+export function concreteTags(tags: string[]): string[] {
+  const cleaned = (tags || []).map(tag => (tag || '').trim()).filter(Boolean)
+  const concrete = cleaned.filter(tag => !GENERIC_TAGS.has(tag.toLowerCase()))
+  return concrete.length ? concrete : cleaned
+}
+
+/**
+ * Keywords to try for a set of tags: the joined tags as-is, plus the digit-normalised form
+ * when it differs. Both variants are searched and merged, so either transcription is covered.
+ */
+export function tagSearchKeywords(tags: string[]): string[] {
+  const joined = (tags || []).join(' ').trim()
+  if (!joined) return []
+  const normalized = normalizeTagForSearch(joined)
+  return normalized !== joined ? [joined, normalized] : [joined]
+}
+
+/**
+ * Whether the recognised title is worth a title-mode search. A "title" that just repeats one
+ * of the tags (the model sometimes promotes a tag to the title) or is too short would only
+ * pull in unrelated works.
+ */
+export function isUsableTitle(title: string, tags: string[]): boolean {
+  const normalized = normalizeTitle(title)
+  if (normalized.length < 4) return false
+  for (const tag of tags || []) {
+    if (normalizeTitle(tag) === normalized) return false
+  }
+  return true
+}

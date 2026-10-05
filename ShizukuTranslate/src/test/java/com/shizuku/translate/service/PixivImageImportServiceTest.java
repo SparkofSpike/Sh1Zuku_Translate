@@ -57,11 +57,22 @@ class PixivImageImportServiceTest {
     }
 
     @Test
-    void blankTitleIsRejected() {
-        assertThrows(BusinessException.class, () -> service().parseExtraction(
-                "{\"title\":\"  \",\"tags\":[\"a\"]}"));
-        assertThrows(BusinessException.class, () -> service().parseExtraction(
-                "{\"author\":\"only author\"}"));
+    void titleFallsBackToTagsWhenMissing() {
+        // No title but tags present: still usable — the search then runs on tags alone.
+        Map<String, Object> result = service().parseExtraction("{\"title\":\"  \",\"tags\":[\"BLACKSOULS2\"]}");
+        assertEquals("", result.get("title"));
+        assertEquals(List.of("BLACKSOULS2"), result.get("tags"));
+
+        // Neither title nor tags: there is nothing to search Pixiv with.
+        assertThrows(BusinessException.class, () -> service().parseExtraction("{\"author\":\"only author\"}"));
+    }
+
+    @Test
+    void titleThatRepeatsATagIsTreatedAsMissing() {
+        Map<String, Object> result = service().parseExtraction(
+                "{\"title\":\"BLACKSOULSⅡ\",\"tags\":[\"R-18\",\"BLACKSOULSⅡ\"]}");
+        assertEquals("", result.get("title"), "a tag promoted to the title field must be discarded");
+        assertEquals(List.of("R-18", "BLACKSOULSⅡ"), result.get("tags"));
     }
 
     @Test

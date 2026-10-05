@@ -199,7 +199,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { extractPixivNovelInfo, importPixivNovel, searchPixivNovels } from '../api'
-import { AUTO_IMPORT_SCORE, scoreCandidate, titleSearchChunk } from '../utils/pixivSearch'
+import { AUTO_IMPORT_SCORE, concreteTags, isUsableTitle, scoreCandidate, tagSearchKeywords, titleSearchChunk } from '../utils/pixivSearch'
 import type {
   PixivExtractResponse,
   PixivNovelResponse,
@@ -556,10 +556,26 @@ async function runSearch(keyword: string, mode: 'tag' | 'title'): Promise<PixivS
  */
 async function autoSearch(info: PixivExtractResponse) {
   const tags = (info.tags || []).map(tag => tag.trim()).filter(Boolean)
-  const chunk = titleSearchChunk(info.title)
+  const concrete = concreteTags(tags)
+  // Search by title only when the recognised "title" is genuinely a title — the model
+  // sometimes promotes a tag (R-18, BLACKSOULSⅡ) to the title field, and searching that
+  // would pull in the whole tag's catalogue instead of the work.
+  const chunk = isUsableTitle(info.title, tags) ? titleSearchChunk(info.title) : ''
   const searches: Array<Promise<PixivSearchItem[]>> = []
-  if (tags.length >= 2) searches.push(runSearch(tags.slice(0, 2).join(' '), 'tag'))
-  if (tags.length >= 1) searches.push(runSearch(tags[0], 'tag'))
+  if (concrete.length >= 2) {
+    for (const keyword of tagSearchKeywords(concrete.slice(0, 2))) {
+      searches.push(runSearch(keyword, 'tag'))
+    }
+    // The AND can zero out when one tag rides only on part of the series; also try the
+    // most specific single tag.
+    for (const keyword of tagSearchKeywords([concrete[0]])) {
+      searches.push(runSearch(keyword, 'tag'))
+    }
+  } else if (concrete.length === 1) {
+    for (const keyword of tagSearchKeywords(concrete)) {
+      searches.push(runSearch(keyword, 'tag'))
+    }
+  }
   if (chunk) searches.push(runSearch(chunk, 'title'))
   if (!searches.length) {
     candidates.value = []
@@ -594,7 +610,7 @@ async function autoSearch(info: PixivExtractResponse) {
       .map(item => ({ item, score: scoreCandidate(info, item) }))
       .sort((a, b) => b.score - a.score)
     candidates.value = ranked.map(entry => entry.item).slice(0, MAX_CANDIDATES)
-    searchKeyword.value = tags.length >= 2 ? tags.slice(0, 2).join(' ') : (tags[0] || chunk)
+    searchKeyword.value = concrete[0] || chunk
     searchPerformed.value = true
     const top = ranked[0]
     if (top && top.score >= AUTO_IMPORT_SCORE) {
