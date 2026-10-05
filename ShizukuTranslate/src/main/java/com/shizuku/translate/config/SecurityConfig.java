@@ -43,7 +43,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/translation/languages").permitAll()
                         .requestMatchers("/api/v1/announcements").permitAll()
                         // Read-only Pixiv novel import for the web translate box; proxies a
-                        // public Pixiv endpoint and stores nothing.
+                        // public Pixiv endpoint and stores nothing. The screenshot-extract
+                        // endpoint is the one exception: it runs the site's paid vision model,
+                        // so it is matched first and stays authenticated.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/pixiv/extract").authenticated()
                         .requestMatchers("/api/v1/pixiv/**").permitAll()
                         // Anonymous feedback collection: rating a translation and reporting
                         // copy / re-translate events must work without a login (acceptance

@@ -31,6 +31,29 @@ export interface PixivNovelResponse {
   metadataText: string
 }
 
+/**
+ * One novel row from the Pixiv search endpoint (`GET /pixiv/search`), used as a candidate in the
+ * screenshot-import flow. `xRestrict` is Pixiv's content rating (0 = all-ages, 1 = R-18,
+ * 2 = R-18G), so anything above 0 has to be labelled in the candidate list.
+ */
+export interface PixivSearchItem {
+  id: string
+  title: string
+  author: string
+  tags: string[]
+  xRestrict: number
+  description: string
+  textCount: number
+}
+
+/** What the vision model read out of the screenshots (`POST /pixiv/extract`). */
+export interface PixivExtractResponse {
+  title: string
+  author: string
+  tags: string[]
+  summary: string
+}
+
 /** A target language offered by the backend (`GET /translation/languages`). */
 export interface LanguageOption {
   code: string

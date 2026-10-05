@@ -28,6 +28,7 @@ public class AppConfig {
         private List<PresetItem> presets;
         private List<String> adminUsernames;
         private TranslationProperties translation;
+        private PixivProperties pixiv;
         private List<GlossarySeriesItem> glossary;
 
         public List<PresetItem> getPresets() { return presets; }
@@ -36,6 +37,25 @@ public class AppConfig {
         public void setAdminUsernames(List<String> adminUsernames) { this.adminUsernames = adminUsernames; }
         public TranslationProperties getTranslation() { return translation; }
         public void setTranslation(TranslationProperties translation) { this.translation = translation; }
+        public PixivProperties getPixiv() { return pixiv; }
+        public void setPixiv(PixivProperties pixiv) { this.pixiv = pixiv; }
+
+        /** Null-safe accessor: the Pixiv section is optional and may be absent entirely. */
+        public String getPixivSessionCookie() {
+            return pixiv == null ? null : pixiv.getSessionCookie();
+        }
+
+        /**
+         * Pixiv import settings. {@code sessionCookie} is the {@code PHPSESSID} value of a
+         * server-side Pixiv account (with R-18 display enabled in that account's settings);
+         * when blank, only public works are importable — the same behaviour as before the
+         * setting existed.
+         */
+        public static class PixivProperties {
+            private String sessionCookie;
+            public String getSessionCookie() { return sessionCookie; }
+            public void setSessionCookie(String sessionCookie) { this.sessionCookie = sessionCookie; }
+        }
         public List<GlossarySeriesItem> getGlossary() { return glossary; }
         public void setGlossary(List<GlossarySeriesItem> glossary) { this.glossary = glossary; }
 

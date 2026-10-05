@@ -113,6 +113,14 @@ app:
     - shizuku
     - Shizuku
 
+  # ── Pixiv import ───────────────────────────────────────────────────────────
+  # session-cookie is the PHPSESSID of a (dedicated) Pixiv account whose settings
+  # have R-18 display enabled. With it set, the importer can fetch login-gated
+  # (R-18) novels and the search endpoint returns R-18 results; without it only
+  # public works are importable. The value is only ever sent to pixiv.net.
+  pixiv:
+    session-cookie: ${PIXIV_SESSION_COOKIE:}
+
   # ── Target languages ────────────────────────────────────────────────────────
   # Clients send `targetLanguage` on a translate request. An unknown or missing
   # value falls back to `default-target-language`, so existing callers (and the

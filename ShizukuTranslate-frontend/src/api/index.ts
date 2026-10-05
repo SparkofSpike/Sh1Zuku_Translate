@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { AxiosResponse } from 'axios'
-import type { PixivNovelResponse, TranslateRequest, TranslateResponse } from '../types'
+import type { PixivExtractResponse, PixivNovelResponse, PixivSearchItem, TranslateRequest, TranslateResponse } from '../types'
 
 const api = axios.create({
   baseURL: (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:5566/api/v1'
@@ -181,6 +181,28 @@ export function translateImagesStream(
  */
 export function importPixivNovel(url: string) {
   return api.get<PixivNovelResponse>('/pixiv/novel', { params: { url }, timeout: 45000 })
+}
+
+/**
+ * Searches Pixiv works by keyword. Used by the screenshot-import flow to turn "what the vision
+ * model read off the screenshots" into a list of importable works.
+ */
+export function searchPixivNovels(keyword: string) {
+  return api.get<PixivSearchItem[]>('/pixiv/search', { params: { keyword }, timeout: 45000 })
+}
+
+/**
+ * Reads title / author / tags / summary out of up to three screenshots through the vision model.
+ * Requires a signed-in, email-verified account (the backend answers 401 / 403 otherwise).
+ */
+export function extractPixivNovelInfo(images: File[]) {
+  const formData = new FormData()
+  // Repeated `images` fields: the backend appends them to one vision request in this order.
+  for (const image of images) formData.append('images', image)
+  return api.post<PixivExtractResponse>('/pixiv/extract', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 90000
+  })
 }
 
 export function sendEmailCode(email: string) {

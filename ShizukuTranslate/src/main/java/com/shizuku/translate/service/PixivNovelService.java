@@ -2,7 +2,9 @@ package com.shizuku.translate.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shizuku.translate.config.AppConfig;
 import com.shizuku.translate.dto.PixivNovelResponse;
+import com.shizuku.translate.dto.PixivSearchItem;
 import com.shizuku.translate.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +22,15 @@ import java.util.regex.Pattern;
 
 /**
  * Imports a Pixiv novel's text from its work URL so the web UI can paste it into the
- * translate box without the user opening Pixiv first.
+ * translate box without the user opening Pixiv first, and searches Pixiv for novels by
+ * keyword (used by the screenshot-import flow).
  *
  * <p>The text is pulled from Pixiv's own AJAX endpoint
  * ({@code https://www.pixiv.net/ajax/novel/{id}}) and returned with Pixiv's control tags
  * stripped. Public novels work without a session; login-gated (for example R-18) novels
- * answer 403 and are reported as such instead of silently importing an empty text.
+ * need the server-side {@code PHPSESSID} configured under {@code app.pixiv.session-cookie}
+ * — the same pattern large archives use (one site-level account cookie). Without it those
+ * works answer 403 and are reported as such instead of silently importing an empty text.
  */
 @Service
 public class PixivNovelService {
@@ -39,9 +44,11 @@ public class PixivNovelService {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final AppConfig.AppProperties appProperties;
 
-    public PixivNovelService(ObjectMapper objectMapper) {
+    public PixivNovelService(ObjectMapper objectMapper, AppConfig.AppProperties appProperties) {
         this.objectMapper = objectMapper;
+        this.appProperties = appProperties;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(15_000);
         requestFactory.setReadTimeout(30_000);
@@ -73,16 +80,23 @@ public class PixivNovelService {
             raw = restClient.get()
                     .uri("/ajax/novel/{id}", novelId)
                     .header(HttpHeaders.REFERER, "https://www.pixiv.net/novel/show.php?id=" + novelId)
+                    .headers(this::applySessionCookie)
                     .retrieve()
                     .body(String.class);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
-            log.warn("Pixiv novel {} import failed with HTTP {}", novelId, status);
+            log.warn("Pixiv novel {} import failed with HTTP {} (session cookie {}present)",
+                    novelId, status, hasSessionCookie() ? "" : "not ");
             if (status == 404) {
-                throw new BusinessException("Pixiv 上找不到这篇小说，请确认链接是否正确");
+                // Without a session Pixiv hides R-18 works as 404, so both causes are named.
+                throw new BusinessException(hasSessionCookie()
+                        ? "Pixiv 上找不到这篇小说（也可能被账号的閲覧設定屏蔽），请确认链接是否正确"
+                        : "Pixiv 上找不到这篇小说；如果它是 R-18 作品，需要服务器配置 Pixiv 会话才能导入，请先登录 Pixiv 手动复制原文");
             }
             if (status == 403 || status == 401) {
-                throw new BusinessException("该小说需要登录 Pixiv 才能查看，请先登录 Pixiv 后手动复制原文");
+                throw new BusinessException(hasSessionCookie()
+                        ? "Pixiv 拒绝了请求：服务器会话可能已失效，或该账号未开启 R-18 显示设置"
+                        : "该小说需要登录 Pixiv 才能查看，请先登录 Pixiv 后手动复制原文");
             }
             throw new BusinessException("Pixiv 请求失败（HTTP " + status + "）");
         } catch (RestClientException e) {
@@ -123,6 +137,99 @@ public class PixivNovelService {
                 tags,
                 text,
                 buildMetadataText(title, author, tags, description));
+    }
+
+    /**
+     * Searches Pixiv novels by keyword (the screenshot-import flow searches with the title and
+     * tags the vision model extracted). Returns the first page of results; an empty list when
+     * Pixiv matched nothing. R-18 results only appear when a session cookie is configured.
+     */
+    public List<PixivSearchItem> searchNovels(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            throw new BusinessException("请输入搜索关键词");
+        }
+        String word = keyword.trim();
+        String raw;
+        try {
+            raw = restClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/ajax/search/novels/{word}")
+                            .queryParam("word", word)
+                            .queryParam("mode", "all")
+                            .queryParam("p", 1)
+                            .build(word))
+                    .header(HttpHeaders.REFERER, "https://www.pixiv.net/")
+                    .headers(this::applySessionCookie)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException e) {
+            log.warn("Pixiv search for '{}' failed with HTTP {}", word, e.getStatusCode().value());
+            throw new BusinessException("Pixiv 搜索失败（HTTP " + e.getStatusCode().value() + "）");
+        } catch (RestClientException e) {
+            log.warn("Pixiv search for '{}' failed: {}", word, e.getMessage());
+            throw new BusinessException("无法连接 Pixiv，请稍后重试", e);
+        }
+        return parseSearchResults(raw);
+    }
+
+    /** Parses {@code body.novel.data[]} out of the search response; malformed input yields an empty list. */
+    List<PixivSearchItem> parseSearchResults(String raw) {
+        List<PixivSearchItem> items = new ArrayList<>();
+        if (raw == null || raw.isBlank()) {
+            return items;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(raw);
+            JsonNode data = root.path("body").path("novel").path("data");
+            if (!data.isArray()) {
+                return items;
+            }
+            for (JsonNode node : data) {
+                String id = node.path("id").asText("");
+                String title = node.path("title").asText("");
+                if (id.isBlank() || title.isBlank()) {
+                    continue;
+                }
+                items.add(new PixivSearchItem(
+                        id,
+                        title,
+                        node.path("userName").asText(""),
+                        extractPlainTagList(node.path("tags")),
+                        node.path("xRestrict").asInt(0),
+                        stripHtml(node.path("description").asText("")),
+                        node.path("textCount").asInt(0)));
+            }
+        } catch (Exception e) {
+            log.warn("无法解析 Pixiv 搜索响应", e);
+        }
+        return items;
+    }
+
+    /** Search results carry tags as a bare string array (not the {@code tags.tags[].tag} shape). */
+    static List<String> extractPlainTagList(JsonNode tagsNode) {
+        List<String> tags = new ArrayList<>();
+        if (!tagsNode.isArray()) {
+            return tags;
+        }
+        for (JsonNode tag : tagsNode) {
+            String value = tag.asText("").trim();
+            if (!value.isEmpty()) {
+                tags.add(value);
+            }
+        }
+        return tags;
+    }
+
+    private boolean hasSessionCookie() {
+        String cookie = appProperties.getPixivSessionCookie();
+        return cookie != null && !cookie.isBlank();
+    }
+
+    /** Sends the configured site-level session; never logs or echoes the value. */
+    private void applySessionCookie(HttpHeaders headers) {
+        String cookie = appProperties.getPixivSessionCookie();
+        if (cookie != null && !cookie.isBlank()) {
+            headers.set(HttpHeaders.COOKIE, "PHPSESSID=" + cookie.trim());
+        }
     }
 
     /** Pixiv tags live under {@code body.tags.tags[].tag}; missing or malformed shapes yield an empty list. */
