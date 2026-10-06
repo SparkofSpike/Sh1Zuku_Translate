@@ -66,7 +66,7 @@ export default {
   pipeline: {
     extractRunning: 'Extracting proper nouns…',
     extractDone: 'Extracted {count} proper nouns',
-    translating: 'Translating chunk {current}/{total}',
+    translating: 'Translating — progress ({current}/{total})',
     auditRunning: 'Auditing terminology consistency…',
     auditDone: 'Audit complete — {count} fix(es)',
     auditClean: 'Audit complete — no inconsistencies found',

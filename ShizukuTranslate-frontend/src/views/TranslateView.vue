@@ -821,6 +821,9 @@ async function translate(forceRetranslate = false) {
       (response: TranslateResponse) => {
         // The audit stage may repair terminology after tokens were streamed; show the final text.
         if (response.translatedText) streamingText.value = response.translatedText
+        // The pipeline strip only reports progress while it runs; hide it once finished.
+        pipelineStage.value = ''
+        pipelineCount.value = null
         streamingResult.value = response
         hasReusableResult.value = true
         status.value = 'idle'

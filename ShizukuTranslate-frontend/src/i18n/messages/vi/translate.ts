@@ -66,7 +66,7 @@ export default {
   pipeline: {
     extractRunning: 'Đang trích xuất danh từ riêng…',
     extractDone: 'Đã trích xuất {count} danh từ riêng',
-    translating: 'Đang dịch phần {current}/{total}',
+    translating: 'Đang dịch — tiến độ ({current}/{total})',
     auditRunning: 'Đang kiểm tra nhất quán thuật ngữ…',
     auditDone: 'Kiểm tra xong — sửa {count} chỗ',
     auditClean: 'Kiểm tra xong — không phát hiện sai lệch',

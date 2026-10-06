@@ -66,7 +66,7 @@ export default {
   pipeline: {
     extractRunning: '正在提取专有名词…',
     extractDone: '已提取 {count} 个专有名词',
-    translating: '分块翻译中（{current}/{total}）',
+    translating: '翻译中，进度（{current}/{total}）',
     auditRunning: '正在做术语一致性审校…',
     auditDone: '审校完成，修正 {count} 处',
     auditClean: '审校完成，未发现不一致',
