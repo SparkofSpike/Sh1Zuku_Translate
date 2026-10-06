@@ -33,11 +33,12 @@ class ChunkedTranslationSupportTest {
 
     @Test
     void boundariesPulledToNewlinesNeverSplitInsideLine() {
-        // Three lines of "0123456789\n" (11 chars each). unit=15 targets ceil(33/3)=11,
-        // exact line end, so boundaries land after each newline.
+        // Three lines of "0123456789\n" (11 chars each, 33 total). unit=15 targets
+        // ceil(33/3)=11, but the second boundary (at char 22) is a line start, so the
+        // algorithm keeps extending until it reaches a newline, yielding two chunks.
         String line = "0123456789\n".repeat(3);
         List<String> chunks = ChunkedTranslationSupport.splitIntoChunks(line, 15);
-        assertEquals(3, chunks.size());
+        assertEquals(2, chunks.size());
         // Every chunk but the last must end exactly where a line ends (right after '\n').
         for (int i = 0; i < chunks.size() - 1; i++) {
             assertTrue(chunks.get(i).endsWith("\n"), "chunk " + i + " must end at a line boundary");

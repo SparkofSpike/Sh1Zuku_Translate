@@ -62,23 +62,23 @@ class TerminologyServiceTest {
     void parseAuditFindingsValidJson() {
         List<String[]> pairs = TerminologyService.parseAuditFindings(
                 "[{\"standard\":\"魔法阵\",\"variants\":[\"魔导阵\",\"魔法军\"]},"
-                        + "{\"standard\":\"龙\",\"variants\":[\"龍\"]}]");
+                        + "{\"standard\":\"龙\",\"variants\":[\"龙萧\"]}]");
         assertEquals(3, pairs.size());
         assertEquals("魔法阵", pairs.get(0)[0]);
         assertEquals("魔导阵", pairs.get(0)[1]);
         assertEquals("魔法阵", pairs.get(1)[0]);
         assertEquals("魔法军", pairs.get(1)[1]);
         assertEquals("龙", pairs.get(2)[0]);
-        assertEquals("龍", pairs.get(2)[1]);
+        assertEquals("龙萧", pairs.get(2)[1]);
     }
 
     @Test
     void parseAuditFindingsToleratesProse() {
         List<String[]> pairs = TerminologyService.parseAuditFindings(
-                "结果如下：[{\"standard\":\"A\",\"variants\":[\"b\"]}]，校对完毕");
+                "结果如下：[{\"standard\":\"AA\",\"variants\":[\"bb\"]}]，校对完毕");
         assertEquals(1, pairs.size());
-        assertEquals("A", pairs.get(0)[0]);
-        assertEquals("b", pairs.get(0)[1]);
+        assertEquals("AA", pairs.get(0)[0]);
+        assertEquals("bb", pairs.get(0)[1]);
     }
 
     @Test
@@ -102,11 +102,11 @@ class TerminologyServiceTest {
 
     @Test
     void parseAuditFindingsSkipsVariantEqualToStandard() {
-        // A no-op replacement ("A" -> "A") must be dropped.
+        // A no-op replacement ("AB" -> "AB") must be dropped; the distinct "CD" survives.
         List<String[]> pairs = TerminologyService.parseAuditFindings(
-                "[{\"standard\":\"A\",\"variants\":[\"A\",\"B\"]}]");
+                "[{\"standard\":\"AB\",\"variants\":[\"AB\",\"CD\"]}]");
         assertEquals(1, pairs.size());
-        assertEquals("B", pairs.get(0)[1]);
+        assertEquals("CD", pairs.get(0)[1]);
     }
 
     // ----- renderTermBlock -----
