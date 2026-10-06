@@ -1,5 +1,6 @@
 package com.shizuku.translate.service;
 
+import com.shizuku.translate.dto.TokenUsage;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.entity.Preset;
@@ -12,6 +13,7 @@ import com.shizuku.translate.repository.PresetRepository;
 import com.shizuku.translate.repository.TranslationCacheRepository;
 import com.shizuku.translate.repository.TranslationRecordRepository;
 import com.shizuku.translate.service.feedback.TranslationFeedbackService;
+import com.shizuku.translate.service.longform.TerminologyService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +28,8 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -77,6 +81,9 @@ class TranslationServiceTest {
     @Mock
     private TranslationFeedbackService feedbackService;
 
+    @Mock
+    private TerminologyService terminologyService;
+
     private User user;
 
     @BeforeEach
@@ -89,7 +96,7 @@ class TranslationServiceTest {
         // the shared mocks injected.
         promptTemplateService = new PromptTemplateService(new AppConfigStub(), new GlossaryService(null), presetRepository);
         service = new TranslationService(aiModelClient, recordRepository, cacheRepository,
-                userService, promptTemplateService, usageService, resultWriter, feedbackService);
+                userService, promptTemplateService, usageService, resultWriter, feedbackService, terminologyService);
         lenient().when(presetRepository.findAll()).thenReturn(List.of(
                 Preset.builder().id(1L).name("NSFW破甲").prompt("preset-rule").build()));
         // The writer normally returns the persisted response; give the mock one so the
@@ -489,5 +496,36 @@ class TranslationServiceTest {
                         token -> { }, response -> { }, error -> { }, () -> { }, () -> false));
         verify(aiModelClient, never()).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void mergeUsageSumsFieldsAcrossChunks() {
+        TokenUsage a = new TokenUsage();
+        a.setPromptTokens(100);
+        a.setCompletionTokens(200);
+        a.setTotalTokens(300);
+        TokenUsage b = new TokenUsage();
+        b.setPromptTokens(10);
+        b.setCompletionTokens(20);
+        b.setTotalTokens(30);
+
+        TokenUsage merged = service.mergeUsage(a, b);
+        assertEquals(110, merged.getPromptTokens());
+        assertEquals(220, merged.getCompletionTokens());
+        assertEquals(330, merged.getTotalTokens());
+    }
+
+    @Test
+    void mergeUsageHandlesNullSides() {
+        TokenUsage a = new TokenUsage();
+        a.setPromptTokens(1);
+        a.setCompletionTokens(2);
+        a.setTotalTokens(3);
+
+        // Merging against null returns the other side unchanged, so a single chunk
+        // whose usage is present still records correctly.
+        assertSame(a, service.mergeUsage(a, null));
+        assertSame(a, service.mergeUsage(null, a));
+        assertNull(service.mergeUsage(null, null));
     }
 }
