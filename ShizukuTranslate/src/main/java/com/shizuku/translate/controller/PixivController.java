@@ -1,9 +1,11 @@
 package com.shizuku.translate.controller;
 
+import com.shizuku.translate.dto.PixivMatchResponse;
 import com.shizuku.translate.dto.PixivNovelResponse;
 import com.shizuku.translate.dto.PixivSearchItem;
 import com.shizuku.translate.exception.BusinessException;
 import com.shizuku.translate.service.PixivImageImportService;
+import com.shizuku.translate.service.PixivMatchService;
 import com.shizuku.translate.service.PixivNovelService;
 import com.shizuku.translate.service.UserService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,13 +40,16 @@ public class PixivController {
 
     private final PixivNovelService pixivNovelService;
     private final PixivImageImportService pixivImageImportService;
+    private final PixivMatchService pixivMatchService;
     private final UserService userService;
 
     public PixivController(PixivNovelService pixivNovelService,
                            PixivImageImportService pixivImageImportService,
+                           PixivMatchService pixivMatchService,
                            UserService userService) {
         this.pixivNovelService = pixivNovelService;
         this.pixivImageImportService = pixivImageImportService;
+        this.pixivMatchService = pixivMatchService;
         this.userService = userService;
     }
 
@@ -57,6 +62,37 @@ public class PixivController {
     public List<PixivSearchItem> searchNovels(@RequestParam("keyword") String keyword,
                                               @RequestParam(value = "mode", defaultValue = "tag") String mode) {
         return pixivNovelService.searchNovels(keyword, mode);
+    }
+
+    /**
+     * Screenshot → recognised metadata → the matched work (or a ranked candidate list), in one
+     * call: the whole website import flow — vision extraction plus the multi-search ranking —
+     * behind the API, so an external client (the QQ bridge) never re-implements the matching.
+     */
+    @PostMapping("/pixiv/match")
+    public PixivMatchResponse matchNovels(
+            @RequestPart(value = "images", required = false) List<MultipartFile> images,
+            Principal principal) throws IOException {
+        userService.requireEmailVerified(principal.getName());
+        if (images == null || images.isEmpty()) {
+            throw new BusinessException("请上传至少一张图片");
+        }
+        if (images.size() > MAX_EXTRACT_IMAGES) {
+            throw new BusinessException("一次最多识别 " + MAX_EXTRACT_IMAGES + " 张图片");
+        }
+        List<byte[]> payloads = new ArrayList<>();
+        List<String> mediaTypes = new ArrayList<>();
+        for (MultipartFile image : images) {
+            if (image == null || image.isEmpty()) {
+                continue;
+            }
+            payloads.add(image.getBytes());
+            mediaTypes.add(image.getContentType());
+        }
+        if (payloads.isEmpty()) {
+            throw new BusinessException("请上传至少一张图片");
+        }
+        return pixivMatchService.matchFromImages(payloads, mediaTypes);
     }
 
     /** Screenshot → vision model → {title, author, tags[], summary}. */
