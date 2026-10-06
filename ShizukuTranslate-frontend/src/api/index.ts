@@ -28,6 +28,19 @@ interface SseState {
 }
 
 /**
+ * Progress event of the long-novel pipeline ({@code stage} non-empty) or a plain stream status
+ * hint like {@code ai-connected}. Stages: extract → translate → audit.
+ */
+export interface SseStatus {
+  status?: string
+  stage?: string
+  detail?: string
+  current?: number
+  total?: number
+  count?: number
+}
+
+/**
  * Reads one SSE body and forwards its events. Malformed records are ignored: a single bad
  * chunk must not kill an otherwise healthy stream.
  */
@@ -36,7 +49,8 @@ async function consumeSseStream(
   state: SseState,
   onToken: (token: string) => void,
   onDone: (response: TranslateResponse) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  onStatus?: (status: SseStatus) => void
 ) {
   const reader = response.body?.getReader()
   if (!reader) { onError('Stream not supported'); state.doneReceived = true; return }
@@ -52,6 +66,9 @@ async function consumeSseStream(
       if (typeof parsed.token === 'string') onToken(parsed.token)
       if (parsed.done) { state.doneReceived = true; onDone(parsed as unknown as TranslateResponse) }
       if (parsed.error) { state.doneReceived = true; onError(parsed.error) }
+      if (onStatus && !parsed.done && !parsed.error && (parsed.stage || typeof parsed.status === 'string')) {
+        onStatus(parsed as SseStatus)
+      }
     } catch (e) {
       // Ignore malformed SSE records and continue consuming the stream.
     }
@@ -81,7 +98,8 @@ function streamPost(
   init: RequestInit,
   onToken: (token: string) => void,
   onDone: (response: TranslateResponse) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  onStatus?: (status: SseStatus) => void
 ): AbortController {
   const controller = new AbortController()
   const state: SseState = { doneReceived: false }
@@ -104,7 +122,7 @@ function streamPost(
         onError(message)
         return
       }
-      await consumeSseStream(response, state, onToken, onDone, onError)
+      await consumeSseStream(response, state, onToken, onDone, onError, onStatus)
       if (!state.doneReceived) onError('翻译流意外中断，请重试')
     })
     .catch((err: unknown) => {
@@ -131,7 +149,11 @@ export function translateStream(
   /** Re-translate: bypass both the personal cache and other users' shared translations. */
   skipCache: boolean = false,
   /** requestId of the result being re-translated; lets the backend link old and new for feedback. */
-  retranslatedFrom?: string
+  retranslatedFrom?: string,
+  /** Super-long-novel term correction: slower, but keeps coined terms consistent across chunks. */
+  novelTermFix: boolean = false,
+  /** Receives long-novel pipeline progress (extract / translate / audit stages). */
+  onStatus?: (status: SseStatus) => void
 ): AbortController {
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -142,8 +164,8 @@ export function translateStream(
   return streamPost(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache, retranslatedFrom } as TranslateRequest)
-  }, onToken, onDone, onError)
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache, retranslatedFrom, novelTermFix } as TranslateRequest)
+  }, onToken, onDone, onError, onStatus)
 }
 
 /**

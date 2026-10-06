@@ -16,6 +16,11 @@ export interface TranslateRequest {
    * "re-translate", so the backend can link the new translation to the one it replaces.
    */
   retranslatedFrom?: string
+  /**
+   * Super-long-novel term correction: pre-extract proper nouns / coined terms, inject the table
+   * into every chunk and audit the result for terminology drift. Slower; off by default.
+   */
+  novelTermFix?: boolean
 }
 
 /** A Pixiv novel imported by URL (`GET /pixiv/novel`). */

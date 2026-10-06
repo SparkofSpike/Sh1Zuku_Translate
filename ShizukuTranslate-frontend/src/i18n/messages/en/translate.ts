@@ -59,6 +59,19 @@ export default {
   },
   targetLanguage: 'Target language',
   streaming: 'Stream output',
+  termFix: {
+    label: 'Coined-term fix for long novels',
+    hint: 'Slower: proper nouns are extracted before translating and the result is audited for consistency afterwards.'
+  },
+  pipeline: {
+    extractRunning: 'Extracting proper nouns…',
+    extractDone: 'Extracted {count} proper nouns',
+    translating: 'Translating chunk {current}/{total}',
+    auditRunning: 'Auditing terminology consistency…',
+    auditDone: 'Audit complete — {count} fix(es)',
+    auditClean: 'Audit complete — no inconsistencies found',
+    auditSkipped: 'Audit skipped (term extraction unavailable)'
+  },
   customPrompt: 'Custom extra prompt (optional)',
   start: 'Start translation',
   cancel: 'Cancel translation',

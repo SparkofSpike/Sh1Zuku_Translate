@@ -33,6 +33,13 @@ public class TranslateRequest {
      * (a re-translation is a dissatisfaction signal, not a random draw).
      */
     private String retranslatedFrom;
+    /**
+     * Super-long-novel term correction: before translating, scan the whole text for proper nouns,
+     * character aliases and coined terms and inject the extracted table into every chunk; after
+     * translating, audit the result for terminology drift and repair mismatched renderings.
+     * Off by default; the extra model passes make the translation noticeably slower.
+     */
+    private boolean novelTermFix;
 
     public String getSourceText() { return sourceText; }
     public void setSourceText(String sourceText) { this.sourceText = sourceText; }
@@ -52,5 +59,7 @@ public class TranslateRequest {
     public void setTargetLanguage(String targetLanguage) { this.targetLanguage = targetLanguage; }
     public String getRetranslatedFrom() { return retranslatedFrom; }
     public void setRetranslatedFrom(String retranslatedFrom) { this.retranslatedFrom = retranslatedFrom; }
+    public boolean isNovelTermFix() { return novelTermFix; }
+    public void setNovelTermFix(boolean novelTermFix) { this.novelTermFix = novelTermFix; }
 
 }

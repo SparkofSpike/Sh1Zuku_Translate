@@ -1,6 +1,7 @@
 package com.shizuku.translate.service;
 
 import com.shizuku.translate.dto.HistoryResponse;
+import com.shizuku.translate.dto.SseStatusEvent;
 import com.shizuku.translate.dto.TokenUsage;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
@@ -70,6 +71,36 @@ public class TranslationService {
      * the async job starts.
      */
     public static final int MAX_IMAGES_PER_REQUEST = 10;
+
+    /**
+     * Above this input length a translation is split into paragraph-aligned chunks. Derived
+     * from observed behaviour: single-pass outputs that run into the tens of thousands of
+     * tokens start dropping words, collapsing into telegraph style and drifting on names in
+     * their last third, while per-chunk outputs of roughly half that size stay clean.
+     */
+    static final int CHUNK_UNIT_CHARS = 42000;
+
+    /** Upper bound for pre-extracted terms; a runaway list must not inflate every chunk prompt. */
+    static final int MAX_EXTRACTED_TERMS = 300;
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Prompt for the pre-translation term scan (runs in thinking mode). */
+    private static final String TERM_EXTRACT_SYSTEM =
+            "你是术语管理助手。请从小说原文中提取所有需要统一译名的专有名词，覆盖三类：\n"
+            + "1. 人物（本名、昵称、称呼方式）；2. 地名、组织、作品名；3. 自造词与特殊概念（术式、物品、种族、设定术语）。\n"
+            + "对每个词给出：原文、建议的简体中文译名、类型（person/place/concept）。\n"
+            + "以 JSON 数组输出：[{\"term\":\"原文\",\"translation\":\"译名\",\"type\":\"person\"}]\n"
+            + "只输出 JSON 数组，不要任何其他文字。";
+
+    /** Prompt for the post-translation terminology audit (runs in thinking mode). */
+    private static final String TERM_AUDIT_SYSTEM =
+            "你是翻译审校助手。给你一张术语表（原文→标准译名）和一篇已完成的译文。\n"
+            + "任务：检查译文中是否出现了与标准译名不一致的写法（同一术语的不同译法）。\n"
+            + "只报告明确属于同一术语却写法不同的情况，不要把意思相近的普通词误报为变体。\n"
+            + "以 JSON 数组输出：[{\"standard\":\"标准译名\",\"variants\":[\"出现的不同写法\"]}]\n"
+            + "如果没有任何不一致，输出 []。只输出 JSON。";
 
     /**
      * Image translation. The multimodal call and the database writes are deliberately kept
@@ -274,6 +305,15 @@ public class TranslationService {
                                 Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
                                 Consumer<String> onError, Runnable onUpstreamConnected,
                                 BooleanSupplier cancelled) {
+        translateStream(username, request, hideCustomPrompt, onToken, onComplete, onError,
+                onUpstreamConnected, cancelled, status -> { });
+    }
+
+    /** Overload that also reports long-novel pipeline progress through {@code onStatus}. */
+    public void translateStream(String username, TranslateRequest request, boolean hideCustomPrompt,
+                                Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
+                                Consumer<String> onError, Runnable onUpstreamConnected,
+                                BooleanSupplier cancelled, Consumer<SseStatusEvent> onStatus) {
         requireSourceText(request);
         long startedAt = System.currentTimeMillis();
         feedbackService.onRetranslate(request.getRetranslatedFrom());
@@ -380,8 +420,15 @@ public class TranslationService {
             return;
         }
 
+        // Long texts go through the chunked pipeline: one request per paragraph-aligned chunk
+        // on a single continuous token stream (see CHUNK_UNIT_CHARS for the why).
+        if (request.getSourceText().length() > CHUNK_UNIT_CHARS) {
+            translateChunked(user, request, config, systemPrompt, resolvedTargetLanguage, cacheKey,
+                    hideCustomPrompt, startedAt, onToken, onComplete, onError, cancelled, onStatus);
+            return;
+        }
+
         StringBuilder fullText = new StringBuilder();
-        TokenUsage[] usageHolder = new TokenUsage[1];
 
         aiModelClient.chatStream(
                 systemPrompt,
@@ -392,52 +439,355 @@ public class TranslationService {
                     onToken.accept(token);
                 },
                 usage -> {
-                    usageHolder[0] = usage;
-                    usageService.record(user, config, usage);
-
-                    TranslationRecord record = new TranslationRecord();
-                    record.setUser(user);
-                    record.setSourceText(request.getSourceText());
-                    record.setTranslatedText(fullText.toString());
-                    record.setModel(config.getModel());
-                    record.setCustomPrompt(hideCustomPrompt ? null : request.getCustomPrompt());
-                    record.setTargetLanguage(resolvedTargetLanguage);
-                    record.setRequestId(java.util.UUID.randomUUID().toString());
-                    record = recordRepository.save(record);
-
-                    TranslateResponse response = new TranslateResponse();
-                    response.setId(record.getId());
-                    response.setTranslatedText(fullText.toString());
-                    response.setModel(config.getModel());
-                    response.setCreatedAt(record.getCreatedAt());
-                    response.setRequestId(record.getRequestId());
-                    if (usage != null) {
-                        response.setTokenUsage(usage);
-                    }
-                    feedbackService.registerTranslation(record.getRequestId(), request.getSourceText(),
-                            fullText.toString(), config.getProvider(), config.getModel(),
-                            config.getThinkingType(), resolvedTargetLanguage,
-                            System.currentTimeMillis() - startedAt, true);
-                    try {
-                        TranslationCache cache = TranslationCache.builder()
-                                .userId(user.getId())
-                                .cacheKey(cacheKey)
-                                .model(config.getModel())
-                                .translatedText(fullText.toString())
-                                .promptTokens(usage != null ? usage.getPromptTokens() : null)
-                                .completionTokens(usage != null ? usage.getCompletionTokens() : null)
-                                .totalTokens(usage != null ? usage.getTotalTokens() : null)
-                                .build();
-                        cacheRepository.save(cache);
-                    } catch (Exception e) {
-                        log.warn("Failed to write translation cache", e);
-                    }
-                    onComplete.accept(response);
+                    finalizeStreamedTranslation(user, config, usage, fullText.toString(),
+                            request.getSourceText(), request.getCustomPrompt(), hideCustomPrompt,
+                            resolvedTargetLanguage, cacheKey, startedAt, onComplete);
                 },
                 error -> onError.accept(error),
                 onUpstreamConnected,
                 cancelled
         );
+    }
+
+    // ===== long-novel chunked pipeline =====
+
+    /**
+     * Translates a long text as paragraph-aligned chunks on one continuous token stream.
+     *
+     * <p>Each chunk request carries the tails of the previous chunk (source and translation),
+     * the way a multi-turn conversation carries its history, so names, pronouns and tone stay
+     * attached across the seams even though no single request ever sees the whole book. With
+     * {@code novelTermFix} enabled the text is first scanned for proper nouns and coined terms
+     * (the table is injected into every chunk) and the finished translation is audited for
+     * terminology drift afterwards.
+     */
+    private void translateChunked(User user, TranslateRequest request, AiModelConfig config,
+                                  String systemPrompt, String resolvedTargetLanguage, String cacheKey,
+                                  boolean hideCustomPrompt, long startedAt,
+                                  Consumer<String> onToken, Consumer<TranslateResponse> onComplete,
+                                  Consumer<String> onError, BooleanSupplier cancelled,
+                                  Consumer<SseStatusEvent> onStatus) {
+        String sourceText = request.getSourceText();
+        List<String> chunks = splitIntoChunks(sourceText, CHUNK_UNIT_CHARS);
+        List<String> translatedChunks = new ArrayList<>();
+        StringBuilder fullText = new StringBuilder();
+        TokenUsage mergedUsage = null;
+
+        // Stage 1 — pre-extract proper nouns / coined terms so every chunk renders them the
+        // same way.
+        List<TermPair> terms = List.of();
+        if (request.isNovelTermFix()) {
+            onStatus.accept(new SseStatusEvent("long-novel", "extract", null, null, null, null));
+            try {
+                terms = extractTerms(config, sourceText);
+            } catch (Exception e) {
+                log.warn("Term pre-extraction failed; continuing without it", e);
+            }
+            onStatus.accept(new SseStatusEvent("long-novel", "extract-done", null, null, null, terms.size()));
+        }
+
+        String effectivePrompt = systemPrompt;
+        if (!terms.isEmpty()) {
+            effectivePrompt = systemPrompt + "\n\n请特别注意以下要求：\n- " + renderTermBlock(terms);
+        }
+
+        // Stage 2 — translate chunk by chunk; tokens keep flowing through the same stream.
+        for (int i = 0; i < chunks.size(); i++) {
+            if (cancelled.getAsBoolean()) {
+                return;
+            }
+            onStatus.accept(new SseStatusEvent("long-novel", "translate", null, i + 1, chunks.size(), null));
+            StringBuilder piece = new StringBuilder();
+            TokenUsage[] chunkUsage = new TokenUsage[1];
+            String[] chunkError = new String[1];
+            aiModelClient.chatStream(effectivePrompt, buildChunkUserMessage(chunks, translatedChunks, i), config,
+                    token -> {
+                        piece.append(token);
+                        onToken.accept(token);
+                    },
+                    usage -> chunkUsage[0] = usage,
+                    error -> chunkError[0] = error,
+                    () -> { },
+                    cancelled);
+            if (chunkError[0] != null) {
+                onError.accept(chunkError[0]);
+                return;
+            }
+            if (piece.length() == 0) {
+                onError.accept("第 " + (i + 1) + "/" + chunks.size() + " 块没有返回内容，请重试");
+                return;
+            }
+            translatedChunks.add(piece.toString());
+            fullText.append(piece);
+            mergedUsage = mergeUsage(mergedUsage, chunkUsage[0]);
+        }
+
+        // Stage 3 — audit the finished translation for terminology drift and repair it.
+        String finalText = fullText.toString();
+        if (request.isNovelTermFix() && !terms.isEmpty()) {
+            onStatus.accept(new SseStatusEvent("long-novel", "audit", null, null, null, null));
+            try {
+                AuditOutcome outcome = auditTerminology(config, finalText, terms);
+                finalText = outcome.correctedText();
+                onStatus.accept(new SseStatusEvent("long-novel", "audit-done", null, null, null, outcome.fixes()));
+            } catch (Exception e) {
+                log.warn("Terminology audit failed; keeping the translation as-is", e);
+                onStatus.accept(new SseStatusEvent("long-novel", "audit-skipped", null, null, null, null));
+            }
+        }
+
+        if (cancelled.getAsBoolean()) {
+            return;
+        }
+        finalizeStreamedTranslation(user, config, mergedUsage, finalText, sourceText,
+                request.getCustomPrompt(), hideCustomPrompt, resolvedTargetLanguage, cacheKey,
+                startedAt, onComplete);
+    }
+
+    /** The shared tail of a streamed translation: usage, history row, feedback, cache, response. */
+    private void finalizeStreamedTranslation(User user, AiModelConfig config, TokenUsage usage,
+                                             String translatedText, String sourceText, String customPrompt,
+                                             boolean hideCustomPrompt, String resolvedTargetLanguage,
+                                             String cacheKey, long startedAt,
+                                             Consumer<TranslateResponse> onComplete) {
+        usageService.record(user, config, usage);
+
+        TranslationRecord record = new TranslationRecord();
+        record.setUser(user);
+        record.setSourceText(sourceText);
+        record.setTranslatedText(translatedText);
+        record.setModel(config.getModel());
+        record.setCustomPrompt(hideCustomPrompt ? null : customPrompt);
+        record.setTargetLanguage(resolvedTargetLanguage);
+        record.setRequestId(java.util.UUID.randomUUID().toString());
+        record = recordRepository.save(record);
+
+        TranslateResponse response = new TranslateResponse();
+        response.setId(record.getId());
+        response.setTranslatedText(translatedText);
+        response.setModel(config.getModel());
+        response.setCreatedAt(record.getCreatedAt());
+        response.setRequestId(record.getRequestId());
+        if (usage != null) {
+            response.setTokenUsage(usage);
+        }
+        feedbackService.registerTranslation(record.getRequestId(), sourceText, translatedText,
+                config.getProvider(), config.getModel(), config.getThinkingType(),
+                resolvedTargetLanguage, System.currentTimeMillis() - startedAt, true);
+        try {
+            TranslationCache cache = TranslationCache.builder()
+                    .userId(user.getId())
+                    .cacheKey(cacheKey)
+                    .model(config.getModel())
+                    .translatedText(translatedText)
+                    .promptTokens(usage != null ? usage.getPromptTokens() : null)
+                    .completionTokens(usage != null ? usage.getCompletionTokens() : null)
+                    .totalTokens(usage != null ? usage.getTotalTokens() : null)
+                    .build();
+            cacheRepository.save(cache);
+        } catch (Exception e) {
+            log.warn("Failed to write translation cache", e);
+        }
+        onComplete.accept(response);
+    }
+
+    /**
+     * Splits {@code text} into paragraph-aligned chunks of roughly {@code chunkUnit} characters,
+     * never breaking inside a line: every boundary is pulled forward to the next newline, so a
+     * chunk always ends where a line (usually a paragraph) ends.
+     */
+    static List<String> splitIntoChunks(String text, int chunkUnit) {
+        int total = text.length();
+        int count = Math.max(1, (int) Math.ceil(total / (double) chunkUnit));
+        int target = (int) Math.ceil(total / (double) count);
+        List<String> out = new ArrayList<>();
+        int start = 0;
+        while (start < total) {
+            int remaining = count - out.size();
+            if (remaining <= 1) {
+                out.add(text.substring(start));
+                break;
+            }
+            int targetEnd = Math.min(total, start + target);
+            int end = targetEnd;
+            if (targetEnd < total) {
+                int newline = text.indexOf('\n', targetEnd);
+                end = (newline >= 0) ? newline + 1 : total;
+            }
+            out.add(text.substring(start, end));
+            start = end;
+        }
+        return out;
+    }
+
+    /**
+     * User message for one chunk: the previous chunk's source and translation tails serve as the
+     * conversation history (what happened, how it was phrased), then the text to translate.
+     */
+    static String buildChunkUserMessage(List<String> chunks, List<String> translatedSoFar, int index) {
+        String current = chunks.get(index);
+        if (index == 0) {
+            return current;
+        }
+        String prevSource = tail(chunks.get(index - 1), 400);
+        String prevTranslation = tail(translatedSoFar.get(index - 1), 400);
+        return "【前文末尾，仅供衔接参考，请勿重复翻译】\n原文：…" + prevSource
+                + "\n译文：…" + prevTranslation
+                + "\n\n【请从下方内容开始继续翻译，保持人称、术语、语气与前文完全一致】\n" + current;
+    }
+
+    private static String tail(String value, int max) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        return value.length() <= max ? value : value.substring(value.length() - max);
+    }
+
+    private static TokenUsage mergeUsage(TokenUsage a, TokenUsage b) {
+        if (b == null) return a;
+        if (a == null) return b;
+        TokenUsage merged = new TokenUsage();
+        merged.setPromptTokens(safeInt(a.getPromptTokens()) + safeInt(b.getPromptTokens()));
+        merged.setCompletionTokens(safeInt(a.getCompletionTokens()) + safeInt(b.getCompletionTokens()));
+        merged.setTotalTokens(safeInt(a.getTotalTokens()) + safeInt(b.getTotalTokens()));
+        return merged;
+    }
+
+    private static int safeInt(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    /** One extracted proper noun / coined term with its mandated rendering. */
+    record TermPair(String source, String translation) {}
+
+    /** Scans the whole text for proper nouns and coined terms (thinking mode; short output). */
+    private List<TermPair> extractTerms(AiModelConfig config, String sourceText) {
+        AiModelConfig thinking = new AiModelConfig(config.getProvider(), config.getApiKey(),
+                config.getBaseUrl(), config.getModel(), "enabled");
+        AiModelClient.DeepSeekResult result = aiModelClient.chat(TERM_EXTRACT_SYSTEM,
+                "请提取以下原文中的专有名词：\n\n" + sourceText, thinking);
+        List<TermPair> terms = parseTermPairs(result.getContent());
+        log.info("Pre-extracted {} terms for a {} character text", terms.size(), sourceText.length());
+        return terms;
+    }
+
+    /** Parses term JSON, tolerating prose around the array; an unparsable answer yields none. */
+    static List<TermPair> parseTermPairs(String content) {
+        List<TermPair> out = new ArrayList<>();
+        String json = extractJsonArray(content);
+        if (json == null) {
+            return out;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = JSON.readTree(json);
+            if (arr.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode node : arr) {
+                    String term = node.path("term").asText("").trim();
+                    String translation = node.path("translation").asText("").trim();
+                    if (!term.isEmpty() && !translation.isEmpty() && out.size() < MAX_EXTRACTED_TERMS) {
+                        out.add(new TermPair(term, translation));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not parse term extraction output; continuing without terms", e);
+        }
+        return out;
+    }
+
+    /** Renders the extracted table as one system-prompt line shared by every chunk. */
+    static String renderTermBlock(List<TermPair> terms) {
+        StringBuilder block = new StringBuilder("【本文专有名词对照表】（自动提取，翻译时必须严格遵循这些译名）：");
+        for (TermPair term : terms) {
+            block.append(term.source()).append("→").append(term.translation()).append("、");
+        }
+        if (block.charAt(block.length() - 1) == '、') {
+            block.setLength(block.length() - 1);
+        }
+        return block.append("。").toString();
+    }
+
+    /** Result of the post-translation audit: the repaired text plus how many occurrences changed. */
+    record AuditOutcome(String correctedText, int fixes) {}
+
+    /**
+     * Audits the finished translation for terminology drift and repairs it deterministically: the
+     * model only points out mismatched renderings, the actual replacements are plain string
+     * edits, so a flaky audit answer can never rewrite arbitrary prose.
+     */
+    private AuditOutcome auditTerminology(AiModelConfig config, String translatedText, List<TermPair> terms) {
+        AiModelConfig thinking = new AiModelConfig(config.getProvider(), config.getApiKey(),
+                config.getBaseUrl(), config.getModel(), "enabled");
+        StringBuilder termList = new StringBuilder();
+        for (TermPair term : terms) {
+            termList.append(term.source()).append(" → ").append(term.translation()).append('\n');
+        }
+        AiModelClient.DeepSeekResult result = aiModelClient.chat(TERM_AUDIT_SYSTEM,
+                "【术语表】\n" + termList + "\n【译文】\n" + translatedText, thinking);
+        String text = translatedText;
+        int fixes = 0;
+        for (String[] pair : parseAuditFindings(result.getContent())) {
+            String standard = pair[0];
+            String variant = pair[1];
+            if (variant.equals(standard) || !text.contains(variant)) {
+                continue;
+            }
+            int count = 0;
+            int index = 0;
+            while ((index = text.indexOf(variant, index)) >= 0) {
+                count++;
+                index += variant.length();
+            }
+            if (count > 0) {
+                text = text.replace(variant, standard);
+                fixes += count;
+            }
+        }
+        return new AuditOutcome(text, fixes);
+    }
+
+    /** Parses audit JSON into {@code [standard, variant]} replacement pairs. */
+    static List<String[]> parseAuditFindings(String content) {
+        List<String[]> out = new ArrayList<>();
+        String json = extractJsonArray(content);
+        if (json == null) {
+            return out;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = JSON.readTree(json);
+            if (arr.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode node : arr) {
+                    String standard = node.path("standard").asText("").trim();
+                    if (standard.isEmpty()) {
+                        continue;
+                    }
+                    for (com.fasterxml.jackson.databind.JsonNode variantNode : node.path("variants")) {
+                        String variant = variantNode.asText("").trim();
+                        // Conservative: skip empties, no-op replacements and single characters, so a
+                        // hallucinated "variant" cannot shred the text via a common short string.
+                        if (!variant.isEmpty() && !variant.equals(standard) && variant.length() >= 2) {
+                            out.add(new String[]{standard, variant});
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not parse audit output; keeping the translation as-is", e);
+        }
+        return out;
+    }
+
+    /** Returns the widest {@code [...]} span in the content, or null when there is none. */
+    private static String extractJsonArray(String content) {
+        if (content == null) {
+            return null;
+        }
+        int open = content.indexOf('[');
+        int close = content.lastIndexOf(']');
+        if (open < 0 || close <= open) {
+            return null;
+        }
+        return content.substring(open, close + 1);
     }
 
     private void requireSourceText(TranslateRequest request) {

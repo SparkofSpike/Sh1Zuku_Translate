@@ -142,7 +142,8 @@ public class TranslateController {
         // failure surfaces as a normal HTTP 403 response instead of a stream.
         userService.requireEmailVerified(username);
         return streamOut(sink -> translationService.translateStream(username, request, pluginRequest,
-                sink.onToken(), sink.onDone(), sink.onError(), sink.onUpstreamConnected(), sink.cancelled()));
+                sink.onToken(), sink.onDone(), sink.onError(), sink.onUpstreamConnected(), sink.cancelled(),
+                sink.onStatus()));
     }
 
     /**
@@ -228,7 +229,11 @@ public class TranslateController {
                     String json = writeJson(new SseStatusEvent("ai-connected"));
                     sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
                 },
-                closed::get);
+                closed::get,
+                statusEvent -> {
+                    String json = writeJson(statusEvent);
+                    sendOrDisconnect(emitter, closed, SseEmitter.event().data(json));
+                });
 
         try {
             Future<?> task = translationStreamExecutor.submit(() -> {
@@ -295,7 +300,8 @@ public class TranslateController {
     /** Outbound channels of one SSE stream, closed over the emitter and its cancel state. */
     private record StreamSink(Consumer<String> onToken, Consumer<TranslateResponse> onDone,
                               Consumer<String> onError, Runnable onUpstreamConnected,
-                              java.util.function.BooleanSupplier cancelled) {}
+                              java.util.function.BooleanSupplier cancelled,
+                              Consumer<SseStatusEvent> onStatus) {}
 
     /** The per-endpoint work one stream runs; it reports progress through the sink. */
     @FunctionalInterface

@@ -88,7 +88,12 @@
         <input type="checkbox" v-model="streamingEnabled" />
         {{ t('translate.streaming') }}
       </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
+        <input type="checkbox" v-model="novelTermFix" />
+        {{ t('translate.termFix.label') }}
+      </label>
     </div>
+    <p v-if="novelTermFix" class="term-fix-hint">{{ t('translate.termFix.hint') }}</p>
 
     <PresetSelector
       v-if="presetOptions.length"
@@ -126,6 +131,7 @@
     <p v-if="status === 'idle' && hasReusableResult" class="retranslate-hint">{{ t('translate.retranslateHint') }}</p>
 
     <p v-if="statusText" class="translate-status">{{ statusText }}</p>
+    <p v-if="pipelineText" class="pipeline-status">{{ pipelineText }}</p>
 
     <p v-if="error" style="color:#e03131; margin-top:12px;">{{ error }}</p>
 
@@ -349,6 +355,36 @@ const streamingEnabled = ref(true)
 const useStreaming = ref(false)
 const streamingText = ref('')
 const streamingResult = ref<TranslateResponse | null>(null)
+
+// Super-long-novel term correction switch (slower; keeps coined terms consistent).
+const novelTermFix = ref(false)
+
+// Long-novel pipeline progress reported by the backend (extract → translate → audit).
+const pipelineStage = ref('')
+const pipelineCurrent = ref(0)
+const pipelineTotal = ref(0)
+const pipelineCount = ref<number | null>(null)
+
+const pipelineText = computed(() => {
+  switch (pipelineStage.value) {
+    case 'extract':
+      return t('translate.pipeline.extractRunning')
+    case 'extract-done':
+      return t('translate.pipeline.extractDone', { count: pipelineCount.value ?? 0 })
+    case 'translate':
+      return t('translate.pipeline.translating', { current: pipelineCurrent.value, total: pipelineTotal.value })
+    case 'audit':
+      return t('translate.pipeline.auditRunning')
+    case 'audit-done':
+      return (pipelineCount.value ?? 0) > 0
+        ? t('translate.pipeline.auditDone', { count: pipelineCount.value })
+        : t('translate.pipeline.auditClean')
+    case 'audit-skipped':
+      return t('translate.pipeline.auditSkipped')
+    default:
+      return ''
+  }
+})
 
 // Cancel
 let cancelFn: (() => void) | null = null
@@ -768,6 +804,8 @@ async function translate(forceRetranslate = false) {
     streamingText.value = ''
     streamingResult.value = null
     result.value = null
+    pipelineStage.value = ''
+    pipelineCount.value = null
 
     const ctrl = translateStream(
       requestText,
@@ -781,6 +819,8 @@ async function translate(forceRetranslate = false) {
         streamingText.value += token
       },
       (response: TranslateResponse) => {
+        // The audit stage may repair terminology after tokens were streamed; show the final text.
+        if (response.translatedText) streamingText.value = response.translatedText
         streamingResult.value = response
         hasReusableResult.value = true
         status.value = 'idle'
@@ -793,7 +833,15 @@ async function translate(forceRetranslate = false) {
         cancelFn = null
       },
       forceRetranslate,
-      retranslatedFrom
+      retranslatedFrom,
+      novelTermFix.value,
+      (s) => {
+        if (!s.stage) return
+        pipelineStage.value = s.stage
+        pipelineCurrent.value = s.current ?? 0
+        pipelineTotal.value = s.total ?? 0
+        pipelineCount.value = s.count ?? null
+      }
     )
 
     cancelFn = () => {
@@ -847,6 +895,18 @@ async function translate(forceRetranslate = false) {
 </script>
 
 <style scoped>
+.term-fix-hint {
+  margin-top: 6px;
+  color: #8a6d00;
+  font-size: 12px;
+}
+
+.pipeline-status {
+  margin-top: 10px;
+  color: #1864ab;
+  font-size: 13px;
+}
+
 .translate-status {
   display: flex;
   align-items: center;

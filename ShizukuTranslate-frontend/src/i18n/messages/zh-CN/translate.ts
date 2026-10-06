@@ -59,6 +59,19 @@ export default {
   },
   targetLanguage: '目标语言',
   streaming: '流式输出',
+  termFix: {
+    label: '超长小说自创名词修正',
+    hint: '开启后翻译进程会比较慢：翻译前会先提取专有名词，翻译后做一致性审校。'
+  },
+  pipeline: {
+    extractRunning: '正在提取专有名词…',
+    extractDone: '已提取 {count} 个专有名词',
+    translating: '分块翻译中（{current}/{total}）',
+    auditRunning: '正在做术语一致性审校…',
+    auditDone: '审校完成，修正 {count} 处',
+    auditClean: '审校完成，未发现不一致',
+    auditSkipped: '审校跳过（术语提取不可用）'
+  },
   customPrompt: '自定义附加Prompt（可选）',
   start: '开始翻译',
   cancel: '取消翻译',

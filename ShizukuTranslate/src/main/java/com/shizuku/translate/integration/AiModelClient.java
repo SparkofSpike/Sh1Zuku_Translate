@@ -81,7 +81,7 @@ public class AiModelClient {
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
         request.put("temperature", 0.3);
-        request.put("max_tokens", 100000);
+        request.put("max_tokens", 348000);
         request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", content)));
         applyThinkingMode(request, config);
@@ -287,7 +287,7 @@ public class AiModelClient {
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
         request.put("temperature", 0.3);
-        request.put("max_tokens", config.isAnthropic() ? 8192 : (config.isIndexTranslate() ? 8192 : 100000));
+        request.put("max_tokens", config.isAnthropic() ? 8192 : (config.isIndexTranslate() ? 8192 : 348000));
         request.put("stream", stream);
         if (config.isAnthropic()) {
             request.put("system", systemPrompt);

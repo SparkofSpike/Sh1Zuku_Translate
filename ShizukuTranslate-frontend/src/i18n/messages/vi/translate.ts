@@ -59,6 +59,19 @@ export default {
   },
   targetLanguage: 'Ngôn ngữ đích',
   streaming: 'Xuất theo luồng',
+  termFix: {
+    label: 'Sửa thuật ngữ tự tạo cho tiểu thuyết dài',
+    hint: 'Sẽ chậm hơn: trích xuất danh từ riêng trước khi dịch và kiểm tra nhất quán sau khi dịch.'
+  },
+  pipeline: {
+    extractRunning: 'Đang trích xuất danh từ riêng…',
+    extractDone: 'Đã trích xuất {count} danh từ riêng',
+    translating: 'Đang dịch phần {current}/{total}',
+    auditRunning: 'Đang kiểm tra nhất quán thuật ngữ…',
+    auditDone: 'Kiểm tra xong — sửa {count} chỗ',
+    auditClean: 'Kiểm tra xong — không phát hiện sai lệch',
+    auditSkipped: 'Bỏ qua kiểm tra (không trích xuất được thuật ngữ)'
+  },
   customPrompt: 'Prompt bổ sung tùy chỉnh (không bắt buộc)',
   start: 'Bắt đầu dịch',
   cancel: 'Hủy dịch',
