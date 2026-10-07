@@ -56,10 +56,15 @@ public class PromptTemplateService {
      *
      * <p>The source language is deliberately not pinned: the model is told to detect it, so the
      * same prompt serves Japanese, Korean, and Chinese source texts.
+     *
+     * <p>The dates/numbers sentence was added after a user report of "2025" being translated as
+     * "2022" in a long novel: the streaming prompt previously said nothing about numbers, while
+     * the non-streaming prompt already kept them verbatim.
      */
     public static final String DEFAULT_STREAM_PROMPT =
             "你是一名专业小说翻译，请将用户提供的小说原文翻译为{language}，保持原文风格和语气。"
-            + "原文可能为日语、韩语或中文，请自行判断，不要询问用户。";
+            + "原文可能为日语、韩语或中文，请自行判断，不要询问用户。"
+            + "原文中的日期、年份与数字不得改写或臆造（例如「2025年」不得写成「2022年」）。";
 
     /**
      * Preset prompts keyed by name, loaded from the database (admin-editable at runtime).
