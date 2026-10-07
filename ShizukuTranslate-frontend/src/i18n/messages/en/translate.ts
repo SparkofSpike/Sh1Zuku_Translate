@@ -60,8 +60,19 @@ export default {
   targetLanguage: 'Target language',
   streaming: 'Stream output',
   termFix: {
-    label: 'Coined-term fix for long novels',
+    label: 'Long-text term correction',
     hint: 'Slower: proper nouns are extracted before translating and the result is audited for consistency afterwards.'
+  },
+  thinking: {
+    label: 'Reasoning mode',
+    hint: 'The model reasons before translating: higher quality, roughly 6× slower. Best for very long or difficult texts.'
+  },
+  longText: {
+    title: 'Very long text',
+    body: 'This text is about {count} characters. Start the site\u2019s coined-term correction for long texts? Without it the result may be noticeably worse.',
+    note: 'Correction opens a focus page: it reads the whole text for proper nouns first, then translates in chunks and audits consistency — slower, but far better on long texts.',
+    confirm: 'Enable and start',
+    decline: 'Translate anyway'
   },
   pipeline: {
     extractRunning: 'Extracting proper nouns…',

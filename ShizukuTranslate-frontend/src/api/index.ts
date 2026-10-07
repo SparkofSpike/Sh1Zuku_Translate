@@ -152,6 +152,11 @@ export function translateStream(
   retranslatedFrom?: string,
   /** Super-long-novel term correction: slower, but keeps coined terms consistent across chunks. */
   novelTermFix: boolean = false,
+  /**
+   * DeepSeek thinking mode: 'enabled' asks the model to reason before translating (slower,
+   * higher quality). Omitted keeps the server's fast-path default.
+   */
+  thinkingType?: 'enabled' | 'disabled',
   /** Receives long-novel pipeline progress (extract / translate / audit stages). */
   onStatus?: (status: SseStatus) => void
 ): AbortController {
@@ -164,7 +169,7 @@ export function translateStream(
   return streamPost(api.defaults.baseURL + '/translate/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache, retranslatedFrom, novelTermFix } as TranslateRequest)
+    body: JSON.stringify({ sourceText, model, modelProfileId, customPrompt, presets, targetLanguage, skipCache, retranslatedFrom, novelTermFix, thinkingType } as TranslateRequest)
   }, onToken, onDone, onError, onStatus)
 }
 

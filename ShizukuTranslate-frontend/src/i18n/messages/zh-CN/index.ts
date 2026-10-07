@@ -8,6 +8,7 @@ import history from './history'
 import admin from './admin'
 import components from './components'
 import pluginLink from './pluginLink'
+import longNovel from './longNovel'
 
 export default {
   common,
@@ -19,5 +20,6 @@ export default {
   history,
   admin,
   components,
-  pluginLink
+  pluginLink,
+  longNovel
 }

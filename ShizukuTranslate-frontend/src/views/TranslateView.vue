@@ -92,8 +92,13 @@
         <input type="checkbox" v-model="novelTermFix" />
         {{ t('translate.termFix.label') }}
       </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:14px;">
+        <input type="checkbox" v-model="thinkingEnabled" />
+        {{ t('translate.thinking.label') }}
+      </label>
     </div>
     <p v-if="novelTermFix" class="term-fix-hint">{{ t('translate.termFix.hint') }}</p>
+    <p v-if="thinkingEnabled" class="term-fix-hint">{{ t('translate.thinking.hint') }}</p>
 
     <PresetSelector
       v-if="presetOptions.length"
@@ -144,12 +149,20 @@
       class="announcement-right"
       :announcements="announcements"
     />
+
+    <LongTextNoticeDialog
+      :visible="showLongTextDialog"
+      :char-count="longTextLength"
+      @confirm="onLongTextConfirm"
+      @decline="onLongTextDecline"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 import api, { translateImages, translateImagesStream, translateStream } from '../api'
 import type { Announcement, LanguageOption, PixivNovelResponse, TokenUsage, TranslateResponse } from '../types'
@@ -159,10 +172,14 @@ import PresetSelector from '../components/PresetSelector.vue'
 import TranslateResult from '../components/TranslateResult.vue'
 import SseTranslateResult from '../components/SseTranslateResult.vue'
 import AnnouncementPanel from '../components/AnnouncementPanel.vue'
+import LongTextNoticeDialog from '../components/LongTextNoticeDialog.vue'
 import { useAuthStore } from '../stores/auth'
+import { useLongNovelStore } from '../stores/longNovel'
 
 const authStore = useAuthStore()
+const longNovelStore = useLongNovelStore()
 const { t, locale } = useI18n()
+const router = useRouter()
 const sourceText = ref('')
 const model = ref('deepseek-flash')
 const modelProfileId = ref<number | null>(readSelectedProfileId())
@@ -358,6 +375,57 @@ const streamingResult = ref<TranslateResponse | null>(null)
 
 // Super-long-novel term correction switch (slower; keeps coined terms consistent).
 const novelTermFix = ref(false)
+
+// DeepSeek reasoning before translating (slower, higher quality). Feeds `thinkingType` on the
+// request; the backend serialises it into its cache key and skips the shared replay for it.
+const thinkingEnabled = ref(false)
+
+/**
+ * Texts above this many characters don't run in this card:
+ * - with the term correction on, they open the focus page (`/long-novel`);
+ * - with it off, the user is first asked whether to enable the correction — long novels without
+ *   it are exactly where terminology drifts (misspelled names, changed years) shows up.
+ */
+const LONG_TEXT_THRESHOLD = 30000
+const showLongTextDialog = ref(false)
+/** Character count shown in the dialog; captured when the gate opens. */
+const longTextLength = ref(0)
+/** The exact text the user answered "translate anyway" for; a changed text asks again. */
+let longTextPromptSkippedFor = ''
+/** Whether the gated request was a re-translate; passed through to the focus page. */
+let longTextPendingForce = false
+
+/**
+ * Hands the current request to the focus page and navigates there. Used when the term
+ * correction is already on, and right after the user enables it from the long-text dialog.
+ */
+function startLongNovel(forceRetranslate: boolean) {
+  longNovelStore.start({
+    sourceText: effectiveSourceText(),
+    model: model.value,
+    modelProfileId: modelProfileId.value,
+    customPrompt: customPrompt.value || undefined,
+    presets: selectedPresets.value.length ? selectedPresets.value : undefined,
+    targetLanguage: targetLanguage.value,
+    skipCache: forceRetranslate || undefined,
+    retranslatedFrom: forceRetranslate && currentRequestId.value ? currentRequestId.value : undefined,
+    thinkingType: thinkingEnabled.value ? 'enabled' : undefined
+  })
+  router.push('/long-novel')
+}
+
+function onLongTextConfirm() {
+  showLongTextDialog.value = false
+  novelTermFix.value = true
+  startLongNovel(longTextPendingForce)
+}
+
+function onLongTextDecline() {
+  showLongTextDialog.value = false
+  // Remember the answer for this exact text: pressing start again must not re-ask.
+  longTextPromptSkippedFor = effectiveSourceText()
+  translate(longTextPendingForce)
+}
 
 // Long-novel pipeline progress reported by the backend (extract → translate → audit).
 const pipelineStage = ref('')
@@ -787,6 +855,21 @@ async function translatePendingImages() {
 async function translate(forceRetranslate = false) {
   const requestText = effectiveSourceText()
   if (!requestText.trim() && !pendingImageFiles.value.length) return
+
+  // Long-text gate (text path only; image requests use their own multimodal pipeline).
+  if (!pendingImageFiles.value.length && requestText.length > LONG_TEXT_THRESHOLD) {
+    if (novelTermFix.value) {
+      startLongNovel(forceRetranslate)
+      return
+    }
+    if (longTextPromptSkippedFor !== requestText) {
+      longTextPendingForce = forceRetranslate
+      longTextLength.value = requestText.length
+      showLongTextDialog.value = true
+      return
+    }
+  }
+
   // 重译埋点：必须在发起前取旧的 requestId（成功响应后 rememberTranslateContext 会覆盖它），
   // 仅在确实存在上一次结果时携带。
   const retranslatedFrom = forceRetranslate && currentRequestId.value ? currentRequestId.value : undefined
@@ -838,6 +921,7 @@ async function translate(forceRetranslate = false) {
       forceRetranslate,
       retranslatedFrom,
       novelTermFix.value,
+      thinkingEnabled.value ? 'enabled' : undefined,
       (s) => {
         if (!s.stage) return
         pipelineStage.value = s.stage
@@ -880,7 +964,8 @@ async function translate(forceRetranslate = false) {
         presets: selectedPresets.value.length > 0 ? selectedPresets.value : undefined,
         targetLanguage: targetLanguage.value,
         skipCache: forceRetranslate || undefined,
-        retranslatedFrom
+        retranslatedFrom,
+        thinkingType: thinkingEnabled.value ? 'enabled' : undefined
       }, { signal: controller.signal })
       result.value = res.data
       hasReusableResult.value = true

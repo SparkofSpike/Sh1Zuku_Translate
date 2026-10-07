@@ -20,6 +20,13 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true }
   },
   {
+    // Focus mode for super-long translations with coined-term correction on: a bare page
+    // that only reports pipeline progress (think → chunk → output → audit) and the output.
+    path: '/long-novel',
+    component: () => import('../views/LongNovelView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/history',
     component: () => import('../views/HistoryView.vue'),
     meta: { requiresAuth: true }

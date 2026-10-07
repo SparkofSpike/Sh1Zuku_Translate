@@ -21,6 +21,12 @@ export interface TranslateRequest {
    * into every chunk and audit the result for terminology drift. Slower; off by default.
    */
   novelTermFix?: boolean
+  /**
+   * DeepSeek thinking mode: "enabled" | "disabled". Omitted = server default (fast path).
+   * Thinking is a quality choice: it is slower, disables the shared-translation replay and
+   * uses its own cache bucket.
+   */
+  thinkingType?: 'enabled' | 'disabled'
 }
 
 /** A Pixiv novel imported by URL (`GET /pixiv/novel`). */

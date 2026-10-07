@@ -60,8 +60,19 @@ export default {
   targetLanguage: '目标语言',
   streaming: '流式输出',
   termFix: {
-    label: '超长小说自创名词修正',
+    label: '超长文本名词更正',
     hint: '开启后翻译进程会比较慢：翻译前会先提取专有名词，翻译后做一致性审校。'
+  },
+  thinking: {
+    label: '推理思考',
+    hint: '让模型思考后再翻译，质量更高但明显更慢（约 6 倍）；适合超长或困难文本。'
+  },
+  longText: {
+    title: '文本很长',
+    body: '这篇文本约 {count} 字。要不要启动网站自研的超长文本名词更正功能？不启用可能效果很差。',
+    note: '启用后将进入专注页面：先通读全文提取专有名词，再分块翻译，最后做一致性校对——整体更慢，但长文效果显著更好。',
+    confirm: '启用并开始',
+    decline: '直接翻译'
   },
   pipeline: {
     extractRunning: '正在提取专有名词…',

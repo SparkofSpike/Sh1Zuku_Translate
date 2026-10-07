@@ -60,8 +60,19 @@ export default {
   targetLanguage: 'Ngôn ngữ đích',
   streaming: 'Xuất theo luồng',
   termFix: {
-    label: 'Sửa thuật ngữ tự tạo cho tiểu thuyết dài',
+    label: 'Sửa thuật ngữ cho văn bản dài',
     hint: 'Sẽ chậm hơn: trích xuất danh từ riêng trước khi dịch và kiểm tra nhất quán sau khi dịch.'
+  },
+  thinking: {
+    label: 'Chế độ suy luận',
+    hint: 'Mô hình suy nghĩ trước khi dịch: chất lượng cao hơn, chậm hơn khoảng 6 lần. Phù hợp với văn bản rất dài hoặc khó.'
+  },
+  longText: {
+    title: 'Văn bản rất dài',
+    body: 'Văn bản này khoảng {count} ký tự. Bạn có muốn bật tính năng sửa thuật ngữ cho văn bản siêu dài do trang tự phát triển không? Nếu không bật, kết quả có thể kém hơn rõ rệt.',
+    note: 'Khi bật, quá trình diễn ra ở trang tập trung: đọc toàn văn để trích xuất danh từ riêng, dịch theo từng khối, rồi kiểm tra nhất quán — chậm hơn nhưng tốt hơn nhiều với văn bản dài.',
+    confirm: 'Bật và bắt đầu',
+    decline: 'Dịch ngay'
   },
   pipeline: {
     extractRunning: 'Đang trích xuất danh từ riêng…',
