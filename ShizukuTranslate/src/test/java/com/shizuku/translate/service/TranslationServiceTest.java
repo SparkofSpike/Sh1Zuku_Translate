@@ -269,6 +269,47 @@ class TranslationServiceTest {
         verify(cacheRepository).save(any(com.shizuku.translate.entity.TranslationCache.class));
     }
 
+    @Test
+    void novelTermFixRoutesShortTextsThroughTheChunkedPipeline() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "m", "disabled"));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(9L);
+            return rec;
+        });
+        // Term pre-extraction only runs inside the chunked pipeline; a valid JSON answer keeps
+        // the audit stage a no-op while still proving the pipeline was entered.
+        when(aiModelClient.chat(anyString(), anyString(), any(AiModelConfig.class)))
+                .thenReturn(new AiModelClient.DeepSeekResult(
+                        "[{\"term\":\"甲\",\"translation\":\"甲\",\"type\":\"person\"}]",
+                        new com.shizuku.translate.dto.TokenUsage()));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            onToken.accept("短");
+            onToken.accept("文");
+            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            return null;
+        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        // Well below CHUNK_UNIT_CHARS: only the term-fix flag routes it through the pipeline.
+        TranslateRequest req = request("短文", null, null);
+        req.setNovelTermFix(true);
+        List<String> tokens = new java.util.ArrayList<>();
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", req, false,
+                tokens::add, done::add, error -> { }, () -> { });
+
+        // The pre-extraction call proves the chunked pipeline ran (single-pass never calls chat).
+        verify(aiModelClient, org.mockito.Mockito.atLeastOnce())
+                .chat(anyString(), anyString(), any(AiModelConfig.class));
+        assertEquals("短文", done.get(0).getTranslatedText());
+    }
+
     private static TranslationRecord sharedRecord(Long id, String text) {
         TranslationRecord rec = TranslationRecord.builder()
                 .id(id)

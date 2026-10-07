@@ -423,8 +423,11 @@ public class TranslationService {
         }
 
         // Long texts go through the chunked pipeline: one request per paragraph-aligned chunk
-        // on a single continuous token stream (see CHUNK_UNIT_CHARS for the why).
-        if (request.getSourceText().length() > CHUNK_UNIT_CHARS) {
+        // on a single continuous token stream (see CHUNK_UNIT_CHARS for the why). The coined-term
+        // correction runs inside that pipeline (pre-extraction and the audit pass), so asking for
+        // it also routes shorter texts through it — otherwise 3万–4.2万 字 texts would silently
+        // skip the correction the user explicitly enabled.
+        if (request.getSourceText().length() > CHUNK_UNIT_CHARS || request.isNovelTermFix()) {
             translateChunked(user, request, config, systemPrompt, resolvedTargetLanguage, cacheKey,
                     hideCustomPrompt, startedAt, onToken, onComplete, onError, cancelled, onStatus);
             return;

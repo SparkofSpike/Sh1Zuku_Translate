@@ -882,7 +882,8 @@ async function translate(forceRetranslate = false) {
   error.value = ''
   hasReusableResult.value = false
 
-  if (streamingEnabled.value) {
+  // 超长文本名词更正依赖流式管道（提取/审计阶段），勾选它时强制走流式路径。
+  if (streamingEnabled.value || novelTermFix.value) {
     useStreaming.value = true
     streamingText.value = ''
     streamingResult.value = null
