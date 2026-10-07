@@ -220,8 +220,9 @@ public class TranslationService {
 
         // Reuse someone else's translation before spending tokens on the model. Resolving the
         // target language here (rather than re-deriving it from the prompt) keeps the column
-        // value and the lookup key identical for writer and reader.
-        if (!request.isSkipCache()) {
+        // value and the lookup key identical for writer and reader. Thinking mode skips this
+        // replay: a caller who chose thinking is asking for a fresh, higher-effort result.
+        if (!request.isSkipCache() && !thinkingRequested(request)) {
             TranslationRecord shared = recordRepository
                     .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
                             user.getId(), request.getSourceText(), resolvedTargetLanguage)
@@ -337,8 +338,9 @@ public class TranslationService {
 
         // Reuse another user's translation of the same text into the same language before
         // checking anything else: it saves the caller tokens, and unlike the personal cache it
-        // is interesting information even when the user has their own cached copy.
-        if (!request.isSkipCache()) {
+        // is interesting information even when the user has their own cached copy. Thinking
+        // mode skips this replay: a caller who chose thinking wants a fresh result.
+        if (!request.isSkipCache() && !thinkingRequested(request)) {
             TranslationRecord shared = recordRepository
                     .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
                             user.getId(), request.getSourceText(), resolvedTargetLanguage)
@@ -796,9 +798,22 @@ public class TranslationService {
         }
     }
 
+    /**
+     * True when the caller explicitly asked for thinking mode via the request. Such requests
+     * also skip the cross-user shared translation: that entry may have been produced in either
+     * mode, and a caller who chose thinking is asking for a fresh, higher-effort result rather
+     * than a replay of somebody else's fast-path output.
+     */
+    private static boolean thinkingRequested(TranslateRequest request) {
+        return "enabled".equalsIgnoreCase(request.getThinkingType());
+    }
+
     private String buildCacheKey(Long userId, AiModelConfig config, String systemPrompt, String sourceText) {
+        // thinkingType is part of the key: enabling thinking is a quality choice, and a
+        // fast-path result from before the toggle must not shadow the thinking result.
         String raw = userId + "|" + config.getProvider() + "|" + config.getBaseUrl()
-                + "|" + config.getModel() + "|" + systemPrompt + "|" + sourceText;
+                + "|" + config.getModel() + "|" + config.getThinkingType()
+                + "|" + systemPrompt + "|" + sourceText;
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(md.digest(raw.getBytes(StandardCharsets.UTF_8)));
