@@ -531,12 +531,19 @@ public class TranslationService {
         String finalText = fullText.toString();
         if (request.isNovelTermFix() && !terms.isEmpty()) {
             onStatus.accept(new SseStatusEvent("long-novel", "audit", null, null, null, null));
+            AuditOutcome outcome = null;
             try {
-                AuditOutcome outcome = auditTerminology(config, finalText, terms);
-                finalText = outcome.correctedText();
-                onStatus.accept(new SseStatusEvent("long-novel", "audit-done", null, null, null, outcome.fixes()));
+                outcome = auditTerminology(config, finalText, terms);
             } catch (Exception e) {
                 log.warn("Terminology audit failed; keeping the translation as-is", e);
+            }
+            if (outcome != null) {
+                finalText = outcome.correctedText();
+                // Kept outside the try above: a client disconnect while reporting the result
+                // must surface as a disconnect (logged as a client cancel by the controller),
+                // not be mislabelled as an audit failure.
+                onStatus.accept(new SseStatusEvent("long-novel", "audit-done", null, null, null, outcome.fixes()));
+            } else {
                 onStatus.accept(new SseStatusEvent("long-novel", "audit-skipped", null, null, null, null));
             }
         }
