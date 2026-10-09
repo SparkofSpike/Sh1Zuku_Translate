@@ -26,7 +26,7 @@ export default {
   },
   usage: {
     label: 'Tổng Token đã dùng',
-    meta: 'Đầu vào {input} · Đầu ra {output} · {count} lượt gọi'
+    meta: 'Đầu vào {input}, đầu ra {output}, {count} lượt gọi'
   },
   model: {
     title: 'Cấu hình mô hình',

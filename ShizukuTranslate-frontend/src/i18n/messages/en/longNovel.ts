@@ -1,7 +1,8 @@
 export default {
   title: 'Long-text translation',
-  overline: 'Term correction · Focus mode',
-  subtitle: 'Coined-term correction is on · model {model}',
+  overline: 'Term correction (focus mode)',
+  subtitle: 'Coined-term correction is on, model {model}',
+  leaveWarning: "Don't leave this page or the progress will be lost",
   empty: 'No long-text translation is in progress.',
   back: 'Back to home',
   cancel: 'Cancel',

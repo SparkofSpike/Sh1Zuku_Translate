@@ -1,7 +1,8 @@
 export default {
   title: '超长文本翻译',
-  overline: '超长文本名词更正 · 专注模式',
-  subtitle: '名词更正已启用 · 模型 {model}',
+  overline: '超长文本名词更正（专注模式）',
+  subtitle: '名词更正已启用，模型 {model}',
+  leaveWarning: '不要退出此页面，否则会丢失进度',
   empty: '没有正在进行的超长文本翻译任务。',
   back: '返回首页',
   cancel: '取消翻译',

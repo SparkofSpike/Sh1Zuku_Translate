@@ -1,7 +1,8 @@
 export default {
   title: 'Dịch văn bản siêu dài',
-  overline: 'Sửa thuật ngữ · Chế độ tập trung',
-  subtitle: 'Đã bật sửa thuật ngữ · mô hình {model}',
+  overline: 'Sửa thuật ngữ (Chế độ tập trung)',
+  subtitle: 'Đã bật sửa thuật ngữ, mô hình {model}',
+  leaveWarning: 'Không rời khỏi trang này, nếu không tiến trình sẽ bị mất',
   empty: 'Không có tác vụ dịch văn bản dài nào đang chạy.',
   back: 'Về trang chủ',
   cancel: 'Hủy dịch',

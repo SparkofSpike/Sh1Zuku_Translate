@@ -26,7 +26,7 @@ export default {
   },
   usage: {
     label: 'Total token usage',
-    meta: 'Input {input} · Output {output} · {count} calls'
+    meta: 'Input {input}, output {output}, {count} calls'
   },
   model: {
     title: 'Model profiles',

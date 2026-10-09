@@ -26,7 +26,7 @@ export default {
   },
   usage: {
     label: '累计 Token 用量',
-    meta: '输入 {input} · 输出 {output} · {count} 次调用'
+    meta: '输入 {input}，输出 {output}，{count} 次调用'
   },
   model: {
     title: '模型配置',

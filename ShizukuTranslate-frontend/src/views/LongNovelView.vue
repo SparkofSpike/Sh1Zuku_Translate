@@ -14,6 +14,8 @@
         <p class="ln-sub">{{ t('longNovel.subtitle', { model: jobModel }) }}</p>
       </header>
 
+      <p class="ln-notice">{{ t('longNovel.leaveWarning') }}</p>
+
       <ol class="ln-steps">
         <li
           v-for="(step, i) in steps"
@@ -53,6 +55,7 @@
           </button>
           <button class="ln-btn ln-btn--ghost" @click="goHome">{{ t('longNovel.back') }}</button>
         </template>
+        <ExportBar v-if="streamedText" :text="streamedText" :model="jobModel" />
       </div>
       <p v-if="errorMsg" class="ln-error">{{ errorMsg }}</p>
     </template>
@@ -65,6 +68,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { translateStream } from '../api'
 import type { SseStatus } from '../api'
+import ExportBar from '../components/ExportBar.vue'
 import { useLongNovelStore, type LongNovelJob } from '../stores/longNovel'
 import type { TranslateResponse } from '../types'
 
@@ -289,6 +293,17 @@ function goHome() {
   color: var(--color-muted, #777);
 }
 
+.ln-notice {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8a6d00;
+  background: #fff9db;
+  border: 1px solid #f0e0a0;
+  border-radius: 8px;
+}
+
 /* ── Step strip: think → chunk → output → audit ─────────────────────── */
 
 .ln-steps {
@@ -420,6 +435,8 @@ function goHome() {
 
 .ln-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
 }
