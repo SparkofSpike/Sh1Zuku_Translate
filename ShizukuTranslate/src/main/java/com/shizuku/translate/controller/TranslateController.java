@@ -27,8 +27,12 @@ import java.io.IOException;
 import java.security.Principal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -42,6 +46,19 @@ public class TranslateController {
     private final ObjectMapper objectMapper;
     private final UserService userService;
     private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor translationStreamExecutor;
+
+    /**
+     * Keepalive for SSE streams. The paths between a browser and this server (a user-side
+     * proxy, carrier NAT, the hosting firewall) tear down idle TCP connections after a minute
+     * or two, and the long-novel audit runs for minutes without emitting an event. A comment
+     * every 25 seconds keeps every hop warm; SSE clients ignore comments by spec.
+     */
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 25;
+    private static final ScheduledExecutorService HEARTBEAT_EXECUTOR = Executors.newScheduledThreadPool(1, runnable -> {
+        Thread thread = new Thread(runnable, "sse-heartbeat");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public TranslateController(TranslationService translationService,
                                ObjectMapper objectMapper,
@@ -159,11 +176,16 @@ public class TranslateController {
         SseEmitter emitter = new SseEmitter(1800000L);
         AtomicBoolean closed = new AtomicBoolean(false);
         java.util.concurrent.atomic.AtomicReference<Future<?>> taskRef = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<ScheduledFuture<?>> heartbeatRef = new java.util.concurrent.atomic.AtomicReference<>();
         Runnable cancelTask = () -> {
             closed.set(true);
             Future<?> task = taskRef.get();
             if (task != null) {
                 task.cancel(true);
+            }
+            ScheduledFuture<?> heartbeat = heartbeatRef.get();
+            if (heartbeat != null) {
+                heartbeat.cancel(false);
             }
         };
         emitter.onCompletion(cancelTask);
@@ -177,9 +199,11 @@ public class TranslateController {
                 // the terminal event before completing, and treat a failed
                 // send as a disconnect rather than hiding the timeout.
                 try {
-                    emitter.send(SseEmitter.event()
-                            .name("error")
-                            .data(writeJson(new SseErrorEvent("Translation timed out"))));
+                    synchronized (emitter) {
+                        emitter.send(SseEmitter.event()
+                                .name("error")
+                                .data(writeJson(new SseErrorEvent("Translation timed out"))));
+                    }
                 } catch (IOException | IllegalStateException e) {
                     log.debug("Unable to send timeout event because the client disconnected", e);
                 } finally {
@@ -200,6 +224,20 @@ public class TranslateController {
             emitter.completeWithError(e);
             return emitter;
         }
+
+        // The comment above only proves the stream opened. Minutes of silence can follow
+        // (audit, long pre-fill), and idle-channel reapers on the path drop that silence.
+        // A periodic comment is the keepalive that survives every hop of the connection.
+        heartbeatRef.set(HEARTBEAT_EXECUTOR.scheduleAtFixedRate(() -> {
+            if (closed.get()) {
+                ScheduledFuture<?> heartbeat = heartbeatRef.get();
+                if (heartbeat != null) {
+                    heartbeat.cancel(false);
+                }
+                return;
+            }
+            sendEvent(emitter, closed, SseEmitter.event().comment("hb"));
+        }, HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS));
 
         StreamSink sink = new StreamSink(
                 token -> {
@@ -287,7 +325,11 @@ public class TranslateController {
             return false;
         }
         try {
-            emitter.send(event);
+            // The heartbeat thread and the translation worker both send through here;
+            // serializing on the emitter keeps their writes from interleaving.
+            synchronized (emitter) {
+                emitter.send(event);
+            }
             return true;
         } catch (IOException | IllegalStateException e) {
             closed.set(true);
