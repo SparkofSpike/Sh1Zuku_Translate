@@ -51,9 +51,15 @@ public class TranslateController {
      * Keepalive for SSE streams. The paths between a browser and this server (a user-side
      * proxy, carrier NAT, the hosting firewall) tear down idle TCP connections after a minute
      * or two, and the long-novel audit runs for minutes without emitting an event. A comment
-     * every 25 seconds keeps every hop warm; SSE clients ignore comments by spec.
+     * every 10 seconds keeps every hop warm; SSE clients ignore comments by spec.
+     *
+     * <p>The interval also protects the browser extension: Chrome terminates a Manifest V3
+     * service worker when a fetch response takes more than 30 seconds to arrive, and the
+     * extension reads this stream from such a worker. At 25 seconds the margin was only 5
+     * seconds — one delayed beat and the worker died mid-translation, leaving the user's
+     * progress button stuck forever (observed: 18761 s). 10 seconds leaves 20 s of slack.
      */
-    private static final long HEARTBEAT_INTERVAL_SECONDS = 25;
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 10;
     private static final ScheduledExecutorService HEARTBEAT_EXECUTOR = Executors.newScheduledThreadPool(1, runnable -> {
         Thread thread = new Thread(runnable, "sse-heartbeat");
         thread.setDaemon(true);
