@@ -165,14 +165,20 @@ ensureUpdateAlarm();
 // same function's finally block, plus on cancel and on same-tab re-entry.
 // Every await that can hold the entry open is bounded:
 //   - STEP1 (Pixiv fetch)     — STEP1_TIMEOUT_MS, 30 s
-//   - STEP2 (settings read)   — SETTINGS_TIMEOUT_MS, 5 s
+//   - STEP2 (settings read)   — STEP2_TIMEOUT_MS, 5 s
 //   - STEP3 (stream read)     — STREAM_IDLE_TIMEOUT_MS, 90 s per read
 // so an entry cannot outlive its stream indefinitely. TRANSLATE_STATUS relies
 // on that: an entry that exists means a live stream, not a corpse.
 // (003 review round2 1.9: STEP1/STEP2 had no timeout at all, so the previous
 // version of this comment — which credited the backend's 30-minute emitter
-// timeout — was simply wrong for those two stages.)
+// timeout — was simply wrong for those two stages. round3 R6: STEP1's
+// timeout also has to abort the main controller when AbortSignal.any is
+// unavailable, or it never reaches the fetch.)
 const activeControllers = new Map();
+
+// 请求序号：与时间戳一起构成 requestId（见 startStreamingTranslation）。
+// SW 重启后归零，但时间戳部分保证不碰撞。
+let requestSeq = 0;
 
 // ─── Error log (for the popup's "submit log" button) ───────
 // Keep the most recent translation errors in local storage so the user
@@ -660,6 +666,13 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
   if (!safeNovelId) {
     throw new Error('无效的小说 ID');
   }
+  // 每一次请求一个唯一 id，随所有 SSE_* 通知下发。
+  //
+  // 没有它时，content 无法判断一条事件属于哪一轮：同 tab 重新开始时旧流
+  // 可能仍有事件在路上（尤其是旧流的读空闲 / 首 token 超时，它们的错误文本
+  // 不含「取消」，会正常投递），落下来就会复位新一轮。003 review round3
+  // 的 R1/R2 都是这一类。content 侧只接受与「当前这一轮」id 相符的事件。
+  const requestId = String(Date.now()) + '-' + (++requestSeq);
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();
@@ -680,11 +693,16 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // 另一种形态（003 review round2 1.9）。
     const stepOneController = new AbortController();
     let stepOneTimedOut = false;
+    const canCombineStepOne = typeof AbortSignal.any === 'function';
     const stepOneTimer = setTimeout(() => {
       stepOneTimedOut = true;
       stepOneController.abort();
+      // 降级分支：fetch 拿到的只是 controller.signal，看不到 stepOneController，
+      // 必须走主 controller 才能真正中断它 —— 否则这个超时只是设了个标志位，
+      // 请求照旧挂着（003 review round3 R6）。
+      if (!canCombineStepOne) controller.abort();
     }, STEP1_TIMEOUT_MS);
-    const stepOneSignal = typeof AbortSignal.any === 'function'
+    const stepOneSignal = canCombineStepOne
       ? AbortSignal.any([controller.signal, stepOneController.signal])
       : controller.signal;
     let novel;
@@ -726,9 +744,11 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
     // split the result into page blocks.
     const numbered = fullMode || effectivePage > 0 || displayMode === 'inline';
 
-    // Notify content script: novel loaded, begin streaming
+    // Notify content script: novel loaded, begin streaming.
+    // 这条是唯一无条件接受的事件：它就是「新一轮开始」的标志。
     await notifyTab(tabId, {
       type: 'SSE_NOVEL_LOADED',
+      requestId,
       data: {
         id: novel.id,
         title: novel.title,
@@ -786,17 +806,17 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       thinkingType,
       controller,
       async () => {
-        await notifyTab(tabId, { type: 'SSE_CONNECTED' });
+        await notifyTab(tabId, { type: 'SSE_CONNECTED', requestId });
       },
       async (token) => {
-        await notifyTab(tabId, { type: 'SSE_TOKEN', token });
+        await notifyTab(tabId, { type: 'SSE_TOKEN', requestId, token });
       },
       async (result) => {
-        await notifyTab(tabId, { type: 'SSE_DONE', data: result });
+        await notifyTab(tabId, { type: 'SSE_DONE', requestId, data: result });
       },
       async (error) => {
         recordPluginError(error);
-        await notifyTab(tabId, { type: 'SSE_ERROR', error });
+        await notifyTab(tabId, { type: 'SSE_ERROR', requestId, error });
       },
       skipCache,
       inlineSeparator,
@@ -804,7 +824,7 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       // 源文本早在 startStreamingTranslation 里就构建好了），现在换成
       // 「后端已响应」通知，用来把「连接服务器」和「模型预填充」分开报。
       async () => {
-        await notifyTab(tabId, { type: 'SSE_SERVER_ACK' });
+        await notifyTab(tabId, { type: 'SSE_SERVER_ACK', requestId });
       }
     );
   } finally {
@@ -949,11 +969,15 @@ async function notifyTab(tabId, message) {
     const msg = e && e.message ? e.message : String(e);
     const type = message && message.type ? message.type : '?';
     console.warn('[PixivTranslator] notifyTab failed:', type, msg);
-    // 「终止事件投递失败」是区分「后端没发」与「content 没收到」的唯一
-    // 线索：只有它落进错误日志，用户下次报卡住时才查得出断在哪一段。
-    // SSE_NOVEL_LOADED 同样要记：它丢了 content 永远不知道翻译已开始，
-    // 表现为「点了没反应」的假成功（003 review round2 1.3）。
-    if (type === 'SSE_DONE' || type === 'SSE_ERROR' || type === 'SSE_NOVEL_LOADED') {
+    // 事件投递失败是区分「后端没发」与「content 没收到」的唯一线索：只有它
+    // 落进错误日志，用户下次报卡住时才查得出断在哪一段。
+    //
+    // 记账范围覆盖全部会影响状态机的事件：任何一条丢失都会让页面停在
+    // 错误的状态（开始事件丢了永远不开始，终止事件丢了永远不复位）。
+    // （003 review round3 R8：上一版只为终止事件记，且注释里的理由并不
+    // 成立 —— guard() 是同步应答，sendMessage 很少真的 reject。）
+    if (type === 'SSE_DONE' || type === 'SSE_ERROR' || type === 'SSE_NOVEL_LOADED'
+        || type === 'SSE_SERVER_ACK' || type === 'SSE_CONNECTED') {
       recordPluginError(`${type} 投递失败: ${msg}`);
     }
   }

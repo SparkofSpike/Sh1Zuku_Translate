@@ -36,6 +36,7 @@ let state = {
   watchdogMisses: 0,       // consecutive probes that found no live stream
   watchdogEpoch: 0,        // bumped per translation; stale probes must not count
   runId: 0,                // bumped whenever a translation (or repair) starts
+  activeRequestId: null,   // requestId of the background stream this page tracks
   repairBackup: null,      // {streamText, missing} saved before a repair run
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false, // true once the first SSE token arrived
@@ -1405,6 +1406,12 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
   state.requestedSeparator = state.inlineSeparator; // effective value is resolved in onNovelLoaded against the novel text
   state.mode = settings.displayMode;
   state.translating = true;
+  // 补译状态必须在这里就清干净，而不是等到下面的重置块末尾：从这一行到
+  // 重置块之间没有任何 await，但「上一轮补译刚结束、新一轮刚置 translating」
+  // 的交错窗口里，迟到的补译事件本可以落进来（003 review round3 R1）。
+  // requestId 校验是结构性防线（见 onMessage），这里是第二道。
+  state.repairMode = false;
+  state.repairBackup = null;
   if (state.inlineWaitCleanup) {
     state.inlineWaitCleanup();
     state.inlineWaitCleanup = null;
@@ -1429,10 +1436,9 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
   state.pageStartIds = [];
   state.expectedParagraphCount = 0;
   state.missingParagraphIds = [];
+  // 一并丢掉上一轮补译的备份（见上方 translating = true 处的说明，这里
+  // 保留一次冗余清理：重置块与入口都清，任一漏写都不会漏到下一轮）。
   state.repairMode = false;
-  // 一并丢掉上一轮补译的备份：否则它要么是一份指向旧译文的大字符串，
-  // 要么让「repairMode 为假但 backup 还在」这种不一致状态漏到下一轮
-  // （003 review round2 N1）。
   state.repairBackup = null;
   // 这一轮的身份。迟到的事件（尤其是被取消的补译的 continuation）靠它
   // 判断自己是否还属于当前这一轮，避免去动新翻译的状态（N4/N5/N6）。
@@ -1828,23 +1834,14 @@ function onStreamDone(data) {
     });
 
     if (repairedById.size === 0) {
-      // 模型没按 JSON Lines 返回（或全部为空）：什么都不改，但要说清楚
-      // 原因并留痕，否则用户只看到「补译仍有段落缺失」而不知道是格式问题
-      // （003 review round2 N2）。
-      state.repairMode = false;
-      state.repairBackup = null;
+      // 模型没按 JSON Lines 返回（或全部为空）：回滚到补译前的状态，
+      // 但要说清楚原因并留痕，否则用户只看到「补译仍有段落缺失」而
+      // 不知道是格式问题（003 review round2 N2）。重绘交给
+      // restoreAfterFailedRepair —— 它覆盖 inline / paged / panel 三条
+      // 路径（round3 R3：只重绘 inline 会让窗口里留着半截补译内容）。
       const notice = '补译失败：模型没有按段落编号返回译文，可重试或重新翻译';
       recordContentError(notice);
-      try {
-        if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
-          state.streamingText = backup.streamText;
-          renderInlineStreaming();
-        }
-      } catch (e) {
-        console.warn('[PNT] re-render after empty repair:', e && e.message);
-      }
-      state.streamingText = backup.streamText;
-      state.missingParagraphIds = backup.missing;
+      restoreAfterFailedRepair();
       finishTranslate(false, notice);
       return;
     }
@@ -2270,9 +2267,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
   };
 
+  // requestId 校验：background 为每一轮翻译分配一个 id 并随所有事件下发。
+  //
+  // 不属于「当前这一轮」的事件一律丢弃：旧流迟到的 token / done / error
+  // 不能去动新一轮的状态。尤其是旧流的**读空闲超时**与**首 token 超时**
+  // —— 它们的错误文本不含「取消」，background 会正常投递，而 content
+  // 此前无法分辨，于是新一轮被一句属于旧轮的错误复位
+  // （003 review round3 R1/R2；这是「事件无身份」这个根因的修法）。
+  //
+  // SSE_NOVEL_LOADED 不在此列：它就是「新一轮开始」的标志，无条件接受。
+  if (message.requestId && state.activeRequestId
+      && message.requestId !== state.activeRequestId
+      && message.type !== 'SSE_NOVEL_LOADED') {
+    console.debug('[PNT] dropping event from a superseded request:', message.type);
+    sendResponse({ ok: true });
+    return false;
+  }
+
   switch (message.type) {
     case 'SSE_NOVEL_LOADED':
-      // 原文到手，接下来是发翻译请求、等后端响应。
+      // 原文到手，接下来是发翻译请求、等后端响应。同时记下这一轮的身份。
+      state.activeRequestId = message.requestId || state.activeRequestId;
       state.phase = 'connecting';
       guard(() => onNovelLoaded(message.data));
       break;
