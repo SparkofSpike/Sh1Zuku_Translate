@@ -900,8 +900,14 @@ async function notifyTab(tabId, message) {
   try {
     await chrome.tabs.sendMessage(tabId, message);
   } catch (e) {
-    // Content script may not be injected yet; ignore
-    console.warn('[PixivTranslator] notifyTab failed:', e.message);
+    const msg = e && e.message ? e.message : String(e);
+    const type = message && message.type ? message.type : '?';
+    console.warn('[PixivTranslator] notifyTab failed:', type, msg);
+    // 「终止事件投递失败」是区分「后端没发」与「content 没收到」的唯一
+    // 线索：只有它落进错误日志，用户下次报卡住时才查得出断在哪一段。
+    if (type === 'SSE_DONE' || type === 'SSE_ERROR') {
+      recordPluginError(`终止事件 ${type} 投递失败: ${msg}`);
+    }
   }
 }
 
@@ -1079,9 +1085,19 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   // but should still fail eventually instead of hanging forever.
   const firstTokenTimeoutMs = 600000;
   const firstTokenController = new AbortController();
+  // 除了首 token 超时，还要防「连接活着但永久静默」：后端每 25 秒发一次
+  // 心跳注释，真活着的流不会长时间没有任何数据。若 90 秒（≈3 个心跳周期）
+  // 一个字节都没收到，连接实际上已经死了 —— 而 activeControllers 里还留着
+  // 这一条，content 端的存活探测会一直回答「活着」，界面就永久卡在
+  // 「AI 预填充中 Ns…」（实测 18761 秒）。这里用读空闲超时兜住它。
+  // 注意：按「有无任何数据」而不是「有无 token」判断 —— 预填充期间模型
+  // 可以合法地几分钟不吐 token，但心跳不会停。
+  const STREAM_IDLE_TIMEOUT_MS = 90000;
+  let streamIdleAborted = false;
+  const idleController = new AbortController();
   const canCombineSignals = typeof AbortSignal.any === 'function';
   const signal = canCombineSignals
-    ? AbortSignal.any([controller.signal, firstTokenController.signal])
+    ? AbortSignal.any([controller.signal, firstTokenController.signal, idleController.signal])
     : controller.signal;
   // Timer stays harmless after the stream ends (aborting a finished
   // fetch is a no-op), so no explicit cleanup is needed.
@@ -1091,6 +1107,20 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     // through the main controller so the timeout still ends the wait.
     if (!canCombineSignals) controller.abort();
   }, firstTokenTimeoutMs);
+  let idleTimer = null;
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      streamIdleAborted = true;
+      console.warn('[PNT] stream idle timeout: no bytes for', STREAM_IDLE_TIMEOUT_MS, 'ms');
+      idleController.abort();
+      if (!canCombineSignals) controller.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  const disarmIdleTimer = () => {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  };
+  armIdleTimer();
   console.log('[PNT][request]', {
     separator: inlineSeparator,
     numbered: text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本'),
@@ -1114,6 +1144,11 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
     }),
     signal
   }).catch((e) => {
+    // 顺序重要：降级分支（无 AbortSignal.any）下读空闲超时也会 abort 主
+    // controller，先判 idle 才不会被误报成「用户取消」而静默吞掉。
+    if (streamIdleAborted) {
+      throw new Error('长时间未收到数据，翻译连接已中断，请重试');
+    }
     if (e && e.name === 'AbortError' && controller.signal.aborted) {
       throw new Error('翻译已取消');
     }
@@ -1185,6 +1220,9 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       const { done, value } = await reader.read();
       if (done) break;
 
+      // 任何字节（token 或 : hb 心跳注释）都说明连接还活着。
+      if (value && value.length) armIdleTimer();
+
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
@@ -1194,10 +1232,15 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       }
     }
   } catch (e) {
-    // 这个 abort 可能来自「10 分钟首 token 超时」而不是用户取消。外层 handler 按错误文本
-    // 分类，未翻译的 abort 报错（"... was aborted"）会被当成用户取消静默吞掉 ——
-    // content 端于是永远停在「预填充」上、秒数一路涨（实测出现过 10000+ 秒）。
-    // 按信号来源翻译成明确的错误文本，外层才能正确上报和复位 UI。
+    // 这个 abort 可能来自「10 分钟首 token 超时」或「读空闲超时」而不是用户
+    // 取消。外层 handler 按错误文本分类，未翻译的 abort 报错（"... was aborted"）
+    // 会被当成用户取消静默吞掉 —— content 端于是永远停在「预填充」上、秒数
+    // 一路涨（实测出现过 18761 秒）。按信号来源翻译成明确的错误文本，外层
+    // 才能正确上报和复位 UI。idle 必须排在取消之前：降级分支下它也 abort
+    // 主 controller。
+    if (streamIdleAborted) {
+      throw new Error('长时间未收到数据，翻译连接已中断，请重试');
+    }
     if (firstTokenController.signal.aborted) {
       throw new Error('AI 响应超时（10 分钟未收到首个 token），请重试');
     }
@@ -1205,6 +1248,8 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       throw new Error('翻译已取消');
     }
     throw e;
+  } finally {
+    disarmIdleTimer();
   }
 
   // A final SSE event is valid even when the server closes without a

@@ -1908,6 +1908,22 @@ function startTranslateWatchdog() {
   state.watchdogTimer = setInterval(() => { probeTranslationAlive(); }, WATCHDOG_INTERVAL_MS);
 }
 
+// 记录到与 background 同一个 pntErrorLog（popup 的「提交日志」读的就是它）：
+// watchdog 的判定必须留痕，否则「还有多少卡死」在线上根本无从统计。
+function recordContentError(message) {
+  try {
+    chrome.storage.local.get('pntErrorLog', (items) => {
+      try {
+        if (chrome.runtime.lastError) return;
+        const log = Array.isArray(items.pntErrorLog) ? items.pntErrorLog : [];
+        log.push({ time: new Date().toISOString(), message: String(message).slice(0, 2000) });
+        if (log.length > 20) log.shift();
+        chrome.storage.local.set({ pntErrorLog: log });
+      } catch (e) { /* 扩展上下文已失效：无处可记，忽略 */ }
+    });
+  } catch (e) { /* 同上 */ }
+}
+
 function stopTranslateWatchdog() {
   if (state.watchdogTimer) {
     clearInterval(state.watchdogTimer);
@@ -1923,8 +1939,19 @@ async function probeTranslationAlive() {
     const data = await sendToBackground('TRANSLATE_STATUS', {}, WATCHDOG_PROBE_TIMEOUT_MS);
     alive = !!(data && data.active);
   } catch (e) {
-    // No answer at all (worker unreachable, or it died mid-probe) counts as
-    // a miss: a healthy worker answers this instantly.
+    // 扩展上下文失效（用户更新/重载了插件）不是「后台被回收」：此时重试
+    // 必然无效 —— handleTranslate 入口的 chrome.runtime?.id 检查会直接
+    // return，用户只会反复点一个没反应的按钮。sendToBackground 已把这种
+    // 情况翻译成「扩展已更新，请刷新页面后重试」，直接用它收尾。
+    const msg = (e && e.message) ? e.message : String(e);
+    if (msg.includes('刷新页面') || msg.includes('扩展已更新')) {
+      stopTranslateWatchdog();
+      state.translating = false;
+      updateTranslateButton('idle');
+      showToast(msg);
+      return;
+    }
+    // 无应答（worker 不可达，或它中途死了）算一次 miss：健康的 worker 会立即作答。
     alive = false;
   }
   if (!state.translating) return; // finished while the probe was in flight
@@ -1932,7 +1959,10 @@ async function probeTranslationAlive() {
   state.watchdogMisses += 1;
   if (state.watchdogMisses >= WATCHDOG_MISS_LIMIT) {
     stopTranslateWatchdog();
-    finishTranslate(false, '与插件后台的连接已中断（后台任务已被浏览器回收），请重试');
+    const notice = '与插件后台的连接已中断（后台任务已被浏览器回收），请重试';
+    // 留痕：这句话是判断「1.4.8 之后还剩多少卡死」的唯一线上线索。
+    recordContentError(notice);
+    finishTranslate(false, notice);
   }
 }
 
@@ -1970,24 +2000,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  // Every synchronous branch must answer even when its handler throws: the
-  // background awaits chrome.tabs.sendMessage, and a closed port makes it
-  // treat the message as undelivered. A terminal event (SSE_DONE / SSE_ERROR)
-  // lost that way leaves the button on "AI 预填充中 Ns…" forever with nothing
-  // left to reset it, so a handler failure resets the UI here instead of
-  // failing silently.
+  // 统一的失败处理：把界面强制拉回可用状态。finishTranslate 自己也可能抛
+  // （它做大量 DOM 操作），所以这里不依赖它 —— 兜底直接清 translating 与
+  // watchdog，再尽力复位按钮，保证用户至少还能点「翻译」重试。
+  const handleHandlerFailure = (e) => {
+    console.error('[PNT] message handler failed:', message.type, e);
+    try {
+      if (!state.translating) return;
+      finishTranslate(false, '翻译处理出错：' + (e && e.message ? e.message : e));
+    } catch (nested) {
+      console.error('[PNT] finishTranslate itself failed; forcing UI reset:', nested);
+      try {
+        state.translating = false;
+        stopTranslateWatchdog();
+        updateTranslateButton('idle');
+        showToast('翻译处理出错：' + (e && e.message ? e.message : e));
+      } catch (final) {
+        console.error('[PNT] forced UI reset failed too:', final);
+      }
+    }
+  };
+
+  // 所有同步分支都必须应答：background 在 await chrome.tabs.sendMessage，
+  // 端口异常关闭会被当作「未投递」。终止事件（SSE_DONE / SSE_ERROR）因此
+  // 丢失的话，按钮会永远停在「AI 预填充中 Ns…」而无人复位。
   const guard = (handler) => {
     try {
-      handler();
-    } catch (e) {
-      console.error('[PNT] message handler failed:', message.type, e);
-      try {
-        if (state.translating) {
-          finishTranslate(false, '翻译处理出错：' + (e && e.message ? e.message : e));
-        }
-      } catch (nested) {
-        console.error('[PNT] failed to reset UI after handler error:', nested);
+      const result = handler();
+      // finishTranslate 等处理器是 async：它 await 之后抛出的异常不会
+      // 被上面的 try 捕获，必须接住返回的 Promise。
+      if (result && typeof result.then === 'function') {
+        result.catch(handleHandlerFailure);
       }
+    } catch (e) {
+      handleHandlerFailure(e);
     }
     sendResponse({ ok: true });
   };
@@ -2011,7 +2057,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       guard(() => onStreamConnected());
       break;
     case 'SSE_TOKEN':
-      guard(() => onStreamToken(message.token));
+      // 渲染异常不能让整次翻译作废：这个 token 已经进了 streamingText，
+      // 终止事件到达时会用完整文本重渲染。若在这里复位 UI（旧 guard
+      // 的行为），后续所有 token 与 SSE_DONE 都会被 translating 守卫
+      // 丢弃 —— 用户只拿到半篇译文，而且完成校验与「补译」入口整个被
+      // 绕过。这里只记录，不打断流。
+      try {
+        onStreamToken(message.token);
+      } catch (e) {
+        console.error('[PNT] token render failed; keeping the stream alive:', e);
+      }
+      sendResponse({ ok: true });
       break;
     case 'SSE_DONE':
       guard(() => onStreamDone(message.data));

@@ -41,7 +41,8 @@ The extension supports:
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
 - Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
-- Progress-time liveness probes: if the browser reclaims the extension's background worker mid-translation, the progress button resets itself with an explicit "connection lost" notice instead of staying on "pre-filling" with the seconds climbing forever.
+- Progress-time liveness probes: if the browser reclaims the extension's background worker mid-translation, the progress button resets itself with an explicit "connection lost" notice instead of staying on "pre-filling" with the seconds climbing forever. When the failure is actually an extension update leaving a stale page behind, it says so and asks for a page refresh instead.
+- A read-idle timeout on the translation stream: a stream that sends nothing at all — not even a heartbeat — for 90 seconds is reported as interrupted instead of hanging forever.
 - One-click retranslation, targeted repair of missing numbered paragraphs, and local error-log submission from the popup.
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
