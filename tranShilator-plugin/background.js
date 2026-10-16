@@ -7,6 +7,12 @@
 const PNT_BG_VERSION = '1.2.0';
 console.log('[PNT] background.js v' + PNT_BG_VERSION + ' loaded');
 
+// 每一步等待都要有上限：activeControllers 里的条目只有在 finally 执行时
+// 才会移除，而内容脚本靠「条目存在」判断后台是否还在跑 —— 一个永不返回的
+// await 会让那个判断永久为真，界面就永远卡在等待态（003 review round2 1.9）。
+const STEP1_TIMEOUT_MS = 30000;   // Pixiv 原文请求（单次 API，东京 < 1s）
+const STEP2_TIMEOUT_MS = 5000;    // 读取 extension storage（本地 API）
+
 // ─── Automatic update checks ────────────────────────────────
 // Unpacked/non-store extensions cannot replace their own files. We still
 // check releases in the background so the user does not have to remember
@@ -157,11 +163,15 @@ ensureUpdateAlarm();
 //
 // Lifecycle: an entry is added when a translation starts and removed in the
 // same function's finally block, plus on cancel and on same-tab re-entry.
-// It therefore cannot outlive its stream indefinitely: streamTranslateApi
-// fails the request after 90 s without a single byte (STREAM_IDLE_TIMEOUT_MS),
-// and the backend's own SseEmitter timeout is 30 minutes, so every stream
-// reaches finally one way or another. TRANSLATE_STATUS relies on this: an
-// entry that exists means a live stream, not a corpse (003 review 3.10).
+// Every await that can hold the entry open is bounded:
+//   - STEP1 (Pixiv fetch)     — STEP1_TIMEOUT_MS, 30 s
+//   - STEP2 (settings read)   — SETTINGS_TIMEOUT_MS, 5 s
+//   - STEP3 (stream read)     — STREAM_IDLE_TIMEOUT_MS, 90 s per read
+// so an entry cannot outlive its stream indefinitely. TRANSLATE_STATUS relies
+// on that: an entry that exists means a live stream, not a corpse.
+// (003 review round2 1.9: STEP1/STEP2 had no timeout at all, so the previous
+// version of this comment — which credited the backend's 30-minute emitter
+// timeout — was simply wrong for those two stages.)
 const activeControllers = new Map();
 
 // ─── Error log (for the popup's "submit log" button) ───────
@@ -664,7 +674,30 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
   try {
     // Step 1: fetch novel from Pixiv API
     console.log('[PNT] STEP1 fetchNovelFromPixiv start, novelId=' + safeNovelId);
-    const novel = await fetchNovelFromPixiv(safeNovelId, controller.signal);
+    // STEP1 也需要自己的超时：它不属于 STEP3 的读空闲计时器，也没有其它
+    // 兑底。没有它时，一次卡住的 Pixiv 请求会让 activeControllers 永久留着
+    // 该 tab 的条目，而 content 的存活探测会一直回答「活着」—— 按钮卡死的
+    // 另一种形态（003 review round2 1.9）。
+    const stepOneController = new AbortController();
+    let stepOneTimedOut = false;
+    const stepOneTimer = setTimeout(() => {
+      stepOneTimedOut = true;
+      stepOneController.abort();
+    }, STEP1_TIMEOUT_MS);
+    const stepOneSignal = typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([controller.signal, stepOneController.signal])
+      : controller.signal;
+    let novel;
+    try {
+      novel = await fetchNovelFromPixiv(safeNovelId, stepOneSignal);
+    } catch (e) {
+      if (stepOneTimedOut) {
+        throw new Error('获取 Pixiv 原文超时（' + Math.round(STEP1_TIMEOUT_MS / 1000) + ' 秒无响应），请重试');
+      }
+      throw e;
+    } finally {
+      clearTimeout(stepOneTimer);
+    }
     console.log('[PNT] STEP1 done, title=' + (novel.title || '?'));
 
     // Paged novels: which page gets numbered depends on the page marker,
@@ -715,8 +748,13 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
       }
     });
 
-    // Step 2: load settings
-    const settings = await loadSettings();
+    // Step 2: load settings（storage 回调不触发时给个明确的失败，而不是
+    // 让这个 tab 的 controller 永久驻留 —— 见文件头的常量注释）。
+    const settings = await Promise.race([
+      loadSettings(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('读取插件设置超时，请重试')), STEP2_TIMEOUT_MS))
+    ]);
 
     // Step 3: stream translate via backend
     // Paged novels: translate only the current page (the DOM only shows
@@ -913,8 +951,10 @@ async function notifyTab(tabId, message) {
     console.warn('[PixivTranslator] notifyTab failed:', type, msg);
     // 「终止事件投递失败」是区分「后端没发」与「content 没收到」的唯一
     // 线索：只有它落进错误日志，用户下次报卡住时才查得出断在哪一段。
-    if (type === 'SSE_DONE' || type === 'SSE_ERROR') {
-      recordPluginError(`终止事件 ${type} 投递失败: ${msg}`);
+    // SSE_NOVEL_LOADED 同样要记：它丢了 content 永远不知道翻译已开始，
+    // 表现为「点了没反应」的假成功（003 review round2 1.3）。
+    if (type === 'SSE_DONE' || type === 'SSE_ERROR' || type === 'SSE_NOVEL_LOADED') {
+      recordPluginError(`${type} 投递失败: ${msg}`);
     }
   }
 }

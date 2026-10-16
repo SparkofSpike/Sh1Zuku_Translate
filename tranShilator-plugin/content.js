@@ -35,6 +35,7 @@ let state = {
   watchdogTimer: null,     // liveness probe timer (see startTranslateWatchdog)
   watchdogMisses: 0,       // consecutive probes that found no live stream
   watchdogEpoch: 0,        // bumped per translation; stale probes must not count
+  runId: 0,                // bumped whenever a translation (or repair) starts
   repairBackup: null,      // {streamText, missing} saved before a repair run
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false, // true once the first SSE token arrived
@@ -1276,6 +1277,10 @@ function renderInlineStreaming() {
   paragraphs.forEach((para, idx) => {
     const el = transEls[Math.min(idx, last)];
     if (!el) return;
+    // 这条路径也要摘掉缺失提示：否则元素会带着橙色样式与 onclick 继续存在，
+    // 用户点任意一段译文都会触发一次全量补译（多付 token）
+    // （003 review round2 N7）。
+    clearMissingHint(el);
     if (idx > last) {
       el.textContent += '\n' + para; // merge overflow instead of overwrite
     } else {
@@ -1333,11 +1338,38 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
     return;
   }
 
-  // Load settings
+  // Load settings。整个读取包一层超时：chrome.storage 的回调在极端故障下
+  // 可能永不触发，而它卡住的就是启动序列的互斥锁（startingTranslation）——
+  // 一旦永久挂起，此后所有入口都会静默失效，用户点任何按钮都没反应
+  // （003 review round2 N10）。超时后走默认设置，翻译仍能开始。
+  const SETTINGS_TIMEOUT_MS = 5000;
   const settings = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const defaults = {
+      targetLang: 'zh',
+      displayMode: 'inline',
+      selectedPresets: [],
+      customPrompt: '',
+      thinkingType: 'disabled',
+      model: '',
+      modelProfileId: 0,
+      inlineScope: 'page',
+      inlineSeparator: 'p'
+    };
+    const timer = setTimeout(() => {
+      console.warn('[PNT] storage.sync.get timed out; using default settings');
+      recordContentError('读取插件设置超时，已使用默认设置');
+      finish(defaults);
+    }, SETTINGS_TIMEOUT_MS);
     try {
       chrome.storage.sync.get(['targetLang', 'displayMode', 'inlineScope', 'inlineSeparator', 'selectedPresets', 'customPrompt', 'thinkingType', 'model', 'modelProfileId'], (items) => {
-        resolve({
+        finish({
           targetLang: items.targetLang || 'zh',
           // 侧边面板已从界面移除：它的窗口呈现由分页模式接管，老配置
           // （storage 里存着 'panel'）映射过来，以免老用户升级后卡在一个
@@ -1358,16 +1390,7 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
     } catch (e) {
       // Extension context invalidated — surface a friendly message.
       showToast('扩展已更新，请刷新页面后重试');
-      resolve({
-        targetLang: 'zh',
-        displayMode: 'inline',
-        selectedPresets: [],
-        customPrompt: '',
-        model: '',
-        modelProfileId: null,
-        inlineScope: 'page',
-        inlineSeparator: 'p'
-      });
+      finish(defaults);
     }
   });
 
@@ -1407,6 +1430,14 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
   state.expectedParagraphCount = 0;
   state.missingParagraphIds = [];
   state.repairMode = false;
+  // 一并丢掉上一轮补译的备份：否则它要么是一份指向旧译文的大字符串，
+  // 要么让「repairMode 为假但 backup 还在」这种不一致状态漏到下一轮
+  // （003 review round2 N1）。
+  state.repairBackup = null;
+  // 这一轮的身份。迟到的事件（尤其是被取消的补译的 continuation）靠它
+  // 判断自己是否还属于当前这一轮，避免去动新翻译的状态（N4/N5/N6）。
+  state.runId += 1;
+  const myRun = state.runId;
   state.settingsSnapshot = settings;
   // Long texts (paged Pixiv novels) can take DeepSeek a while to pre-fill;
   // if no token arrives within a few seconds, tell the user we are working
@@ -1483,7 +1514,8 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
     });
   } catch (e) {
     // Cancellation makes background reject with abort error — expected.
-    if (state.translating) {
+    // runId 守卫：若这一轮已经被取消或被新一轮接管，不要再动当前状态。
+    if (state.translating && state.runId === myRun) {
       finishTranslate(false, e.message);
     }
   }
@@ -1779,28 +1811,60 @@ function onStreamDone(data) {
   if (state.repairMode) {
     // 补译的流只包含缺失段落。用 backup 把结果并回完整译文，而不是替换：
     // 替换会让侧栏显示、显示/隐藏切换、重渲染全部只剩下补译的那几段
-    // （003 review 3.5）。追加的完整 JSON 行会在 parseJsonLines 里覆盖
-    // 同 id 的旧条目，所以不需要先删除原来的残缺行。
+    // （003 review 3.5）。
     const repairedText = (data && typeof data.translatedText === 'string' && data.translatedText.trim())
       ? data.translatedText
       : state.streamingText;
     const repaired = parseJsonLines(repairedText);
-    repaired.forEach(entry => {
-      state.fullTranslations[String(entry.id)] = entry.text;
-      const el = (state.inlineTransEls || []).find(item => item.dataset.pid === String(entry.id));
-      if (el) el.textContent = entry.text;
-    });
     const backup = state.repairBackup || { streamText: '', missing: [...state.missingParagraphIds] };
-    const appended = repaired
-      .filter(entry => entry.complete && entry.text.trim().length > 0)
-      .map(entry => JSON.stringify({ id: entry.id, text: entry.text }))
-      .join('\n');
-    state.streamingText = backup.streamText + (appended ? '\n' + appended : '');
-    // 仍然缺失的段落 = 补译前缺失的
-    // 减去这次真的补回来（完整且非空）的。
-    state.missingParagraphIds = backup.missing.filter(
-      id => !repaired.some(entry => entry.id === id && entry.complete && entry.text.trim())
-    );
+
+    // 只保留「完整且非空」的补译结果，并按 id 去重（后面的覆盖前面的）：
+    // 模型可能乱序输出、也可能对同一 id 同时给出非空与空文本，而两个渲染器
+    // 都是「后写胜出」—— 若空行排在其后，用户会既看不到译文也看不到缺失
+    // 提示（003 review round2 N3）。
+    const repairedById = new Map();
+    repaired.forEach((entry) => {
+      if (entry.complete && entry.text.trim().length > 0) repairedById.set(entry.id, entry.text);
+    });
+
+    if (repairedById.size === 0) {
+      // 模型没按 JSON Lines 返回（或全部为空）：什么都不改，但要说清楚
+      // 原因并留痕，否则用户只看到「补译仍有段落缺失」而不知道是格式问题
+      // （003 review round2 N2）。
+      state.repairMode = false;
+      state.repairBackup = null;
+      const notice = '补译失败：模型没有按段落编号返回译文，可重试或重新翻译';
+      recordContentError(notice);
+      try {
+        if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
+          state.streamingText = backup.streamText;
+          renderInlineStreaming();
+        }
+      } catch (e) {
+        console.warn('[PNT] re-render after empty repair:', e && e.message);
+      }
+      state.streamingText = backup.streamText;
+      state.missingParagraphIds = backup.missing;
+      finishTranslate(false, notice);
+      return;
+    }
+
+    repairedById.forEach((text, id) => {
+      state.fullTranslations[String(id)] = text;
+      const el = (state.inlineTransEls || []).find(item => item.dataset.pid === String(id));
+      if (el) el.textContent = text;
+    });
+
+    // 剔除 backup 中同 id 的旧行，再追加新行 —— 依赖「后写胜出」不够：
+    // 旧行里可能就有一条**完整但为空**的同 id 行排在新行前面（N3）。
+    const rebuiltLines = parseJsonLines(backup.streamText)
+      .filter(entry => !repairedById.has(entry.id))
+      .map(entry => JSON.stringify({ id: entry.id, text: entry.text }));
+    const appendedLines = [...repairedById.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([id, text]) => JSON.stringify({ id, text }));
+    state.streamingText = rebuiltLines.concat(appendedLines).join('\n');
+    state.missingParagraphIds = backup.missing.filter(id => !repairedById.has(id));
     state.repairMode = false;
     state.repairBackup = null;
     // 重新渲染一次，让合并后的完整译文回到界面上（补译成功也要重画）。
@@ -1884,6 +1948,10 @@ async function repairMissingParagraphs() {
   state.repairBackup = { streamText: state.streamingText, missing: ids };
   state.repairMode = true;
   state.translating = true;
+  // 补译也是一轮翻译：给它自己的 runId，让它的 continuation 能判断自己
+  // 是否还属于当前这一轮（003 review round2 N4/N5）。
+  state.runId += 1;
+  const myRun = state.runId;
   startTranslateWatchdog();
   state.streamingText = '';
   state.firstTokenReceived = false;
@@ -1911,7 +1979,13 @@ async function repairMissingParagraphs() {
       repairContext: context
     });
   } catch (e) {
-    finishTranslate(false, e.message);
+    // 这次补译可能已经被取消（cancelTranslation → restoreAfterFailedRepair
+    // 会把 repairMode 清掉），或者已有一轮新翻译接管（runId 变了）。
+    // 两种情况都必须原样退出 —— 否则 finishTranslate 会去动**新一轮**的
+    // 状态（003 review round2 N4：这是本类问题的根源）。
+    if (state.repairMode && state.runId === myRun) {
+      finishTranslate(false, e.message);
+    }
   }
 }
 
@@ -1930,9 +2004,13 @@ function restoreAfterFailedRepair() {
   state.repairMode = false;
   state.repairBackup = null;
   // 重画一次：inline 模式会把已恢复的译文按 id 重新填回，panel 模式重排文本。
+  // paged 也补上（当前 paged 进不了补译，但若将来支持，这里不带兜底就会
+  // 「状态回滚了、界面没重绘」，003 review round2 N12）。
   try {
     if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
       renderInlineStreaming();
+    } else if (state.mode === 'paged' && state.transBody) {
+      renderPagedStreaming();
     } else if (state.transBody && state.numberedRequest) {
       renderPanelFromJsonLines();
     }
@@ -2020,6 +2098,8 @@ const WATCHDOG_PROBE_TIMEOUT_MS = 10000;
 const WATCHDOG_MISS_LIMIT = 3;
 
 function startTranslateWatchdog() {
+  // 只在真正的「开始新一轮翻译」处调用。这里负责作废上一轮的探测、
+  // 重置计数，并开启新计时器。
   stopTranslateWatchdog();
   state.watchdogMisses = 0;
   // 每次翻译一个新 epoch：在途的旧探测回来时，若 epoch 已变就不再计数 ——
@@ -2046,15 +2126,18 @@ function recordContentError(message) {
 }
 
 function stopTranslateWatchdog() {
+  // 只停计时器：不动 misses / epoch。
+  //
+  // 这两项属于「这一轮翻译」的身份，只能由 startTranslateWatchdog 在下一轮
+  // 开始时重置。在这里自增 epoch 是错误的（003 review round2 1.7）—— 它会把
+  // 每一次「顺手清理」（finishTranslate、探测自检、取消…）都变成一次「本轮
+  // 作废」，于是在途探测回来时被静默丢弃，miss 永远攒不满 3 次，判定被无限
+  // 推迟。而在 P1（SW 被回收）场景下不会再有人调用 startTranslateWatchdog，
+  // 探测就永久失效 —— 那正是按钮卡死唯一的自愈路径。
   if (state.watchdogTimer) {
     clearInterval(state.watchdogTimer);
     state.watchdogTimer = null;
   }
-  // misses 归零是有意为之：它计的是「连续」失败，新一轮翻译应从零开始。
-  // 代价是跨中断的容错被重置（003 review 3.8）—— 配合 finishTranslate 的
-  // 重入守卫，误触发已不再轻易发生，这里不再引入第二套计数。
-  state.watchdogMisses = 0;
-  state.watchdogEpoch += 1; // 作废在途探测
 }
 
 async function probeTranslationAlive(myEpoch) {
@@ -2072,6 +2155,14 @@ async function probeTranslationAlive(myEpoch) {
     if (msg.includes('刷新页面') || msg.includes('扩展已更新')) {
       stopTranslateWatchdog();
       state.translating = false;
+      // 这条路不走 finishTranslate，所以那些清理必须自己做：否则 waitTick
+      // 下一秒就会用旧的 state.phase 把按钮重新刷成忙态，而用户再也看不到
+      // 这句提示（003 review round2 1.8）。
+      if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
+      if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
+      state.phase = 'idle';
+      // 留痕：这是一条静默路径，与 watchdog 判定同样需要可诊断。
+      recordContentError(msg);
       updateTranslateButton('idle');
       showToast(msg);
       return;
@@ -2148,6 +2239,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         state.translating = false;
         stopTranslateWatchdog();
+        // 计时器不关掉的话，它会用旧的 state.phase 在下一秒把按钮刷回忙态，
+        // 兜底就白做了（003 review round2 1.8）。
+        if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
+        if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
+        state.phase = 'idle';
+        recordContentError('翻译处理出错：' + (e && e.message ? e.message : e));
         updateTranslateButton('idle');
         showToast('翻译处理出错：' + (e && e.message ? e.message : e));
       } catch (final) {
@@ -2196,11 +2293,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // 终止事件到达时会用完整文本重渲染。若在这里复位 UI（旧 guard
       // 的行为），后续所有 token 与 SSE_DONE 都会被 translating 守卫
       // 丢弃 —— 用户只拿到半篇译文，而且完成校验与「补译」入口整个被
-      // 绕过。这里只记录，不打断流。
+      // 绕过。这里只记录，不打断流（003 review 1.11：也写进错误日志，
+      // 之前只 console.error，线上无从诊断）。
       try {
         onStreamToken(message.token);
       } catch (e) {
         console.error('[PNT] token render failed; keeping the stream alive:', e);
+        recordContentError('译文渲染出错：' + (e && e.message ? e.message : e));
       }
       sendResponse({ ok: true });
       break;
