@@ -34,6 +34,8 @@ let state = {
   waitTick: null,          // elapsed-time display timer
   watchdogTimer: null,     // liveness probe timer (see startTranslateWatchdog)
   watchdogMisses: 0,       // consecutive probes that found no live stream
+  watchdogEpoch: 0,        // bumped per translation; stale probes must not count
+  repairBackup: null,      // {streamText, missing} saved before a repair run
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false, // true once the first SSE token arrived
   aiConnected: false,       // upstream model response has connected
@@ -306,8 +308,7 @@ function createMiniButton() {
         // autoTranslate fired on page load without the user asking; a
         // click now means "I want to translate" — take over by cancelling
         // the automatic run and starting a fresh manual one.
-        cancelTranslation();
-        handleTranslate();
+        beginTranslation();
       } else {
         cancelTranslation();
       }
@@ -320,9 +321,9 @@ function createMiniButton() {
         showTranslationDisplay();
       }
     } else {
-      // handleTranslate decides whether to open the window
-      // (panel mode only; inline mode renders under the original text)
-      handleTranslate();
+      // begins a translation: opens the window in window modes, renders
+      // under the original paragraphs in inline mode.
+      beginTranslation();
     }
   };
   document.body.appendChild(btn);
@@ -412,14 +413,18 @@ function createWindow() {
 
   const retranslateBtn = w.querySelector('.pnt-retranslate-btn');
   retranslateBtn.addEventListener('click', () => {
-    if (state.translating) {
-      cancelTranslation();
-      handleTranslate(true);
-    } else {
-      handleTranslate(true);
-    }
+    // 统一入口：它内部会把正在跑的翻译取消后再开新的，且不可重入。
+    beginTranslation(true);
   });
   state.retranslateBtn = retranslateBtn;
+
+  // 这两个按钮在 HTML 里默认 display:none，此前只有 finishTranslate 会同步
+  // 它们。但窗口也可能在一次翻译结束之后才被创建（inline 定位失败降级到这里，
+  // 或用户手动展开），那时没人同步 —— 「补译缺失段落」与「重新翻译」就永远
+  // 不可见（003 review 3.5 的同源问题：补译入口不可达）。创建时按当前状态
+  // 初始化一次。
+  retranslateBtn.style.display = hasTranslationContent() ? '' : 'none';
+  repairBtn.style.display = state.missingParagraphIds.length ? '' : 'none';
 
   // Toggle the whole translation display (关闭翻译 ↔ 显示翻译): hides it
   // so the page returns to its normal state, or brings it back.
@@ -1119,6 +1124,25 @@ function parseJsonLines(streamText) {
   return entries;
 }
 
+// 缺失提示同时是补译入口。inline 模式没有悬浮窗，而「补译缺失段落」按钮
+// 只存在于窗口里 —— 用户在页面上看到的本来只有一行死文字（003 review 3.1
+// 的后果：缺失时没有任何补译入口）。这里把提示本身变成可点击的入口。
+function makeMissingHint(el, id) {
+  el.textContent = `⚠ 第 ${id} 段翻译缺失 — 点击此处补译`;
+  el.classList.add('pnt-missing-hint');
+  el.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    repairMissingParagraphs();
+  };
+}
+
+function clearMissingHint(el) {
+  if (!el.classList) return;
+  el.classList.remove('pnt-missing-hint');
+  el.onclick = null;
+}
+
 // Fill the translation divs from JSON Lines entries, mapped by id.
 function renderInlineJsonLines(entries) {
   const transEls = state.inlineTransEls || [];
@@ -1147,15 +1171,14 @@ function renderInlineJsonLines(entries) {
   transEls.forEach((el) => {
     if (!el) return;
     const entry = latest.get(Number(el.dataset.pid));
+    clearMissingHint(el);
     el.textContent = entry ? entry.text : '';
   });
 
   // Never leave an omitted paragraph looking like an intentional blank line.
   state.missingParagraphIds.forEach((id) => {
     const el = byPid.get(String(id));
-    if (el && !el.textContent) {
-      el.textContent = `⚠ 第 ${id} 段翻译缺失，请点击重新翻译`;
-    }
+    if (el && !el.textContent) makeMissingHint(el, id);
   });
 }
 
@@ -1167,10 +1190,15 @@ function refillInlineFromMap() {
   transEls.forEach((el) => {
     if (!el || !el.dataset || !el.dataset.pid) return;
     const id = Number(el.dataset.pid);
-    el.textContent = state.fullTranslations[el.dataset.pid]
-      || (state.missingParagraphIds.includes(id)
-        ? `⚠ 第 ${id} 段翻译缺失，请点击重新翻译`
-        : '');
+    const text = state.fullTranslations[el.dataset.pid];
+    clearMissingHint(el);
+    if (text) {
+      el.textContent = text;
+    } else if (state.missingParagraphIds.includes(id)) {
+      makeMissingHint(el, id);
+    } else {
+      el.textContent = '';
+    }
   });
 }
 
@@ -1258,7 +1286,33 @@ function renderInlineStreaming() {
 
 // ─── Translation Flow ───────────────────────────────────────
 
-async function handleTranslate(skipCache = false) {
+// 所有「开始一次翻译」的入口都必须走这里，而不是直接调 handleTranslate。
+//
+// 原因（003 review 3.6/3.7）：MANUAL_TRANSLATE 与重新翻译按钮走的是
+// 「先取消旧的、再开新的」序列，而 cancelTranslation 内部 await 了一次
+// 消息往返（最长 20 秒）。这段窗口里 state.translating 已经是 false，
+// 页面按钮上的第二次点击会插进来再开一次 —— 两个 handleTranslate 交错，
+// 真的会向后台发两次请求（用户多付一份 token），而且后一次的 watchdog
+// 会被前一次的 finishTranslate 停掉。用 startingTranslation 把这整段
+// 序列（含取消）框成一个不可重入的整体。
+let startingTranslation = false;
+
+async function beginTranslation(skipCache = false) {
+  if (startingTranslation) return;
+  startingTranslation = true;
+  try {
+    if (state.translating) {
+      await cancelTranslation();
+      // 取消失败（例如后台已经换了实例）时不要贸然再发一次请求。
+      if (state.translating) return;
+    }
+    await handleTranslate(skipCache, true);
+  } finally {
+    startingTranslation = false;
+  }
+}
+
+async function handleTranslate(skipCache = false, fromBegin = false) {
   // Bail out if this content script belongs to a dead extension instance
   // (extension was reloaded) — chrome.* calls would throw
   // "Extension context invalidated" otherwise.
@@ -1269,7 +1323,9 @@ async function handleTranslate(skipCache = false) {
     return;
   }
 
-  if (state.translating) return;
+  // fromBegin 是 beginTranslation 内部的调用标记：启动序列已经持有互斥锁，
+  // 只有它能穿过 startingTranslation 这道门（003 review 3.6/3.7）。
+  if (state.translating || (startingTranslation && !fromBegin)) return;
 
   const novelId = getNovelIdFromUrl();
   if (!novelId) {
@@ -1721,15 +1777,42 @@ function onStreamToken(token) {
 function onStreamDone(data) {
   if (!state.translating) return; // cancelled — ignore
   if (state.repairMode) {
-    if (data && typeof data.translatedText === 'string') state.streamingText = data.translatedText;
-    const repaired = parseJsonLines(state.streamingText);
+    // 补译的流只包含缺失段落。用 backup 把结果并回完整译文，而不是替换：
+    // 替换会让侧栏显示、显示/隐藏切换、重渲染全部只剩下补译的那几段
+    // （003 review 3.5）。追加的完整 JSON 行会在 parseJsonLines 里覆盖
+    // 同 id 的旧条目，所以不需要先删除原来的残缺行。
+    const repairedText = (data && typeof data.translatedText === 'string' && data.translatedText.trim())
+      ? data.translatedText
+      : state.streamingText;
+    const repaired = parseJsonLines(repairedText);
     repaired.forEach(entry => {
       state.fullTranslations[String(entry.id)] = entry.text;
       const el = (state.inlineTransEls || []).find(item => item.dataset.pid === String(entry.id));
       if (el) el.textContent = entry.text;
     });
-    state.missingParagraphIds = state.missingParagraphIds.filter(id => !repaired.some(e => e.id === id && e.text.trim()));
+    const backup = state.repairBackup || { streamText: '', missing: [...state.missingParagraphIds] };
+    const appended = repaired
+      .filter(entry => entry.complete && entry.text.trim().length > 0)
+      .map(entry => JSON.stringify({ id: entry.id, text: entry.text }))
+      .join('\n');
+    state.streamingText = backup.streamText + (appended ? '\n' + appended : '');
+    // 仍然缺失的段落 = 补译前缺失的
+    // 减去这次真的补回来（完整且非空）的。
+    state.missingParagraphIds = backup.missing.filter(
+      id => !repaired.some(entry => entry.id === id && entry.complete && entry.text.trim())
+    );
     state.repairMode = false;
+    state.repairBackup = null;
+    // 重新渲染一次，让合并后的完整译文回到界面上（补译成功也要重画）。
+    try {
+      if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
+        renderInlineStreaming();
+      } else if (state.transBody && state.numberedRequest) {
+        renderPanelFromJsonLines();
+      }
+    } catch (e) {
+      console.warn('[PNT] re-render after repair:', e && e.message);
+    }
     finishTranslate(state.missingParagraphIds.length === 0, state.missingParagraphIds.length ? '补译仍有段落缺失' : null, data);
     return;
   }
@@ -1792,9 +1875,13 @@ function onStreamDone(data) {
 }
 
 async function repairMissingParagraphs() {
-  if (state.translating || !state.missingParagraphIds.length) return;
+  // 启动序列进行中（包含「先取消再重开」的那段窗口）时不要插入补译。
+  if (state.translating || startingTranslation || !state.missingParagraphIds.length) return;
   const ids = [...state.missingParagraphIds];
   const context = state.streamingText.slice(-12000);
+  // 备份当前完整译文与缺失清单：补译流只含缺失段落，完成后要把它并回
+  // 备份而不是替换，失败/取消时要能原样恢复（003 review 3.5）。
+  state.repairBackup = { streamText: state.streamingText, missing: ids };
   state.repairMode = true;
   state.translating = true;
   startTranslateWatchdog();
@@ -1833,8 +1920,38 @@ function onStreamError(error) {
   finishTranslate(false, error);
 }
 
+// 补译中断/失败/取消后的回滚：把内部状态恢复到补译前的样子，让用户
+// 仍然拥有那份不完整但已渲染的译文，以及「补译」按钮。
+function restoreAfterFailedRepair() {
+  if (state.repairMode && state.repairBackup) {
+    state.streamingText = state.repairBackup.streamText;
+    state.missingParagraphIds = state.repairBackup.missing;
+  }
+  state.repairMode = false;
+  state.repairBackup = null;
+  // 重画一次：inline 模式会把已恢复的译文按 id 重新填回，panel 模式重排文本。
+  try {
+    if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
+      renderInlineStreaming();
+    } else if (state.transBody && state.numberedRequest) {
+      renderPanelFromJsonLines();
+    }
+  } catch (e) {
+    console.warn('[PNT] re-render after failed repair:', e && e.message);
+  }
+}
+
 function finishTranslate(success, errorMsg, data) {
+  // 重入守卫（003 review 1.3）：watchdog 判定与紧随其后的 SSE_ERROR 会同时
+  // 收尾，第二次调用只会重复弹 toast。已经 idle 就直接忽略。
+  if (!state.translating) return;
   state.translating = false;
+  // 补译失败：恢复补译前的完整译文与缺失清单。补译流里只有缺失段落，
+  // 不能用它代表整篇译文（003 review 3.5）—— 否则一次失败的补译会把已经
+  // 拿到的译文从内部状态里抹掉，重渲染/切换显示后就再也回不来。
+  if (state.repairMode && !success) {
+    restoreAfterFailedRepair();
+  }
   stopTranslateWatchdog();
   if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
   if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
@@ -1905,7 +2022,11 @@ const WATCHDOG_MISS_LIMIT = 3;
 function startTranslateWatchdog() {
   stopTranslateWatchdog();
   state.watchdogMisses = 0;
-  state.watchdogTimer = setInterval(() => { probeTranslationAlive(); }, WATCHDOG_INTERVAL_MS);
+  // 每次翻译一个新 epoch：在途的旧探测回来时，若 epoch 已变就不再计数 ——
+  // 否则旧探测的 miss 会记到新一次翻译的账上（003 review 1.3）。
+  state.watchdogEpoch += 1;
+  const myEpoch = state.watchdogEpoch;
+  state.watchdogTimer = setInterval(() => { probeTranslationAlive(myEpoch); }, WATCHDOG_INTERVAL_MS);
 }
 
 // 记录到与 background 同一个 pntErrorLog（popup 的「提交日志」读的就是它）：
@@ -1929,10 +2050,14 @@ function stopTranslateWatchdog() {
     clearInterval(state.watchdogTimer);
     state.watchdogTimer = null;
   }
+  // misses 归零是有意为之：它计的是「连续」失败，新一轮翻译应从零开始。
+  // 代价是跨中断的容错被重置（003 review 3.8）—— 配合 finishTranslate 的
+  // 重入守卫，误触发已不再轻易发生，这里不再引入第二套计数。
   state.watchdogMisses = 0;
+  state.watchdogEpoch += 1; // 作废在途探测
 }
 
-async function probeTranslationAlive() {
+async function probeTranslationAlive(myEpoch) {
   if (!state.translating) { stopTranslateWatchdog(); return; }
   let alive = false;
   try {
@@ -1954,12 +2079,16 @@ async function probeTranslationAlive() {
     // 无应答（worker 不可达，或它中途死了）算一次 miss：健康的 worker 会立即作答。
     alive = false;
   }
-  if (!state.translating) return; // finished while the probe was in flight
+  if (!state.translating) return;               // finished while the probe was in flight
+  if (myEpoch !== state.watchdogEpoch) return;  // 已开启新一轮翻译，旧探测作废
   if (alive) { state.watchdogMisses = 0; return; }
   state.watchdogMisses += 1;
   if (state.watchdogMisses >= WATCHDOG_MISS_LIMIT) {
     stopTranslateWatchdog();
-    const notice = '与插件后台的连接已中断（后台任务已被浏览器回收），请重试';
+    // 重试是有效的（会重新发请求，SW 会按需冷启动），但若反复命中就该
+    // 刷新页面 —— 检查器（003 review 3.9）指出只写「请重试」会让用户在
+    // 无法自愈的情况下反复点按钮。
+    const notice = '与插件后台的连接已中断（后台任务已被浏览器回收），请重试；若反复失败请刷新页面';
     // 留痕：这句话是判断「1.4.8 之后还剩多少卡死」的唯一线上线索。
     recordContentError(notice);
     finishTranslate(false, notice);
@@ -1976,9 +2105,15 @@ async function cancelTranslation() {
     console.warn('[PNT] cancel ack failed:', e.message);
   }
   state.translating = false;
+  // 取消的若是一次补译，回滚到补译前的完整译文（003 review 3.5）。
+  if (state.repairMode) restoreAfterFailedRepair();
   stopTranslateWatchdog();
   updateTranslateButton('idle');
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
+  // 取消后这些入口应该重新可用：否则用户取消一次失败的补译后，
+  // 既没有「补译」按钮也没有「重新翻译」按钮，只能刷新页面。
+  if (state.retranslateBtn) state.retranslateBtn.style.display = hasTranslationContent() ? '' : 'none';
+  if (state.repairBtn) state.repairBtn.style.display = state.missingParagraphIds.length ? '' : 'none';
   showToast('已取消翻译');
 }
 
@@ -2090,14 +2225,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       break;
     case 'MANUAL_TRANSLATE':
-      // Popup explicit trigger: if an auto-translate is already running,
-      // cancel it first, then start fresh with current settings.
-      (async () => {
-        if (state.translating) {
-          await cancelTranslation();
-        }
-        await handleTranslate(true);
-      })();
+      // Popup explicit trigger: cancel a running translation first, then
+      // start fresh with the current settings (beginTranslation owns the
+      // cancel-then-start sequence and keeps it non-reentrant).
+      beginTranslation(true);
       sendResponse({ ok: true });
       break;
     case 'PING':
@@ -2129,7 +2260,7 @@ function init() {
   chrome.storage.sync.get(['autoTranslate'], (items) => {
     if (items.autoTranslate !== false) {
       state.autoStarted = true;
-      setTimeout(handleTranslate, 500);
+      setTimeout(() => beginTranslation(), 500);
     }
   });
 }

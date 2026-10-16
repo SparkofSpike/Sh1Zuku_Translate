@@ -275,6 +275,20 @@
   display: none;
 }
 
+/* 缺失段落的提示本身就是补译入口（inline 模式没有悬浮窗，补译按钮只在
+   窗口里）。让它看起来可点，并用浅黄底色把它和正常译文区分开。 */
+.pnt-inline-trans.pnt-missing-hint {
+  color: #a15c00;
+  border-left-color: #e8a33d;
+  background: #fff8e6;
+  cursor: pointer;
+}
+
+.pnt-inline-trans.pnt-missing-hint:hover {
+  background: #fdf0d5;
+  text-decoration: underline;
+}
+
 
 /* ─── Paged mode ([newpage] preserved) ───────────────────── */
 

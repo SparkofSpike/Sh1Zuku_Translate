@@ -154,6 +154,14 @@ ensureUpdateAlarm();
 
 // One AbortController per tab: translating in two tabs at once must
 // not clobber each other's cancellation handle.
+//
+// Lifecycle: an entry is added when a translation starts and removed in the
+// same function's finally block, plus on cancel and on same-tab re-entry.
+// It therefore cannot outlive its stream indefinitely: streamTranslateApi
+// fails the request after 90 s without a single byte (STREAM_IDLE_TIMEOUT_MS),
+// and the backend's own SseEmitter timeout is 30 minutes, so every stream
+// reaches finally one way or another. TRANSLATE_STATUS relies on this: an
+// entry that exists means a live stream, not a corpse (003 review 3.10).
 const activeControllers = new Map();
 
 // ─── Error log (for the popup's "submit log" button) ───────
