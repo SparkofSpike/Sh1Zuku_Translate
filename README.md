@@ -28,7 +28,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.4.7` (build metadata in `version.js` is generated from the release commit).
+The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.4.8` (build metadata in `version.js` is generated from the release commit).
 
 The extension supports:
 
@@ -41,6 +41,7 @@ The extension supports:
 - Multiple server URL presets, selectable translation presets, and a custom prompt.
 - Optional DeepSeek thinking mode.
 - Automatic translation, per-tab cancellation, and service-worker keep-alive alarms for long requests.
+- Progress-time liveness probes: if the browser reclaims the extension's background worker mid-translation, the progress button resets itself with an explicit "connection lost" notice instead of staying on "pre-filling" with the seconds climbing forever.
 - One-click retranslation, targeted repair of missing numbered paragraphs, and local error-log submission from the popup.
 - A history button that opens the web application's translation history.
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.

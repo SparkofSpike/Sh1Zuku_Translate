@@ -587,6 +587,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     }
 
+    case 'TRANSLATE_STATUS': {
+      // Liveness probe from the content script while it believes a
+      // translation is running (see startTranslateWatchdog in content.js).
+      // An empty map means this worker instance has no stream for that tab:
+      // either the translation just finished (the page has reset itself by
+      // then and no longer probes), or MV3 reclaimed the worker and this is
+      // a fresh instance — the fetch died with the old one and no terminal
+      // event will ever arrive. Three consecutive "no" answers make the
+      // page reset its stuck progress button.
+      const key = sender.tab?.id ?? 'unknown';
+      sendResponse({ success: true, data: { active: activeControllers.has(key) } });
+      break;
+    }
+
     case 'GET_UPDATE_STATUS':
       getUpdateState().then((state) => {
         sendResponse({ success: true, update: state });

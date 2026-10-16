@@ -32,6 +32,8 @@ let state = {
   inlineWaitCleanup: null, // cancels a pending inline-container wait
   firstTokenTimer: null,   // pre-fill feedback timer
   waitTick: null,          // elapsed-time display timer
+  watchdogTimer: null,     // liveness probe timer (see startTranslateWatchdog)
+  watchdogMisses: 0,       // consecutive probes that found no live stream
   autoStarted: false,      // translation was started by autoTranslate
   firstTokenReceived: false, // true once the first SSE token arrived
   aiConnected: false,       // upstream model response has connected
@@ -1362,6 +1364,7 @@ async function handleTranslate(skipCache = false) {
   // While DeepSeek pre-fills (can take minutes for full-novel mode),
   // show the elapsed wait on the button so it never looks frozen.
   state.waitStart = Date.now();
+  startTranslateWatchdog();
   if (state.waitTick) clearInterval(state.waitTick);
   state.waitTick = setInterval(() => {
     if (!state.translating) { clearInterval(state.waitTick); state.waitTick = null; return; }
@@ -1794,6 +1797,7 @@ async function repairMissingParagraphs() {
   const context = state.streamingText.slice(-12000);
   state.repairMode = true;
   state.translating = true;
+  startTranslateWatchdog();
   state.streamingText = '';
   state.firstTokenReceived = false;
   state.aiConnected = false;
@@ -1831,6 +1835,7 @@ function onStreamError(error) {
 
 function finishTranslate(success, errorMsg, data) {
   state.translating = false;
+  stopTranslateWatchdog();
   if (state.waitTick) { clearInterval(state.waitTick); state.waitTick = null; }
   if (state.firstTokenTimer) { clearTimeout(state.firstTokenTimer); state.firstTokenTimer = null; }
   // Keep a pending inline wait alive when the translation finished before the
@@ -1880,6 +1885,57 @@ function finishTranslate(success, errorMsg, data) {
   }
 }
 
+// ─── Liveness watchdog ──────────────────────────────────────
+
+// MV3 reclaims the background service worker when it goes idle. The worker
+// restarts on the next message, but the SSE fetch it was reading dies with
+// the old instance: no token, no done and no error will ever arrive, and the
+// page just watches "AI 预填充中 Ns…" with the seconds climbing forever
+// (a user reported 18761 s). Probe the worker for a live stream so the page
+// can reset itself instead of waiting on an event that will never come.
+//
+// Three consecutive "no" answers (≈ 75-105 s including probe timeouts) mean
+// the translation is gone. A stream that is merely slow — or whose model is
+// still pre-filling for minutes — answers "yes", so long legitimate waits
+// are never cut short.
+const WATCHDOG_INTERVAL_MS = 25000;
+const WATCHDOG_PROBE_TIMEOUT_MS = 10000;
+const WATCHDOG_MISS_LIMIT = 3;
+
+function startTranslateWatchdog() {
+  stopTranslateWatchdog();
+  state.watchdogMisses = 0;
+  state.watchdogTimer = setInterval(() => { probeTranslationAlive(); }, WATCHDOG_INTERVAL_MS);
+}
+
+function stopTranslateWatchdog() {
+  if (state.watchdogTimer) {
+    clearInterval(state.watchdogTimer);
+    state.watchdogTimer = null;
+  }
+  state.watchdogMisses = 0;
+}
+
+async function probeTranslationAlive() {
+  if (!state.translating) { stopTranslateWatchdog(); return; }
+  let alive = false;
+  try {
+    const data = await sendToBackground('TRANSLATE_STATUS', {}, WATCHDOG_PROBE_TIMEOUT_MS);
+    alive = !!(data && data.active);
+  } catch (e) {
+    // No answer at all (worker unreachable, or it died mid-probe) counts as
+    // a miss: a healthy worker answers this instantly.
+    alive = false;
+  }
+  if (!state.translating) return; // finished while the probe was in flight
+  if (alive) { state.watchdogMisses = 0; return; }
+  state.watchdogMisses += 1;
+  if (state.watchdogMisses >= WATCHDOG_MISS_LIMIT) {
+    stopTranslateWatchdog();
+    finishTranslate(false, '与插件后台的连接已中断（后台任务已被浏览器回收），请重试');
+  }
+}
+
 // ─── Cancel ─────────────────────────────────────────────────
 
 async function cancelTranslation() {
@@ -1890,6 +1946,7 @@ async function cancelTranslation() {
     console.warn('[PNT] cancel ack failed:', e.message);
   }
   state.translating = false;
+  stopTranslateWatchdog();
   updateTranslateButton('idle');
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';
   showToast('已取消翻译');
@@ -1913,37 +1970,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // Every synchronous branch must answer even when its handler throws: the
+  // background awaits chrome.tabs.sendMessage, and a closed port makes it
+  // treat the message as undelivered. A terminal event (SSE_DONE / SSE_ERROR)
+  // lost that way leaves the button on "AI 预填充中 Ns…" forever with nothing
+  // left to reset it, so a handler failure resets the UI here instead of
+  // failing silently.
+  const guard = (handler) => {
+    try {
+      handler();
+    } catch (e) {
+      console.error('[PNT] message handler failed:', message.type, e);
+      try {
+        if (state.translating) {
+          finishTranslate(false, '翻译处理出错：' + (e && e.message ? e.message : e));
+        }
+      } catch (nested) {
+        console.error('[PNT] failed to reset UI after handler error:', nested);
+      }
+    }
+    sendResponse({ ok: true });
+  };
+
   switch (message.type) {
     case 'SSE_NOVEL_LOADED':
       // 原文到手，接下来是发翻译请求、等后端响应。
       state.phase = 'connecting';
-      onNovelLoaded(message.data);
-      sendResponse({ ok: true });
+      guard(() => onNovelLoaded(message.data));
       break;
     case 'SSE_SERVER_ACK':
       // 后端已回响应头：它在查缓存、装 prompt、调模型，到第一个 token
       // 之间就是模型预填充。
-      if (state.translating) {
+      guard(() => {
+        if (!state.translating) return;
         state.phase = 'prefill';
         updateTranslateButton('preparing');
-      }
-      sendResponse({ ok: true });
+      });
       break;
     case 'SSE_CONNECTED':
-      onStreamConnected();
-      sendResponse({ ok: true });
+      guard(() => onStreamConnected());
       break;
     case 'SSE_TOKEN':
-      onStreamToken(message.token);
-      sendResponse({ ok: true });
+      guard(() => onStreamToken(message.token));
       break;
     case 'SSE_DONE':
-      onStreamDone(message.data);
-      sendResponse({ ok: true });
+      guard(() => onStreamDone(message.data));
       break;
     case 'SSE_ERROR':
-      onStreamError(message.error);
-      sendResponse({ ok: true });
+      guard(() => onStreamError(message.error));
       break;
     case 'GET_CURRENT_PAGE':
       // background.js: a paged request started before the body rendered —
@@ -1954,7 +2028,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         state.phase = 'waitingBody';
         updateTranslateButton('preparing');
       }
-      waitForCurrentPage().then((page) => sendResponse({ ok: true, page }));
+      waitForCurrentPage().then(
+        (page) => sendResponse({ ok: true, page }),
+        () => sendResponse({ ok: true, page: 0 })
+      );
       break;
     case 'MANUAL_TRANSLATE':
       // Popup explicit trigger: if an auto-translate is already running,
