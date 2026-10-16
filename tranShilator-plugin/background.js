@@ -564,6 +564,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // after the whole stream would hold the message port open for
       // minutes — a needless SW keepalive dependency.
       const tabId = sender.tab?.id ?? null;
+      // requestId 在**调用点**生成，而不是 startStreamingTranslation 内部：
+      // 下面 catch 里那条兜底 SSE_ERROR（STEP1/STEP2 失败、后端错误等）也要
+      // 带上同一个身份，否则它永远穿过 content 的过滤，去复位一轮无关的
+      // 翻译（003 review round4 N3，正是 R2 的源头）。
+      const requestId = String(Date.now()) + '-' + (++requestSeq);
       startStreamingTranslation(
         message.novelId,
         message.targetLang || 'zh',
@@ -579,7 +584,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.inlineSeparator || 'p',
         !!message.skipCache,
         message.repairParagraphIds || [],
-        message.repairContext || ''
+        message.repairContext || '',
+        requestId
       ).catch((error) => {
         const msg = error && error.message ? error.message : String(error);
         // An aborted body stream is almost always the user pressing cancel
@@ -590,7 +596,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } else {
           console.error('[PixivTranslator] Error:', msg);
           recordPluginError(msg);
-          notifyTab(tabId, { type: 'SSE_ERROR', error: msg });
+          notifyTab(tabId, { type: 'SSE_ERROR', requestId, error: msg });
         }
       });
       sendResponse({ success: true });
@@ -661,18 +667,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Main Flow: Fetch from Pixiv → Stream Translate ─────────
 
-async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode, inlineSeparator = 'p', skipCache = false, repairParagraphIds = [], repairContext = '') {
+async function startStreamingTranslation(novelId, targetLang, tabId, selectedPresets = [], customPrompt = '', model = '', modelProfileId = null, currentPage = 0, fullMode = false, thinkingType, displayMode, inlineSeparator = 'p', skipCache = false, repairParagraphIds = [], repairContext = '', requestId = '') {
   const safeNovelId = String(novelId || '').match(/^\d+$/) ? String(novelId) : '';
   if (!safeNovelId) {
     throw new Error('无效的小说 ID');
   }
-  // 每一次请求一个唯一 id，随所有 SSE_* 通知下发。
+  // 每一次请求一个唯一 id，随所有 SSE_* 通知下发（调用点生成，见消息处理器；
+  // 这里只做兼容性兜底）。
   //
   // 没有它时，content 无法判断一条事件属于哪一轮：同 tab 重新开始时旧流
   // 可能仍有事件在路上（尤其是旧流的读空闲 / 首 token 超时，它们的错误文本
   // 不含「取消」，会正常投递），落下来就会复位新一轮。003 review round3
   // 的 R1/R2 都是这一类。content 侧只接受与「当前这一轮」id 相符的事件。
-  const requestId = String(Date.now()) + '-' + (++requestSeq);
+  if (!requestId) requestId = String(Date.now()) + '-' + (++requestSeq);
   // Create abort controller up-front so cancellation works even during
   // the Pixiv fetch (STEP1), not just the backend SSE stream (STEP3).
   const controller = new AbortController();

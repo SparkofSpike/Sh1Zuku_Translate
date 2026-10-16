@@ -1865,15 +1865,7 @@ function onStreamDone(data) {
     state.repairMode = false;
     state.repairBackup = null;
     // 重新渲染一次，让合并后的完整译文回到界面上（补译成功也要重画）。
-    try {
-      if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
-        renderInlineStreaming();
-      } else if (state.transBody && state.numberedRequest) {
-        renderPanelFromJsonLines();
-      }
-    } catch (e) {
-      console.warn('[PNT] re-render after repair:', e && e.message);
-    }
+    rerenderTranslation();
     finishTranslate(state.missingParagraphIds.length === 0, state.missingParagraphIds.length ? '补译仍有段落缺失' : null, data);
     return;
   }
@@ -1993,16 +1985,10 @@ function onStreamError(error) {
 
 // 补译中断/失败/取消后的回滚：把内部状态恢复到补译前的样子，让用户
 // 仍然拥有那份不完整但已渲染的译文，以及「补译」按钮。
-function restoreAfterFailedRepair() {
-  if (state.repairMode && state.repairBackup) {
-    state.streamingText = state.repairBackup.streamText;
-    state.missingParagraphIds = state.repairBackup.missing;
-  }
-  state.repairMode = false;
-  state.repairBackup = null;
-  // 重画一次：inline 模式会把已恢复的译文按 id 重新填回，panel 模式重排文本。
-  // paged 也补上（当前 paged 进不了补译，但若将来支持，这里不带兜底就会
-  // 「状态回滚了、界面没重绘」，003 review round2 N12）。
+// 把当前译文按模式重画一遍。补译成功、补译回滚、解析为空三条路径都要它，
+// 而它们原来各写一份、分支不一致（成功分支漏了 paged）——
+// 003 review round3 N12 / round4 N5。
+function rerenderTranslation() {
   try {
     if (state.mode === 'inline' && state.inlineTransEls && state.inlineTransEls.length) {
       renderInlineStreaming();
@@ -2012,8 +1998,19 @@ function restoreAfterFailedRepair() {
       renderPanelFromJsonLines();
     }
   } catch (e) {
-    console.warn('[PNT] re-render after failed repair:', e && e.message);
+    console.warn('[PNT] re-render failed:', e && e.message);
   }
+}
+
+function restoreAfterFailedRepair() {
+  if (state.repairMode && state.repairBackup) {
+    state.streamingText = state.repairBackup.streamText;
+    state.missingParagraphIds = state.repairBackup.missing;
+  }
+  state.repairMode = false;
+  state.repairBackup = null;
+  // 重画一次：inline 模式会把已恢复的译文按 id 重新填回，panel 模式重排文本。
+  rerenderTranslation();
 }
 
 function finishTranslate(success, errorMsg, data) {
@@ -2021,6 +2018,9 @@ function finishTranslate(success, errorMsg, data) {
   // 收尾，第二次调用只会重复弹 toast。已经 idle 就直接忽略。
   if (!state.translating) return;
   state.translating = false;
+  // 这一轮已经收尾：作废它的身份，之后到达的同类事件（后台可能还在收尾）
+  // 一律丢弃，而不是落到用户的下一轮翻译上。
+  state.activeRequestId = null;
   // 补译失败：恢复补译前的完整译文与缺失清单。补译流里只有缺失段落，
   // 不能用它代表整篇译文（003 review 3.5）—— 否则一次失败的补译会把已经
   // 拿到的译文从内部状态里抹掉，重渲染/切换显示后就再也回不来。
@@ -2152,6 +2152,7 @@ async function probeTranslationAlive(myEpoch) {
     if (msg.includes('刷新页面') || msg.includes('扩展已更新')) {
       stopTranslateWatchdog();
       state.translating = false;
+      state.activeRequestId = null;
       // 这条路不走 finishTranslate，所以那些清理必须自己做：否则 waitTick
       // 下一秒就会用旧的 state.phase 把按钮重新刷成忙态，而用户再也看不到
       // 这句提示（003 review round2 1.8）。
@@ -2193,6 +2194,9 @@ async function cancelTranslation() {
     console.warn('[PNT] cancel ack failed:', e.message);
   }
   state.translating = false;
+  // 不再属于任何一轮：此后旧流投递的事件（读空闲/首 token 超时的错误文本
+  // 不含「取消」）必须被丢弃，直到新一轮的 SSE_NOVEL_LOADED 重新登记身份。
+  state.activeRequestId = null;
   // 取消的若是一次补译，回滚到补译前的完整译文（003 review 3.5）。
   if (state.repairMode) restoreAfterFailedRepair();
   stopTranslateWatchdog();
@@ -2235,6 +2239,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.error('[PNT] finishTranslate itself failed; forcing UI reset:', nested);
       try {
         state.translating = false;
+        state.activeRequestId = null;
         stopTranslateWatchdog();
         // 计时器不关掉的话，它会用旧的 state.phase 在下一秒把按钮刷回忙态，
         // 兜底就白做了（003 review round2 1.8）。
@@ -2271,17 +2276,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   //
   // 不属于「当前这一轮」的事件一律丢弃：旧流迟到的 token / done / error
   // 不能去动新一轮的状态。尤其是旧流的**读空闲超时**与**首 token 超时**
-  // —— 它们的错误文本不含「取消」，background 会正常投递，而 content
-  // 此前无法分辨，于是新一轮被一句属于旧轮的错误复位
+  // —— 它们的错误文本不含「取消」，background 会正常投递
   // （003 review round3 R1/R2；这是「事件无身份」这个根因的修法）。
   //
+  // 注意这里要求「有 requestId 的事件必须有匹配的活跃请求」而不是
+  // 「两者都存在且不等才丢弃」：取消之后到新一轮 SSE_* 到达之前，
+  // activeRequestId 会保持旧值（cancel 已把它置空，见 cancelTranslation），
+  // 若只剩旧值就等于把旧流的事件误认成当前轮。
+  //
   // SSE_NOVEL_LOADED 不在此列：它就是「新一轮开始」的标志，无条件接受。
-  if (message.requestId && state.activeRequestId
-      && message.requestId !== state.activeRequestId
-      && message.type !== 'SSE_NOVEL_LOADED') {
-    console.debug('[PNT] dropping event from a superseded request:', message.type);
-    sendResponse({ ok: true });
-    return false;
+  if (message.requestId && message.type !== 'SSE_NOVEL_LOADED') {
+    if (!state.activeRequestId || message.requestId !== state.activeRequestId) {
+      console.debug('[PNT] dropping event from a superseded request:', message.type);
+      sendResponse({ ok: true });
+      return false;
+    }
   }
 
   switch (message.type) {
