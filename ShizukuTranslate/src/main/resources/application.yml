@@ -61,7 +61,8 @@ deepseek:
     default-model: deepseek-flash
     # Supported site models: deepseek-flash (DeepSeek-V4.1-Flash, natively multimodal) and
     # deepseek-v4-pro. The retired names deepseek-v4-flash and deepseek-v4-flash-vision-exp
-    # still resolve, but the API serves them with V4.1 Flash.
+    # still resolve, but the API serves them with V4.1 Flash. The keyless bilibili
+    # Index-Translate-35B-A3B (provider index-translate) is multimodal as well.
     # DeepSeek v4 thinking mode: enabled=AI 推理（慢 ~6x）/ disabled=关闭（快），插件可请求级覆盖
     thinking-type: disabled
 

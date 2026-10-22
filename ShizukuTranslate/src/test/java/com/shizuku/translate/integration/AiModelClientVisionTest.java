@@ -64,15 +64,42 @@ class AiModelClientVisionTest {
         AiModelClient.AiModelConfig retiredVision = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",
                 "deepseek-v4-flash-vision-exp", "disabled");
+        AiModelClient.AiModelConfig index = new AiModelClient.AiModelConfig(
+                "index-translate", "", "https://index-translate.bilibili.com/v1",
+                "Index-Translate-35B-A3B", "disabled");
+        AiModelClient.AiModelConfig indexTextOnly = new AiModelClient.AiModelConfig(
+                "index-translate", "", "https://index-translate.bilibili.com/v1",
+                "some-text-only-model", "disabled");
 
         assertTrue(flash.isVisual());
         assertFalse(pro.isVisual());
         // The retired name still resolves to V4.1 Flash upstream, so saved profiles keep working.
         assertTrue(retiredVision.isVisual());
+        // bilibili's Index-Translate became multimodal, so its keyless site option takes images too.
+        assertTrue(index.isVisual());
+        // Provider match alone is not enough: only the known multimodal model may take images.
+        assertFalse(indexTextOnly.isVisual());
         assertThrows(IllegalArgumentException.class,
                 () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/png", pro));
         assertThrows(IllegalArgumentException.class,
                 () -> AiModelClient.buildVisionRequest("system", "text", new byte[] {1}, "image/bmp", flash));
+    }
+
+    @Test
+    void indexTranslateVisionRequestUsesItsOwnTokenBudgetAndSkipsDeepSeekThinking() {
+        AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
+                "index-translate", "", "https://index-translate.bilibili.com/v1",
+                "Index-Translate-35B-A3B", "disabled");
+
+        Map<String, Object> request = AiModelClient.buildVisionRequest(
+                "system", "text", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, "image/png", config);
+
+        assertEquals("Index-Translate-35B-A3B", request.get("model"));
+        // Index caps output at 8192 tokens; DeepSeek's 348000 budget would be rejected upstream.
+        assertEquals(8192, request.get("max_tokens"));
+        // `thinking` is a DeepSeek-only field and must not leak into the Index request.
+        assertFalse(request.containsKey("thinking"));
+        assertEquals("image_url", contentParts(messages(request).get(1)).get(1).get("type"));
     }
 
     @Test

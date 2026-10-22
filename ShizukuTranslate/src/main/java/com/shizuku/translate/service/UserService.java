@@ -8,6 +8,7 @@ import com.shizuku.translate.entity.AiModelProfile;
 import com.shizuku.translate.entity.PersonalModelApiKey;
 import com.shizuku.translate.exception.BusinessException;
 import com.shizuku.translate.exception.EmailNotVerifiedException;
+import com.shizuku.translate.integration.AiModelClient;
 import com.shizuku.translate.integration.AiModelClient.AiModelConfig;
 import com.shizuku.translate.entity.User;
 import com.shizuku.translate.repository.AiModelProfileRepository;
@@ -339,9 +340,10 @@ public class UserService {
             // Index-Translate (bilibili) is a public, keyless OpenAI-compatible endpoint.
             // The front-end site option sends the real model name, so it is matched here
             // before the site DeepSeek key check.
-            if ("index-translate".equalsIgnoreCase(model) || "Index-Translate-35B-A3B".equalsIgnoreCase(model)) {
+            if ("index-translate".equalsIgnoreCase(model)
+                    || AiModelClient.INDEX_TRANSLATE_MODEL.equalsIgnoreCase(model)) {
                 return new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
-                        "Index-Translate-35B-A3B",
+                        AiModelClient.INDEX_TRANSLATE_MODEL,
                         thinkingType == null ? deepSeekProperties.getThinkingType() : thinkingType);
             }
             if (deepSeekProperties.getKey() == null || deepSeekProperties.getKey().isBlank()) {

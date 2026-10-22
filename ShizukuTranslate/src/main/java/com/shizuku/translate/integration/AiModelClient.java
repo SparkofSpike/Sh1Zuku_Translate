@@ -23,6 +23,8 @@ import java.util.function.Consumer;
 
 @Component
 public class AiModelClient {
+    public static final String INDEX_TRANSLATE_MODEL = "Index-Translate-35B-A3B";
+
     private static final Logger log = LoggerFactory.getLogger(AiModelClient.class);
     private static final String ANTHROPIC_VERSION = "2023-06-01";
 
@@ -81,7 +83,9 @@ public class AiModelClient {
         Map<String, Object> request = new HashMap<>();
         request.put("model", config.getModel());
         request.put("temperature", 0.3);
-        request.put("max_tokens", 348000);
+        // Index-Translate caps output at 8192 tokens (same limit as its text path),
+        // while DeepSeek accepts the much larger translation budget.
+        request.put("max_tokens", config.isIndexTranslate() ? 8192 : 348000);
         request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", content)));
         applyThinkingMode(request, config);
@@ -452,9 +456,12 @@ public class AiModelClient {
          * Whether this config accepts image input. DeepSeek merged the retired
          * deepseek-v4-flash and deepseek-v4-flash-vision-exp names into the natively
          * multimodal deepseek-flash (V4.1 Flash); the retired vision name is still
-         * accepted because the API keeps routing it to that model.
+         * accepted because the API keeps routing it to that model. bilibili's
+         * Index-Translate endpoint accepts image input too, so its site option takes
+         * the same multimodal path as deepseek-flash.
          */
         public boolean isVisual() {
+            if (isIndexTranslate()) return AiModelClient.INDEX_TRANSLATE_MODEL.equalsIgnoreCase(model);
             return "deepseek".equals(provider)
                     && ("deepseek-flash".equalsIgnoreCase(model)
                         || "deepseek-v4-flash-vision-exp".equalsIgnoreCase(model));
