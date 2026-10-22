@@ -81,13 +81,16 @@ public class TranslationService {
     static final int CHUNK_UNIT_CHARS = 42000;
 
     /**
-     * Chunk length for models whose single-request output cap is 8192 tokens (Anthropic and
-     * Index-Translate). A 42k-char chunk cannot fit in that budget, so every large chunk would
-     * end capped and the long-novel pipeline could never finish a book on those models.
-     * Measured on Index-Translate: ~0.82 output tokens per Chinese character, so 6000 chars
-     * land around 4900 tokens and leave ample headroom.
+     * Chunk length for models whose single-request output cap is small. Measured against
+     * Index-Translate on 2026-10-22: the endpoint reports {@code completion_tokens=4096} and
+     * {@code finish_reason=length} no matter what {@code max_tokens} we ask for, so 8192 is
+     * not actually available. On ordinary varied text it runs ~0.44 output tokens per Japanese
+     * character (800 chars → 346, 1000 → 444), so 4000 chars land around 1800 tokens with
+     * headroom; a 42k-char chunk could never fit. Text that repeats the same sentence many
+     * times drives the model into a runaway loop (2000 chars → 6841 output chars → capped),
+     * which is another reason to leave a wide margin rather than size the chunk to the limit.
      */
-    static final int CAPPED_MODEL_CHUNK_UNIT_CHARS = 6000;
+    static final int CAPPED_MODEL_CHUNK_UNIT_CHARS = 4000;
 
     /** Picks the chunk length that the model's output cap can actually hold. */
     static int chunkUnitFor(AiModelConfig config) {
