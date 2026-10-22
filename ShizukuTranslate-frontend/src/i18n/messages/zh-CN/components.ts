@@ -12,6 +12,8 @@ export default {
     heading: '翻译结果',
     sharedBadge: '已有其他用户翻译过',
     cacheBadge: '命中缓存',
+    truncatedBadge: '译文被截断',
+    truncatedHint: '模型达到单次输出上限，译文只翻到一半。请减少一次上传的图片张数，然后重新翻译；长文本请分段提交。',
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Token 用量：输入 {prompt} {'|'} 输出 {completion} {'|'} 合计 {total}"
   },

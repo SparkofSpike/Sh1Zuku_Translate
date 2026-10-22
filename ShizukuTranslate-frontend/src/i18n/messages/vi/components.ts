@@ -12,6 +12,8 @@ export default {
     heading: 'Kết quả dịch',
     sharedBadge: 'Người dùng khác đã dịch',
     cacheBadge: 'Trả từ bộ nhớ đệm',
+    truncatedBadge: 'Bản dịch bị cắt',
+    truncatedHint: 'Mô hình đã đạt giới hạn đầu ra mỗi lần nên bản dịch dừng giữa chừng. Hãy tải ít ảnh hơn mỗi lần rồi dịch lại; văn bản dài nên chia nhỏ.',
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Tiêu thụ Token: Đầu vào {prompt} {'|'} Đầu ra {completion} {'|'} Tổng {total}"
   },

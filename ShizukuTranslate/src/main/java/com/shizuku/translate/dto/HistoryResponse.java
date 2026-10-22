@@ -9,6 +9,8 @@ public class HistoryResponse {
     private String model;
     private String customPrompt;
     private LocalDateTime createdAt;
+    /** @see TranslateResponse#isTruncated() */
+    private boolean truncated;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -22,4 +24,6 @@ public class HistoryResponse {
     public void setCustomPrompt(String customPrompt) { this.customPrompt = customPrompt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public boolean isTruncated() { return truncated; }
+    public void setTruncated(boolean truncated) { this.truncated = truncated; }
 }

@@ -103,6 +103,22 @@ class AiModelClientVisionTest {
     }
 
     @Test
+    void anthropicShapeStopReasonIsAlsoRecognisedAsTruncation() {
+        // Anthropic reports the cap on the top-level stop_reason of the message, and on the
+        // delta of the final message_delta SSE event. No image config reaches these paths today,
+        // but the detection helper is shared with the text path, which does.
+        assertEquals(true, AiModelClient.isTruncatedResponse(
+                Map.of("stop_reason", "max_tokens", "content", List.of())));
+        assertEquals(true, AiModelClient.isTruncatedChunk(
+                Map.of("type", "message_delta", "delta", Map.of("stop_reason", "max_tokens"))));
+        assertEquals(false, AiModelClient.isTruncatedChunk(
+                Map.of("type", "message_delta", "delta", Map.of("stop_reason", "end_turn"))));
+        // An OpenAI-compatible proxy that spells the cap the Anthropic way is still caught.
+        assertEquals(true, AiModelClient.isTruncatedResponse(
+                Map.of("choices", List.of(Map.of("finish_reason", "max_tokens")))));
+    }
+
+    @Test
     void multipleImagesJoinOneUserMessageInOrder() {
         AiModelClient.AiModelConfig config = new AiModelClient.AiModelConfig(
                 "deepseek", "key", "https://api.deepseek.com/v1",

@@ -47,6 +47,10 @@
         <p v-else class="ln-waiting">{{ t('longNovel.waiting') }}</p>
       </div>
 
+      <!-- Chunked long text is exactly where an output cap hits; without this the page
+           would announce a holed translation as finished. -->
+      <p v-if="truncated" class="ln-truncated">{{ t('components.translateResult.truncatedHint') }}</p>
+
       <div class="ln-actions">
         <button v-if="running" class="ln-btn ln-btn--danger" @click="cancel">{{ t('longNovel.cancel') }}</button>
         <template v-else>
@@ -90,6 +94,8 @@ const phase = ref<Phase>('connecting')
 const progressIndex = ref(-1)
 const running = ref(false)
 const streamedText = ref('')
+/** Set when the pipeline reported a capped chunk: the text above stops mid-translation. */
+const truncated = ref(false)
 const errorMsg = ref('')
 const copied = ref(false)
 const termsCount = ref(0)
@@ -177,8 +183,9 @@ onMounted(() => {
     pending.targetLanguage,
     token => { streamedText.value += token },
     (response: TranslateResponse) => {
-      // The audit stage may repair terminology after tokens were streamed; the final text wins.
       if (response.translatedText) streamedText.value = response.translatedText
+      // The audit stage may repair terminology after tokens were streamed; the final text wins.
+      truncated.value = !!response.truncated
       running.value = false
       cancelFn = null
       setPhase('done')
@@ -482,6 +489,16 @@ function goHome() {
   margin-top: 12px;
   font-size: 13px;
   color: #e03131;
+}
+
+.ln-truncated {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #e03131;
+  background: #fff5f5;
+  color: #8a1f1f;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 @media (max-width: 640px) {

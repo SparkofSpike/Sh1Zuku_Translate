@@ -260,6 +260,8 @@ interface TranslateContext {
   createdAt: string
   fromCache?: boolean
   fromSharedTranslation?: boolean
+  /** Model hit its output cap: the text below is a prefix of the translation. */
+  truncated?: boolean
   targetLanguage: string
   savedAt: number
 }
@@ -294,6 +296,8 @@ function rememberTranslateContext(response: TranslateResponse) {
       createdAt: response.createdAt,
       fromCache: response.fromCache,
       fromSharedTranslation: response.fromSharedTranslation,
+      // Without this, a reload would show a capped answer as a finished translation.
+      truncated: response.truncated,
       targetLanguage: targetLanguage.value,
       savedAt
     }
@@ -323,6 +327,7 @@ function restoreLastTranslateContext() {
       tokenUsage: saved.tokenUsage,
       fromSharedTranslation: saved.fromSharedTranslation,
       fromCache: saved.fromCache,
+      truncated: saved.truncated,
       requestId: saved.requestId
     }
     useStreaming.value = false

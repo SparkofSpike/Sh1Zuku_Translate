@@ -4,6 +4,7 @@
       <h3 style="margin:0; font-weight:600;">{{ t('components.translateResult.heading') }}</h3>
       <span v-if="showSharedBadge" class="origin-badge origin-badge--shared">{{ t('components.translateResult.sharedBadge') }}</span>
       <span v-else-if="showCacheBadge" class="origin-badge origin-badge--cache">{{ t('components.translateResult.cacheBadge') }}</span>
+      <span v-if="showTruncatedBadge" class="origin-badge origin-badge--truncated">{{ t('components.translateResult.truncatedBadge') }}</span>
       <div style="display:flex; align-items:center; gap:8px;">
         <button v-if="streamingText" @click="copyStreaming" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
         <ExportBar v-if="exportText" :text="exportText" :model="model" />
@@ -12,6 +13,8 @@
     </div>
     <pre v-if="streamingText" style="margin-top: 12px; white-space: pre-wrap;">{{ streamingText }}</pre>
     <pre v-else-if="result" style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
+
+    <p v-if="showTruncatedBadge" class="truncated-hint">{{ t('components.translateResult.truncatedHint') }}</p>
 
     <div v-if="result?.tokenUsage" style="margin-top: 12px; color:#777; font-size:13px;">
       {{ t('components.translateResult.tokenUsage', { prompt: result.tokenUsage.promptTokens, completion: result.tokenUsage.completionTokens, total: result.tokenUsage.totalTokens }) }}
@@ -45,6 +48,9 @@ const exportText = computed(() => props.streamingText || props.result?.translate
 const badgesFinal = computed(() => !!props.result && (!props.streamingText || props.streamingText === props.result.translatedText))
 const showSharedBadge = computed(() => badgesFinal.value && !!props.result?.fromSharedTranslation)
 const showCacheBadge = computed(() => badgesFinal.value && !props.result?.fromSharedTranslation && !!props.result?.fromCache)
+// A capped answer only exists once the `done` event arrived, so unlike the origin badges this
+// flag does not depend on the streaming text matching the final text.
+const showTruncatedBadge = computed(() => !!props.result?.truncated)
 
 // Rating needs a finished result: mid-stream the `done` event (and with it the requestId) has
 // not arrived yet, so there is nothing to attach a score to.
@@ -91,5 +97,21 @@ function copyStreaming() {
   background: #e7f5ff;
   color: #1864ab;
   border: 1px solid #a5c8f0;
+}
+
+.origin-badge--truncated {
+  background: #fff0f0;
+  color: #c92a2a;
+  border: 1px solid #f5b5b5;
+}
+
+.truncated-hint {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #e03131;
+  background: #fff5f5;
+  color: #8a1f1f;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

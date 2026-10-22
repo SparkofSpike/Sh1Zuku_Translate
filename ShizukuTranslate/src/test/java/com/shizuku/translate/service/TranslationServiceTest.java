@@ -26,9 +26,11 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -94,7 +96,7 @@ class TranslationServiceTest {
                 Preset.builder().id(1L).name("NSFW破甲").prompt("preset-rule").build()));
         // The writer normally returns the persisted response; give the mock one so the
         // feedback registration that follows can read its request id.
-        lenient().when(resultWriter.persistTranslate(any(), any(), any(), any(), any(), any(), any()))
+        lenient().when(resultWriter.persistTranslate(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenAnswer(invocation -> {
                     TranslateResponse response = new TranslateResponse();
                     response.setTranslatedText(invocation.getArgument(3));
@@ -141,7 +143,7 @@ class TranslationServiceTest {
         assertTrue(promptCaptor.getValue().contains("简体中文"));
         // Fresh model translations must carry the resolved target language so they can be
         // found by other users' shared-translation lookups.
-        verify(resultWriter).persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), eq("原文"), eq(null), eq("zh-CN"));
+        verify(resultWriter).persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), eq("原文"), eq(null), eq("zh-CN"), eq(false));
     }
 
     @Test
@@ -230,7 +232,7 @@ class TranslationServiceTest {
         assertEquals(List.of("缓存译文"), tokens);
         assertEquals("缓存译文", done.get(0).getTranslatedText());
         assertEquals(10, done.get(0).getTokenUsage().getTotalTokens());
-        verify(aiModelClient, never()).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        verify(aiModelClient, never()).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
         verify(recordRepository).save(any(TranslationRecord.class));
     }
@@ -250,12 +252,12 @@ class TranslationServiceTest {
         // Replay a token stream, then complete with the accumulated usage.
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(3);
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
             onToken.accept("你");
             onToken.accept("好");
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
-        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
 
         List<String> tokens = new java.util.ArrayList<>();
@@ -288,12 +290,12 @@ class TranslationServiceTest {
                         new com.shizuku.translate.dto.TokenUsage()));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(3);
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
             onToken.accept("短");
             onToken.accept("文");
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
-        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
 
         // Well below CHUNK_UNIT_CHARS: only the term-fix flag routes it through the pipeline.
@@ -342,7 +344,7 @@ class TranslationServiceTest {
         assertEquals(List.of("别人的译文"), tokens);
         assertEquals("别人的译文", done.get(0).getTranslatedText());
         assertTrue(done.get(0).isFromSharedTranslation());
-        verify(aiModelClient, never()).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        verify(aiModelClient, never()).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
         // The reused translation still lands in the caller's own history.
         ArgumentCaptor<TranslationRecord> saved = ArgumentCaptor.forClass(TranslationRecord.class);
@@ -365,11 +367,11 @@ class TranslationServiceTest {
         });
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(3);
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
             onToken.accept("新译文");
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
-        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
 
         TranslateRequest req = request("原文", null, null);
@@ -413,11 +415,11 @@ class TranslationServiceTest {
         });
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(3);
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(4);
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
             onToken.accept("新译文");
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
-        }).when(aiModelClient).chatStream(anyString(), anyString(), any(AiModelConfig.class),
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
 
         List<TranslateResponse> done = new java.util.ArrayList<>();
@@ -463,14 +465,14 @@ class TranslationServiceTest {
         TranslateResponse persisted = new TranslateResponse();
         persisted.setId(42L);
         persisted.setTranslatedText("译文");
-        when(resultWriter.persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), anyString(), any()))
+        when(resultWriter.persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("译文"), anyString(), any(), any(), anyBoolean()))
                 .thenReturn(persisted);
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(4);
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(5);
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(5);
             onToken.accept("译");
             onToken.accept("文");
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
         }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
@@ -491,13 +493,251 @@ class TranslationServiceTest {
     }
 
     @Test
+    void imageStreamMarksACappedAnswerAsTruncated() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
+                        AiModelClient.INDEX_TRANSLATE_MODEL, "disabled"));
+        TranslateResponse persisted = new TranslateResponse();
+        persisted.setId(43L);
+        persisted.setTranslatedText("半截译");
+        when(resultWriter.persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("半截译"), anyString(), any(), any(), anyBoolean()))
+                .thenReturn(persisted);
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(4);
+            @SuppressWarnings("unchecked")
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(5);
+            onToken.accept("半截译");
+            // finish_reason=length: the text is a prefix, not the whole translation.
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), true));
+            return null;
+        }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<AiModelClient.ImagePayload> payloads = List.of(
+                new AiModelClient.ImagePayload(new byte[] {1, 2, 3}, "image/png"));
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateImagesStream("alice", request("", null, null), payloads, false,
+                token -> { }, done::add, error -> { }, () -> { }, () -> false);
+
+        assertEquals(1, done.size());
+        assertTrue(done.get(0).isTruncated(), "a capped stream must reach the client marked as truncated");
+    }
+
+    @Test
+    void nonStreamingImageTranslationAlsoMarksACappedAnswerAsTruncated() throws Exception {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
+                        AiModelClient.INDEX_TRANSLATE_MODEL, "disabled"));
+        TranslateResponse persisted = new TranslateResponse();
+        persisted.setId(44L);
+        persisted.setTranslatedText("半截译");
+        when(resultWriter.persistTranslate(eq(user), any(AiModelConfig.class), any(), eq("半截译"), anyString(), any(), any(), anyBoolean()))
+                .thenReturn(persisted);
+        when(aiModelClient.chatWithImages(anyString(), anyString(), any(), any(AiModelConfig.class)))
+                .thenReturn(new AiModelClient.DeepSeekResult("半截译", null, true));
+
+        org.springframework.web.multipart.MultipartFile image =
+                new org.springframework.mock.web.MockMultipartFile("images", "a.png", "image/png", new byte[] {1, 2, 3});
+        TranslateResponse response = service.translateImages("alice", request("", null, null), List.of(image), false);
+
+        assertTrue(response.isTruncated());
+    }
+
+    @Test
+    void aTruncatedTextStreamIsPersistedButNeverCached() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
+                        AiModelClient.INDEX_TRANSLATE_MODEL, "disabled"));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(11L);
+            return rec;
+        });
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            @SuppressWarnings("unchecked")
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
+            onToken.accept("半截译文");
+            // finish_reason=length: the provider stopped at its 8192-token cap.
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), true));
+            return null;
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request("原文", null, null), false,
+                token -> { }, done::add, error -> { }, () -> { });
+
+        assertEquals(1, done.size());
+        assertTrue(done.get(0).isTruncated());
+        // The row is kept (tokens were spent) but the cache must stay clean: replaying a
+        // half translation from cache would keep labelling it as a complete one.
+        org.mockito.ArgumentCaptor<TranslationRecord> saved = org.mockito.ArgumentCaptor.forClass(TranslationRecord.class);
+        verify(recordRepository).save(saved.capture());
+        // The flag has to reach the column, otherwise a reload or the history page would show
+        // the capped text as a finished translation again.
+        assertTrue(Boolean.TRUE.equals(saved.getValue().getTruncated()));
+        verify(cacheRepository, never()).save(any(com.shizuku.translate.entity.TranslationCache.class));
+    }
+
+    @Test
+    void historyMapsTheTruncatedColumnTreatingNullAsNotTruncated() {
+        TranslationRecord capped = new TranslationRecord();
+        capped.setId(21L);
+        capped.setTranslatedText("半截");
+        capped.setTruncated(true);
+        TranslationRecord legacy = new TranslationRecord();
+        legacy.setId(22L);
+        legacy.setTranslatedText("完整");
+        // Rows written before the column existed are null.
+        legacy.setTruncated(null);
+
+        when(recordRepository.findByIdAndUserId(eq(21L), any())).thenReturn(java.util.Optional.of(capped));
+        when(recordRepository.findByIdAndUserId(eq(22L), any())).thenReturn(java.util.Optional.of(legacy));
+
+        assertTrue(service.getDetail(21L, "alice").isTruncated());
+        assertFalse(service.getDetail(22L, "alice").isTruncated());
+    }
+
+    @Test
+    void cappedModelsGetSmallerChunksSoAChunkFitsItsOutputCap() {
+        // A 42k-char chunk cannot fit an 8192-token output budget, so the long-novel pipeline
+        // would cap every large chunk and could never finish a book on those models.
+        assertEquals(TranslationService.CAPPED_MODEL_CHUNK_UNIT_CHARS,
+                TranslationService.chunkUnitFor(new AiModelConfig(
+                        "index-translate", "", "https://index-translate.bilibili.com/v1",
+                        AiModelClient.INDEX_TRANSLATE_MODEL, "disabled")));
+        assertEquals(TranslationService.CAPPED_MODEL_CHUNK_UNIT_CHARS,
+                TranslationService.chunkUnitFor(new AiModelConfig(
+                        "anthropic", "key", "https://api.anthropic.com/v1", "claude", "disabled")));
+        assertEquals(TranslationService.CHUNK_UNIT_CHARS,
+                TranslationService.chunkUnitFor(new AiModelConfig(
+                        "deepseek", "key", "https://api.deepseek.com/v1", "deepseek-flash", "disabled")));
+    }
+
+    @Test
+    void truncatedTranslationsAreNeverServedToOtherUsersAsShared() {
+        TranslationRecord capped = new TranslationRecord();
+        capped.setId(31L);
+        capped.setSourceText("原文");
+        capped.setTranslatedText("半截译文");
+        capped.setTruncated(true);
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-flash", "disabled"));
+        when(recordRepository.findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
+                any(), anyString(), anyString())).thenReturn(java.util.Optional.of(capped));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(32L);
+            return rec;
+        });
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<String> onToken = invocation.getArgument(3);
+            @SuppressWarnings("unchecked")
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
+            onToken.accept("新译文");
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
+            return null;
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request("原文", null, null), false,
+                token -> { }, done::add, error -> { }, () -> { });
+
+        // Half a translation must not be handed to another user as a finished result: the
+        // request falls through to a fresh model call instead.
+        assertEquals(1, done.size());
+        assertEquals("新译文", done.get(0).getTranslatedText());
+        assertFalse(done.get(0).isFromSharedTranslation());
+    }
+
+    @Test
+    void aTruncatedChunkMakesTheWholeLongNovelResultPartial() {
+        when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
+                .thenReturn(new AiModelConfig("index-translate", "", "https://index-translate.bilibili.com/v1",
+                        AiModelClient.INDEX_TRANSLATE_MODEL, "disabled"));
+        when(cacheRepository.findByUserIdAndCacheKeyOrderByCreatedAtDesc(any(), anyString()))
+                .thenReturn(List.of());
+        when(recordRepository.save(any(TranslationRecord.class))).thenAnswer(inv -> {
+            TranslationRecord rec = inv.getArgument(0);
+            rec.setId(12L);
+            return rec;
+        });
+
+        // Two chunks; only the second one is capped. The seam is lost, so the assembled text
+        // as a whole is a prefix of the translation.
+        java.util.concurrent.atomic.AtomicInteger call = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            @SuppressWarnings("unchecked")
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
+            boolean truncated = call.incrementAndGet() == 2;
+            onToken.accept("块" + call.get());
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), truncated));
+            return null;
+        }).when(aiModelClient).chatStreamTracked(anyString(), anyString(), any(AiModelConfig.class),
+                any(), any(), any(), any(), any());
+
+        // 10k chars is under the old 42000 threshold but far over what an 8192-token cap can
+        // answer, with line breaks every 100 chars so the split stays paragraph-aligned.
+        StringBuilder longText = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            longText.append("x".repeat(100)).append('\n');
+        }
+        List<TranslateResponse> done = new java.util.ArrayList<>();
+        service.translateStream("alice", request(longText.toString(), null, null), false,
+                token -> { }, done::add, error -> { }, () -> { });
+
+        assertEquals(1, done.size());
+        assertTrue(done.get(0).isTruncated(), "one capped chunk must mark the assembled result as partial");
+        verify(cacheRepository, never()).save(any(com.shizuku.translate.entity.TranslationCache.class));
+    }
+
+    @Test
+    void aLineWithoutAnyNewlineIsStillCutAtTheChunkTarget() {
+        // Following the newline rule blindly turned a 20k-char single-line text into one 20k
+        // chunk, which no 6000-char budget can hold.
+        String noNewlines = "あ".repeat(20000);
+        List<String> chunks = TranslationService.splitIntoChunks(noNewlines, 6000);
+
+        assertTrue(chunks.size() > 1, "a 20k single line must be split, got " + chunks.size() + " chunk(s)");
+        for (String chunk : chunks) {
+            assertTrue(chunk.length() <= 9000,
+                    "chunk of " + chunk.length() + " chars would blow the output cap");
+        }
+        assertEquals(noNewlines, String.join("", chunks));
+    }
+
+    @Test
+    void chunkSplitsStillFollowNearbyLineBreaks() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 200; i++) {
+            text.append("x".repeat(100)).append('\n');
+        }
+        List<String> chunks = TranslationService.splitIntoChunks(text.toString(), 6000);
+
+        // Every chunk but the last should end on a line break.
+        for (int i = 0; i < chunks.size() - 1; i++) {
+            assertEquals('\n', chunks.get(i).charAt(chunks.get(i).length() - 1));
+        }
+        assertEquals(text.toString(), String.join("", chunks));
+    }
+
+    @Test
     void imageStreamReportsAnEmptyModelAnswerInsteadOfRecordingIt() {
         when(userService.resolveAiModelConfig(eq(user), any(), any(), any()))
                 .thenReturn(new AiModelConfig("deepseek", "key", "https://base", "deepseek-flash", "disabled"));
         // A stream can finish without ever producing a token (filtered page, upstream hiccup).
         doAnswer(invocation -> {
-            Consumer<com.shizuku.translate.dto.TokenUsage> onComplete = invocation.getArgument(5);
-            onComplete.accept(new com.shizuku.translate.dto.TokenUsage());
+            Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(5);
+            onComplete.accept(new AiModelClient.StreamCompletion(new com.shizuku.translate.dto.TokenUsage(), false));
             return null;
         }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
@@ -512,7 +752,7 @@ class TranslationServiceTest {
         assertTrue(done.isEmpty());
         assertEquals(1, errors.size());
         // An empty answer must not leave an empty row in the user's history.
-        verify(resultWriter, never()).persistTranslate(any(), any(AiModelConfig.class), any(), anyString(), anyString(), any());
+        verify(resultWriter, never()).persistTranslate(any(), any(AiModelConfig.class), any(), anyString(), anyString(), any(), any(), anyBoolean());
     }
 
     @Test

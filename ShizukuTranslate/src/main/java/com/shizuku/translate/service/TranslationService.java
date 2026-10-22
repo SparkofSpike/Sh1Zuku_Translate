@@ -80,6 +80,21 @@ public class TranslationService {
      */
     static final int CHUNK_UNIT_CHARS = 42000;
 
+    /**
+     * Chunk length for models whose single-request output cap is 8192 tokens (Anthropic and
+     * Index-Translate). A 42k-char chunk cannot fit in that budget, so every large chunk would
+     * end capped and the long-novel pipeline could never finish a book on those models.
+     * Measured on Index-Translate: ~0.82 output tokens per Chinese character, so 6000 chars
+     * land around 4900 tokens and leave ample headroom.
+     */
+    static final int CAPPED_MODEL_CHUNK_UNIT_CHARS = 6000;
+
+    /** Picks the chunk length that the model's output cap can actually hold. */
+    static int chunkUnitFor(AiModelConfig config) {
+        return config != null && (config.isAnthropic() || config.isIndexTranslate())
+                ? CAPPED_MODEL_CHUNK_UNIT_CHARS : CHUNK_UNIT_CHARS;
+    }
+
     /** Upper bound for pre-extracted terms; a runaway list must not inflate every chunk prompt. */
     static final int MAX_EXTRACTED_TERMS = 300;
 
@@ -133,9 +148,15 @@ public class TranslationService {
                 buildImageUserMessage(request.getSourceText(), payloads.size()), payloads, config);
         // Image pages have no stable source text, so the result is recorded without a target
         // language and deliberately never shared — only exact-text matches are reusable.
-        return resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
+        TranslateResponse response = resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
                 request.getSourceText() == null ? "" : request.getSourceText(),
-                hideCustomPrompt ? null : request.getCustomPrompt());
+                hideCustomPrompt ? null : request.getCustomPrompt(), null, result.isTruncated());
+        // Image pages have no stable source text, so the result is recorded without a target
+        // language and deliberately never shared — only exact-text matches are reusable.
+        // Set on the response here as well: the flag is a property of this answer, not of
+        // whatever the writer chose to echo back.
+        response.setTruncated(result.isTruncated());
+        return response;
     }
 
     /**
@@ -178,10 +199,14 @@ public class TranslationService {
                         onError.accept("模型没有返回任何内容，请重试");
                         return;
                     }
-                    TranslateResponse response = resultWriter.persistTranslate(user, config, usage,
+                    TranslateResponse response = resultWriter.persistTranslate(user, config, usage.usage(),
                             fullText.toString(),
                             request.getSourceText() == null ? "" : request.getSourceText(),
-                            hideCustomPrompt ? null : request.getCustomPrompt());
+                            hideCustomPrompt ? null : request.getCustomPrompt(),
+                            null, usage.truncated());
+                    // finish_reason=length means the provider stopped at its output cap: the text
+                    // above is a prefix of the translation, not the whole of it.
+                    response.setTruncated(usage.truncated());
                     onComplete.accept(response);
                 },
                 error -> onError.accept(error),
@@ -227,7 +252,7 @@ public class TranslationService {
                     .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
                             user.getId(), request.getSourceText(), resolvedTargetLanguage)
                     .orElse(null);
-            if (shared != null) {
+            if (shared != null && isShareable(shared)) {
                 log.info("Serving shared translation for user {} from record {}", user.getId(), shared.getId());
                 TranslateResponse response = sharedResponse(shared);
                 // The replay creates no record of its own; a fresh correlation id still lets the
@@ -253,11 +278,23 @@ public class TranslationService {
 
         TranslateResponse response = resultWriter.persistTranslate(user, config, result.getUsage(), result.getContent(),
                 request.getSourceText(), hideCustomPrompt ? null : request.getCustomPrompt(),
-                resolvedTargetLanguage);
+                resolvedTargetLanguage, result.isTruncated());
+        // A capped answer is a prefix of the translation; the caller has to be able to say so
+        // instead of presenting half a novel as the finished work.
+        response.setTruncated(result.isTruncated());
         feedbackService.registerTranslation(response.getRequestId(), request.getSourceText(),
                 result.getContent(), config.getProvider(), config.getModel(), config.getThinkingType(),
                 resolvedTargetLanguage, System.currentTimeMillis() - startedAt, true);
         return response;
+    }
+
+    /**
+     * Whether a stored translation may be served to another user. A capped (truncated) row is a
+     * prefix of the translation, so replaying it would hand someone half a novel labelled as a
+     * finished one — those rows stay visible to their owner only.
+     */
+    static boolean isShareable(TranslationRecord record) {
+        return record != null && !Boolean.TRUE.equals(record.getTruncated());
     }
 
     /** Builds the response for a translation reused from another user's history. */
@@ -292,6 +329,8 @@ public class TranslationService {
         r.setModel(rec.getModel());
         r.setCustomPrompt(rec.getCustomPrompt());
         r.setCreatedAt(rec.getCreatedAt());
+        // Rows written before the column existed are null, which reads as "not truncated".
+        r.setTruncated(Boolean.TRUE.equals(rec.getTruncated()));
         return r;
     }
 
@@ -345,7 +384,7 @@ public class TranslationService {
                     .findFirstByUserIdNotAndSourceTextAndTargetLanguageOrderByCreatedAtDesc(
                             user.getId(), request.getSourceText(), resolvedTargetLanguage)
                     .orElse(null);
-            if (shared != null) {
+            if (shared != null && isShareable(shared)) {
                 log.info("Serving shared translation for user {} from record {}", user.getId(), shared.getId());
                 onToken.accept(shared.getTranslatedText());
 
@@ -423,11 +462,12 @@ public class TranslationService {
         }
 
         // Long texts go through the chunked pipeline: one request per paragraph-aligned chunk
-        // on a single continuous token stream (see CHUNK_UNIT_CHARS for the why). The coined-term
-        // correction runs inside that pipeline (pre-extraction and the audit pass), so asking for
-        // it also routes shorter texts through it — otherwise 3万–4.2万 字 texts would silently
-        // skip the correction the user explicitly enabled.
-        if (request.getSourceText().length() > CHUNK_UNIT_CHARS || request.isNovelTermFix()) {
+        // on a single continuous token stream. The threshold is the model's own chunk size, not
+        // a fixed constant: models capped at 8192 output tokens (Index-Translate, Anthropic)
+        // cannot finish a 20k-char request in one call, so they must be split far earlier.
+        // The coined-term correction also routes texts through that pipeline (pre-extraction and
+        // the audit pass), so asking for it works on short texts too.
+        if (request.getSourceText().length() > chunkUnitFor(config) || request.isNovelTermFix()) {
             translateChunked(user, request, config, systemPrompt, resolvedTargetLanguage, cacheKey,
                     hideCustomPrompt, startedAt, onToken, onComplete, onError, cancelled, onStatus);
             return;
@@ -435,7 +475,7 @@ public class TranslationService {
 
         StringBuilder fullText = new StringBuilder();
 
-        aiModelClient.chatStream(
+        aiModelClient.chatStreamTracked(
                 systemPrompt,
                 request.getSourceText(),
                 config,
@@ -443,10 +483,10 @@ public class TranslationService {
                     fullText.append(token);
                     onToken.accept(token);
                 },
-                usage -> {
-                    finalizeStreamedTranslation(user, config, usage, fullText.toString(),
+                completion -> {
+                    finalizeStreamedTranslation(user, config, completion.usage(), fullText.toString(),
                             request.getSourceText(), request.getCustomPrompt(), hideCustomPrompt,
-                            resolvedTargetLanguage, cacheKey, startedAt, onComplete);
+                            resolvedTargetLanguage, cacheKey, startedAt, onComplete, completion.truncated());
                 },
                 error -> onError.accept(error),
                 onUpstreamConnected,
@@ -473,10 +513,12 @@ public class TranslationService {
                                   Consumer<String> onError, BooleanSupplier cancelled,
                                   Consumer<SseStatusEvent> onStatus) {
         String sourceText = request.getSourceText();
-        List<String> chunks = splitIntoChunks(sourceText, CHUNK_UNIT_CHARS);
+        List<String> chunks = splitIntoChunks(sourceText, chunkUnitFor(config));
         List<String> translatedChunks = new ArrayList<>();
         StringBuilder fullText = new StringBuilder();
         TokenUsage mergedUsage = null;
+        // One capped chunk makes the assembled text a prefix of the translation.
+        boolean truncated = false;
 
         // Stage 1 — pre-extract proper nouns / coined terms so every chunk renders them the
         // same way.
@@ -505,12 +547,16 @@ public class TranslationService {
             StringBuilder piece = new StringBuilder();
             TokenUsage[] chunkUsage = new TokenUsage[1];
             String[] chunkError = new String[1];
-            aiModelClient.chatStream(effectivePrompt, buildChunkUserMessage(chunks, translatedChunks, i), config,
+            boolean[] chunkTruncated = new boolean[1];
+            aiModelClient.chatStreamTracked(effectivePrompt, buildChunkUserMessage(chunks, translatedChunks, i), config,
                     token -> {
                         piece.append(token);
                         onToken.accept(token);
                     },
-                    usage -> chunkUsage[0] = usage,
+                    completion -> {
+                        chunkUsage[0] = completion.usage();
+                        chunkTruncated[0] = completion.truncated();
+                    },
                     error -> chunkError[0] = error,
                     () -> { },
                     cancelled);
@@ -522,6 +568,9 @@ public class TranslationService {
                 onError.accept("第 " + (i + 1) + "/" + chunks.size() + " 块没有返回内容，请重试");
                 return;
             }
+            // One capped chunk is enough to make the whole assembled text a prefix: the seam is
+            // lost, so the result as a whole must be reported as partial.
+            truncated = truncated || chunkTruncated[0];
             translatedChunks.add(piece.toString());
             fullText.append(piece);
             mergedUsage = mergeUsage(mergedUsage, chunkUsage[0]);
@@ -553,7 +602,7 @@ public class TranslationService {
         }
         finalizeStreamedTranslation(user, config, mergedUsage, finalText, sourceText,
                 request.getCustomPrompt(), hideCustomPrompt, resolvedTargetLanguage, cacheKey,
-                startedAt, onComplete);
+                startedAt, onComplete, truncated);
     }
 
     /** The shared tail of a streamed translation: usage, history row, feedback, cache, response. */
@@ -562,6 +611,20 @@ public class TranslationService {
                                              boolean hideCustomPrompt, String resolvedTargetLanguage,
                                              String cacheKey, long startedAt,
                                              Consumer<TranslateResponse> onComplete) {
+        finalizeStreamedTranslation(user, config, usage, translatedText, sourceText, customPrompt,
+                hideCustomPrompt, resolvedTargetLanguage, cacheKey, startedAt, onComplete, false);
+    }
+
+    /**
+     * The shared tail of a streamed translation. A truncated result is stored (the tokens were
+     * spent and the user can still read what arrived) but never cached: replaying a half
+     * translation from the cache would keep presenting it as a complete one.
+     */
+    private void finalizeStreamedTranslation(User user, AiModelConfig config, TokenUsage usage,
+                                             String translatedText, String sourceText, String customPrompt,
+                                             boolean hideCustomPrompt, String resolvedTargetLanguage,
+                                             String cacheKey, long startedAt,
+                                             Consumer<TranslateResponse> onComplete, boolean truncated) {
         usageService.record(user, config, usage);
 
         TranslationRecord record = new TranslationRecord();
@@ -572,6 +635,7 @@ public class TranslationService {
         record.setCustomPrompt(hideCustomPrompt ? null : customPrompt);
         record.setTargetLanguage(resolvedTargetLanguage);
         record.setRequestId(java.util.UUID.randomUUID().toString());
+        record.setTruncated(truncated);
         record = recordRepository.save(record);
 
         TranslateResponse response = new TranslateResponse();
@@ -583,9 +647,14 @@ public class TranslationService {
         if (usage != null) {
             response.setTokenUsage(usage);
         }
+        response.setTruncated(truncated);
         feedbackService.registerTranslation(record.getRequestId(), sourceText, translatedText,
                 config.getProvider(), config.getModel(), config.getThinkingType(),
                 resolvedTargetLanguage, System.currentTimeMillis() - startedAt, true);
+        if (truncated) {
+            onComplete.accept(response);
+            return;
+        }
         try {
             TranslationCache cache = TranslationCache.builder()
                     .userId(user.getId())
@@ -605,8 +674,13 @@ public class TranslationService {
 
     /**
      * Splits {@code text} into paragraph-aligned chunks of roughly {@code chunkUnit} characters,
-     * never breaking inside a line: every boundary is pulled forward to the next newline, so a
-     * chunk always ends where a line (usually a paragraph) ends.
+     * preferring line boundaries: every boundary is pulled forward to the next newline, so a
+     * chunk normally ends where a line (usually a paragraph) ends.
+     *
+     * <p>The pull-forward is bounded. A novel written without blank lines (or a single very long
+     * line) has no nearby newline, and following the rule blindly produced a 46k-char "chunk"
+     * that no 8192-token output cap can answer. When no newline appears within half a chunk, the
+     * cut is forced at the target instead.
      */
     static List<String> splitIntoChunks(String text, int chunkUnit) {
         int total = text.length();
@@ -624,7 +698,10 @@ public class TranslationService {
             int end = targetEnd;
             if (targetEnd < total) {
                 int newline = text.indexOf('\n', targetEnd);
-                end = (newline >= 0) ? newline + 1 : total;
+                // Only follow the newline when it is close; otherwise the chunk would blow past
+                // the model's output budget entirely.
+                int maxOvershoot = targetEnd + Math.max(1, chunkUnit / 2);
+                end = (newline >= 0 && newline + 1 <= maxOvershoot) ? newline + 1 : targetEnd;
             }
             out.add(text.substring(start, end));
             start = end;
@@ -818,10 +895,18 @@ public class TranslationService {
         return "enabled".equalsIgnoreCase(request.getThinkingType());
     }
 
+    /**
+     * Cache-key version. Bumped whenever stored translations could be wrong in a way the
+     * current code no longer produces: keys written by an older version simply never match,
+     * so a bad row can never be replayed after an upgrade. Added for the 8192-token truncation
+     * fix — pre-1.x caches may hold answers that stopped mid-translation.
+     */
+    static final String CACHE_KEY_VERSION = "v2";
+
     private String buildCacheKey(Long userId, AiModelConfig config, String systemPrompt, String sourceText) {
         // thinkingType is part of the key: enabling thinking is a quality choice, and a
         // fast-path result from before the toggle must not shadow the thinking result.
-        String raw = userId + "|" + config.getProvider() + "|" + config.getBaseUrl()
+        String raw = CACHE_KEY_VERSION + "|" + userId + "|" + config.getProvider() + "|" + config.getBaseUrl()
                 + "|" + config.getModel() + "|" + config.getThinkingType()
                 + "|" + systemPrompt + "|" + sourceText;
         try {

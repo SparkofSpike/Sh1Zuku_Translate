@@ -1286,7 +1286,10 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
       await onDone({
         translatedText: event.translatedText,
         id: event.id,
-        tokenUsage: event.tokenUsage
+        tokenUsage: event.tokenUsage,
+        // A capped answer is a prefix of the translation; the page must say so instead of
+        // reporting a finished job.
+        truncated: event.truncated === true
       });
     } else if (event.error) {
       streamEnded = true;

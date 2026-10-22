@@ -24,6 +24,13 @@ public class TranslateResponse {
     /** True when the text was replayed from this user's own translation cache. */
     private boolean fromCache;
 
+    /**
+     * True when the model stopped at its output cap, so {@link #translatedText} is only a
+     * prefix of the translation. The UI must say so; a capped result must never be presented
+     * as a complete one.
+     */
+    private boolean truncated;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public String getTranslatedText() { return translatedText; }
@@ -40,4 +47,6 @@ public class TranslateResponse {
     public void setFromSharedTranslation(boolean fromSharedTranslation) { this.fromSharedTranslation = fromSharedTranslation; }
     public boolean isFromCache() { return fromCache; }
     public void setFromCache(boolean fromCache) { this.fromCache = fromCache; }
+    public boolean isTruncated() { return truncated; }
+    public void setTruncated(boolean truncated) { this.truncated = truncated; }
 }

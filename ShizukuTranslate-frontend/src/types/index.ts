@@ -88,6 +88,11 @@ export interface TranslateResponse {
   /** Replayed from this user's own translation cache. */
   fromCache?: boolean
   /**
+   * True when the model stopped at its output cap, so `translatedText` is only a prefix of the
+   * translation. Set on both the REST response and the SSE `done` event.
+   */
+  truncated?: boolean
+  /**
    * Server-side id of this translation, echoed on both the REST response and the SSE `done`
    * event. It is the key the anonymous feedback endpoints (rating / events) correlate on.
    */
@@ -121,6 +126,8 @@ export interface HistoryRecord {
   model: string
   customPrompt?: string
   createdAt: string
+  /** True when the model stopped at its output cap, so translatedText is partial. */
+  truncated?: boolean
 }
 
 export interface Announcement {

@@ -53,6 +53,19 @@ public class TranslationResultWriter {
     public TranslateResponse persistTranslate(User user, AiModelConfig config, TokenUsage usage,
                                               String translatedText, String sourceText, String customPrompt,
                                               String targetLanguage) {
+        return persistTranslate(user, config, usage, translatedText, sourceText, customPrompt,
+                targetLanguage, false);
+    }
+
+    /**
+     * Same as above, and records whether the model stopped at its output cap. A truncated row is
+     * kept (the tokens were spent and the user can still read what arrived) but must stay
+     * identifiable as partial in both the response and the history.
+     */
+    @Transactional
+    public TranslateResponse persistTranslate(User user, AiModelConfig config, TokenUsage usage,
+                                              String translatedText, String sourceText, String customPrompt,
+                                              String targetLanguage, boolean truncated) {
         usageService.record(user, config, usage);
 
         TranslationRecord record = new TranslationRecord();
@@ -62,6 +75,7 @@ public class TranslationResultWriter {
         record.setModel(config.getModel());
         record.setCustomPrompt(customPrompt);
         record.setTargetLanguage(targetLanguage);
+        record.setTruncated(truncated);
         // Correlation id for the feedback pipeline; echoed to the client so ratings and
         // behaviour events can join back to this translation.
         record.setRequestId(UUID.randomUUID().toString());
@@ -76,6 +90,7 @@ public class TranslationResultWriter {
         if (usage != null) {
             response.setTokenUsage(usage);
         }
+        response.setTruncated(truncated);
         return response;
     }
 }

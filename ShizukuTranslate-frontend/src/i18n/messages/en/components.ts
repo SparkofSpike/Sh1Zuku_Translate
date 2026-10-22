@@ -12,6 +12,8 @@ export default {
     heading: 'Translation result',
     sharedBadge: 'Translated by another user',
     cacheBadge: 'Served from cache',
+    truncatedBadge: 'Translation cut off',
+    truncatedHint: 'The model hit its per-request output limit, so the translation stops halfway. Upload fewer images at once and translate again; split long texts into pieces.',
     // `|` must be escaped as {'|'} or vue-i18n parses it as the plural separator.
     tokenUsage: "Token usage: input {prompt} {'|'} output {completion} {'|'} total {total}"
   },

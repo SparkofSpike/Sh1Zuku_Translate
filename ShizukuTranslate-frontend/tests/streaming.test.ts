@@ -50,6 +50,22 @@ describe('translateStream', () => {
     expect((done as unknown as TranslateResponse).translatedText).toBe('你好')
   })
 
+  it('forwards the truncation flag from the done event', async () => {
+    // A capped answer arrives as a perfectly normal done event plus this flag; dropping it
+    // would make the UI present a half translation as a finished one.
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      'data: {"token":"半截"}\n\n',
+      'data: {"done":true,"id":9,"translatedText":"半截译文","model":"m","createdAt":"x","truncated":true}\n\n'
+    ])))
+
+    let done: TranslateResponse | null = null
+    translateStream('source', 'm', null, undefined, undefined, 'zh-CN',
+      () => {}, response => { done = response }, () => {})
+
+    await vi.waitFor(() => expect(done).not.toBeNull())
+    expect((done as unknown as TranslateResponse).truncated).toBe(true)
+  })
+
   it('keeps a final record that arrives without a trailing newline', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       'data: {"token":"半"}\n\n',

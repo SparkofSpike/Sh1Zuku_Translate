@@ -36,7 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedPresets = [];
   let savedModel = '';
   let savedModelProfileId = '';
-  const defaultModels = ['deepseek-flash', 'deepseek-v4-pro'];
+  /** False when the last profile fetch failed; the picker then holds site models only. */
+  let modelProfilesLoaded = true;
+  const defaultModels = ['deepseek-flash', 'deepseek-v4-pro', 'Index-Translate-35B-A3B'];
+  // The site models that accept images; the popup marks them so the choice is not guesswork.
+  const visionModels = new Set(['deepseek-flash', 'Index-Translate-35B-A3B']);
 
   function backendPermissionOrigin(backendUrl) {
     try {
@@ -85,7 +89,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (items.backendUrl) backendUrlInput.value = items.backendUrl;
       if (items.apiKey) apiKeyInput.value = items.apiKey;
       savedModel = items.model || '';
-      savedModelProfileId = items.modelProfileId ? 'profile:' + String(items.modelProfileId) : (items.model ? 'site:' + items.model : '');
+      // A site model saves modelProfileId 0; String(0) / '0' is truthy, so a plain truthiness
+      // check turned the saved site selection into `profile:0` and the reopen fell back to the
+      // first option — picking Index-Translate never stuck.
+      savedModelProfileId = Number(items.modelProfileId) > 0
+        ? 'profile:' + String(items.modelProfileId) + (items.model ? ':' + items.model : '')
+        : (items.model ? 'site:' + items.model : '');
       if (items.targetLang) targetLangSelect.value = items.targetLang;
       // 思考：复选框，勾选 = 开启思考推理（默认关闭，与后端 disabled 一致）
       thinkingCheck.checked = items.thinkingType === 'enabled';
@@ -126,11 +135,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderModelOptions(profiles) {
     const profileList = Array.isArray(profiles) ? profiles : [];
+    // Called with null when the profile fetch failed: the saved choice was never read, so the
+    // picker must not rewrite it — otherwise the next save silently downgrades a paying user
+    // to the site default.
+    const profilesUnavailable = !Array.isArray(profiles);
+    modelProfilesLoaded = !profilesUnavailable;
     const models = [
       ...defaultModels.map(model => ({
         key: 'site:' + model,
         profileId: '0',
-        model,          label: '站方/' + model + (model === 'deepseek-flash' ? '（视觉）' : '')
+        model,          label: '站方/' + model + (visionModels.has(model) ? '（视觉）' : '')
       })),
       ...profileList.flatMap(profile => {
         const models = Array.isArray(profile.models) && profile.models.length ? profile.models : [profile.model];
@@ -158,13 +172,23 @@ document.addEventListener('DOMContentLoaded', () => {
       option.textContent = item.label;
       modelSelect.appendChild(option);
     });
+    // A profile key is `profile:<id>:<model>`; a saved value without the model suffix (older
+    // versions wrote `profile:<id>`) falls back to the first model of that profile instead of
+    // dropping to the site default and silently downgrading the user.
+    const savedProfilePrefix = savedModelProfileId.startsWith('profile:')
+      ? savedModelProfileId.split(':').slice(0, 2).join(':') + ':'
+      : '';
     const selected = models.find(item => item.key === savedModelProfileId)
+      || (savedProfilePrefix ? models.find(item => item.key.startsWith(savedProfilePrefix)) : undefined)
       || models.find(item => !savedModelProfileId && item.model === savedModel)
       || models[0];
     if (selected) {
       modelSelect.value = selected.key;
-      savedModel = selected.model;
-      savedModelProfileId = selected.key;
+      // Keep the stored profile selection when the list could not be loaded.
+      if (!profilesUnavailable || selected.key.startsWith('site:')) {
+        savedModel = selected.model;
+        savedModelProfileId = selected.key;
+      }
     }
     if (modelStatus) {
       modelStatus.textContent = profileList.length
@@ -253,11 +277,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── Save settings ───────────────────────────────────────
 
   function saveSettings(showToast = true) {
+    // When the profile list could not be loaded, the picker only holds site models while the
+    // stored choice may be a personal profile. Writing the picker then would silently replace
+    // that profile with the site default, so the stored selection wins until a real load.
+    const keepStoredSelection = !modelProfilesLoaded && savedModelProfileId.startsWith('profile:') && savedModel;
     const data = {
       backendUrl: backendUrlInput.value.trim(),
       apiKey: apiKeyInput.value.trim(),
-      model: modelSelect.options[modelSelect.selectedIndex]?.dataset?.model || savedModel,
-      modelProfileId: modelSelect.options[modelSelect.selectedIndex]?.dataset?.profileId || '0',
+      model: keepStoredSelection
+        ? savedModel
+        : (modelSelect.options[modelSelect.selectedIndex]?.dataset?.model || savedModel),
+      modelProfileId: keepStoredSelection
+        ? savedModelProfileId.split(':')[1]
+        : (modelSelect.options[modelSelect.selectedIndex]?.dataset?.profileId || '0'),
       targetLang: targetLangSelect.value,
       thinkingType: thinkingCheck.checked ? 'enabled' : 'disabled',
       displayMode: displayModeSelect.value,

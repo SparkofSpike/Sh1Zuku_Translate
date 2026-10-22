@@ -4,6 +4,7 @@
       <h3 style="margin:0; font-weight:600;">{{ t('components.translateResult.heading') }}</h3>
       <span v-if="result.fromSharedTranslation" class="origin-badge origin-badge--shared">{{ t('components.translateResult.sharedBadge') }}</span>
       <span v-else-if="result.fromCache" class="origin-badge origin-badge--cache">{{ t('components.translateResult.cacheBadge') }}</span>
+      <span v-if="result.truncated" class="origin-badge origin-badge--truncated">{{ t('components.translateResult.truncatedBadge') }}</span>
       <div style="display:flex; align-items:center; gap:8px;">
         <button @click="copyResult" class="btn-sm" style="background:#f0f0f0; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">{{ t('common.copy') }}</button>
         <ExportBar v-if="result.translatedText" :text="result.translatedText" :model="model" />
@@ -11,6 +12,8 @@
       <FeedbackRating v-if="result.requestId" :request-id="result.requestId" :model="model" />
     </div>
     <pre style="margin-top: 12px; white-space: pre-wrap;">{{ result.translatedText }}</pre>
+
+    <p v-if="result.truncated" class="truncated-hint">{{ t('components.translateResult.truncatedHint') }}</p>
 
     <div v-if="result.tokenUsage" style="margin-top: 12px; color:#777; font-size:13px;">
       {{ t('components.translateResult.tokenUsage', { prompt: result.tokenUsage.promptTokens, completion: result.tokenUsage.completionTokens, total: result.tokenUsage.totalTokens }) }}
@@ -74,5 +77,21 @@ function copyResult() {
   background: #e7f5ff;
   color: #1864ab;
   border: 1px solid #a5c8f0;
+}
+
+.origin-badge--truncated {
+  background: #fff0f0;
+  color: #c92a2a;
+  border: 1px solid #f5b5b5;
+}
+
+.truncated-hint {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #e03131;
+  background: #fff5f5;
+  color: #8a1f1f;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

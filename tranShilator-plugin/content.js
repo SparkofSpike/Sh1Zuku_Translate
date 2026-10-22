@@ -46,6 +46,7 @@ let state = {
   phase: 'idle',
   expectedParagraphCount: 0, // number of numbered paragraphs in this request
   missingParagraphIds: [], // ids the model did not return at completion
+  truncated: false,        // model hit its output cap; the text is a prefix of the translation
   repairMode: false,
   settingsSnapshot: null
 };
@@ -1436,6 +1437,7 @@ async function handleTranslate(skipCache = false, fromBegin = false) {
   state.pageStartIds = [];
   state.expectedParagraphCount = 0;
   state.missingParagraphIds = [];
+  state.truncated = false;
   // 一并丢掉上一轮补译的备份（见上方 translating = true 处的说明，这里
   // 保留一次冗余清理：重置块与入口都清，任一漏写都不会漏到下一轮）。
   state.repairMode = false;
@@ -1866,6 +1868,9 @@ function onStreamDone(data) {
     state.repairBackup = null;
     // 重新渲染一次，让合并后的完整译文回到界面上（补译成功也要重画）。
     rerenderTranslation();
+    // 补译的流同样可能撞上输出上限；它只覆盖缺失段落，截断意味着仍有段落没补上，
+    // 由上面的 missingParagraphIds 判定收尾，这里只记录以便 toast 说清原因。
+    state.truncated = !!(data && data.truncated);
     finishTranslate(state.missingParagraphIds.length === 0, state.missingParagraphIds.length ? '补译仍有段落缺失' : null, data);
     return;
   }
@@ -1898,6 +1903,13 @@ function onStreamDone(data) {
     else state.transBody.textContent = state.streamingText;
   }
 
+  // The backend's done event carries the truncation flag when the model stopped at its output
+  // cap. A capped answer is a prefix of the translation, so the page must not report
+  // 「翻译完成」as if the whole work had been translated. Set before the completeness
+  // checks below: a capped numbered stream fails those checks too, and the reason shown must
+  // be the output cap, not a bare 「返回不完整」.
+  state.truncated = !!(data && data.truncated);
+
   // A stream can close cleanly even when the model skipped a JSON line or
   // emitted an id twice. Treat that as incomplete instead of telling the
   // user "翻译完成" while silently leaving paragraphs untranslated.
@@ -1920,7 +1932,9 @@ function onStreamDone(data) {
       const missingText = validation.missing.length
         ? `缺少第 ${validation.missing.slice(0, 8).join('、')}${validation.missing.length > 8 ? ' 等' : ''}段`
         : '段落编号重复或无效';
-      finishTranslate(false, `模型返回不完整：${missingText}，请点击重新翻译`, data);
+      finishTranslate(false, state.truncated
+        ? `译文被截断：模型达到单次输出上限（${missingText}），请缩短篇幅或换用 deepseek-flash`
+        : `模型返回不完整：${missingText}，请点击重新翻译`, data);
       return;
     }
   }
@@ -2055,14 +2069,18 @@ function finishTranslate(success, errorMsg, data) {
       // The body may simply not have rendered yet; the pending inline wait
       // paints the text as soon as it does (and announces a fallback if the
       // paragraphs never appear). Don't claim failure here.
-      showToast('翻译完成，正在等待页面正文渲染…');
+      showToast(state.truncated
+        ? '译文被截断：模型达到单次输出上限，可点击重新翻译或缩短篇幅'
+        : '翻译完成，正在等待页面正文渲染…');
       console.warn('[PNT] translation completed before inline DOM anchors were ready; waiting for the body', {
         currentPage: getCurrentNovelPage(),
         originalChars: state.originalContent.length,
         translatedChars: state.streamingText.length
       });
     } else {
-      showToast('翻译完成');
+      showToast(state.truncated
+        ? '译文被截断：模型达到单次输出上限，可点击重新翻译或缩短篇幅'
+        : '翻译完成');
     }
   } else {
     // Treat both the raw AbortError and the background's friendly

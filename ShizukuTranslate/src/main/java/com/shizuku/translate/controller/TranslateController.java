@@ -255,6 +255,9 @@ public class TranslateController {
                         SseDoneEvent doneEvent = new SseDoneEvent(response.getId(), response.getTranslatedText(),
                                 response.getTokenUsage(), response.isFromSharedTranslation(), response.isFromCache());
                         doneEvent.setRequestId(response.getRequestId());
+                        // A capped answer is partial; the client shows this instead of presenting
+                        // a cut translation as finished.
+                        doneEvent.setTruncated(response.isTruncated());
                         String json = writeJson(doneEvent);
                         if (sendEvent(emitter, closed, SseEmitter.event().data(json))) {
                             emitter.complete();

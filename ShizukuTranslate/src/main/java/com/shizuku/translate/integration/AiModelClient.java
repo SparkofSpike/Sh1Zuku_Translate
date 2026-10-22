@@ -52,7 +52,8 @@ public class AiModelClient {
         Map<String, Object> response = client.post().uri("/chat/completions")
                 .headers(headers -> addAuth(headers, config)).body(request).retrieve().body(Map.class);
         if (response == null) throw new RuntimeException("模型返回为空");
-        return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config));
+        return new DeepSeekResult(openAiContent(response), parseUsage((Map<String, Object>) response.get("usage"), config),
+                isTruncatedResponse(response));
     }
 
     /** Builds the OpenAI-compatible multimodal body used by the DeepSeek vision-capable models. */
@@ -136,7 +137,8 @@ public class AiModelClient {
         String content = config.isAnthropic()
                 ? anthropicContent(response)
                 : openAiContent(response);
-        return new DeepSeekResult(content, parseUsage((Map<String, Object>) response.get("usage"), config));
+        return new DeepSeekResult(content, parseUsage((Map<String, Object>) response.get("usage"), config),
+                isTruncatedResponse(response));
     }
 
     public void chatStream(String systemPrompt, String userMessage, AiModelConfig config,
@@ -161,6 +163,21 @@ public class AiModelClient {
                            Consumer<String> onToken, Consumer<TokenUsage> onComplete,
                            Consumer<String> onError, Runnable onUpstreamConnected,
                            java.util.function.BooleanSupplier cancelled) {
+        chatStreamTracked(systemPrompt, userMessage, config, onToken,
+                completion -> onComplete.accept(completion.usage()), onError, onUpstreamConnected, cancelled);
+    }
+
+    /**
+     * Streaming text variant that also reports whether the provider cut the answer off at its
+     * output cap. Text requests carry an 8192-token cap for Anthropic and Index-Translate, so a
+     * long novel can end mid-sentence and would otherwise be stored and cached as a finished
+     * translation. Kept under its own name rather than overloaded: two {@code Consumer} overloads
+     * with different element types make every implicit lambda call ambiguous.
+     */
+    public void chatStreamTracked(String systemPrompt, String userMessage, AiModelConfig config,
+                                  Consumer<String> onToken, Consumer<StreamCompletion> onComplete,
+                                  Consumer<String> onError, Runnable onUpstreamConnected,
+                                  java.util.function.BooleanSupplier cancelled) {
         streamRequest(requestBody(systemPrompt, userMessage, config, true), config,
                 onToken, onComplete, onError, onUpstreamConnected, cancelled);
     }
@@ -169,10 +186,14 @@ public class AiModelClient {
      * Streams a multimodal request. The images travel exactly as in {@link #chatWithImages} —
      * appended to one user message in upload order — but the answer arrives token by token,
      * so a multi-page upload can start rendering while the model still reads later pages.
+     *
+     * <p>The completion callback also reports whether the upstream stopped because it hit the
+     * output cap ({@code finish_reason=length}); a capped answer is a partial translation, and
+     * the caller has to label it instead of saving it as a finished one.
      */
     public void chatStreamWithImages(String systemPrompt, String userMessage, List<ImagePayload> images,
                                      AiModelConfig config, Consumer<String> onToken,
-                                     Consumer<TokenUsage> onComplete, Consumer<String> onError,
+                                     Consumer<StreamCompletion> onComplete, Consumer<String> onError,
                                      Runnable onUpstreamConnected,
                                      java.util.function.BooleanSupplier cancelled) {
         Map<String, Object> request = buildVisionRequest(systemPrompt, userMessage, images, config);
@@ -185,12 +206,15 @@ public class AiModelClient {
         streamRequest(request, config, onToken, onComplete, onError, onUpstreamConnected, cancelled);
     }
 
+    /** Token usage plus whether the provider cut the answer off at its output cap. */
+    public record StreamCompletion(TokenUsage usage, boolean truncated) {}
+
     /**
      * Shared SSE loop. Retries, cancellation and usage parsing are identical for every payload
      * shape, so callers only decide which request body goes out.
      */
     private void streamRequest(Map<String, Object> request, AiModelConfig config,
-                               Consumer<String> onToken, Consumer<TokenUsage> onComplete,
+                               Consumer<String> onToken, Consumer<StreamCompletion> onComplete,
                                Consumer<String> onError, Runnable onUpstreamConnected,
                                java.util.function.BooleanSupplier cancelled) {
         final int maxRetries = 3;
@@ -210,6 +234,7 @@ public class AiModelClient {
                                 throw new CancellationException("Model request cancelled");
                             }
                             TokenUsage[] usage = new TokenUsage[1];
+                            boolean[] truncated = new boolean[1];
                             boolean[] upstreamNotified = new boolean[1];
                             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                                     response.getBody(), StandardCharsets.UTF_8))) {
@@ -240,6 +265,9 @@ public class AiModelClient {
                                             if (parsed != null) {
                                                 usage[0] = mergeUsage(usage[0], parsed, config);
                                             }
+                                            if (isTruncatedChunk(chunk)) {
+                                                truncated[0] = true;
+                                            }
                                         } catch (Exception parseError) {
                                             log.debug("忽略无法解析的模型 SSE 事件: {}", data, parseError);
                                         }
@@ -252,7 +280,7 @@ public class AiModelClient {
                                     upstreamNotified[0] = true;
                                     onUpstreamConnected.run();
                                 }
-                                onComplete.accept(usage[0]);
+                                onComplete.accept(new StreamCompletion(usage[0], truncated[0]));
                             }
                             return null;
                         });
@@ -346,6 +374,44 @@ public class AiModelClient {
         } else {
             headers.setBearerAuth(config.getApiKey());
         }
+    }
+
+    /**
+     * Whether a complete (non-streaming) response was cut off at the model's output cap.
+     * OpenAI-compatible providers say {@code finish_reason=length}, Anthropic says
+     * {@code stop_reason=max_tokens}, and some OpenAI-compatible proxies reuse the latter
+     * spelling in {@code finish_reason}. A capped answer is a partial translation, and
+     * without this check it would be persisted and shown as a finished one.
+     */
+    @SuppressWarnings("unchecked")
+    static boolean isTruncatedResponse(Map<String, Object> response) {
+        if (isCapStopReason(response.get("stop_reason"))) return true;
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
+        if (choices == null) return false;
+        for (Map<String, Object> choice : choices) {
+            if (isCapStopReason(choice.get("finish_reason"))) return true;
+        }
+        return false;
+    }
+
+    /** The streaming counterpart of {@link #isTruncatedResponse}: one SSE chunk can carry the stop reason. */
+    @SuppressWarnings("unchecked")
+    static boolean isTruncatedChunk(Map<String, Object> chunk) {
+        Object delta = chunk.get("delta");
+        if (delta instanceof Map<?, ?> deltaMap && isCapStopReason(deltaMap.get("stop_reason"))) {
+            return true;
+        }
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+        if (choices == null) return false;
+        for (Map<String, Object> choice : choices) {
+            if (isCapStopReason(choice.get("finish_reason"))) return true;
+        }
+        return false;
+    }
+
+    private static boolean isCapStopReason(Object reason) {
+        return reason != null
+                && ("length".equalsIgnoreCase(reason.toString()) || "max_tokens".equalsIgnoreCase(reason.toString()));
     }
 
     @SuppressWarnings("unchecked")
@@ -471,13 +537,21 @@ public class AiModelClient {
     public static class DeepSeekResult {
         private final String content;
         private final TokenUsage usage;
+        private final boolean truncated;
 
         public DeepSeekResult(String content, TokenUsage usage) {
+            this(content, usage, false);
+        }
+
+        public DeepSeekResult(String content, TokenUsage usage, boolean truncated) {
             this.content = content;
             this.usage = usage;
+            this.truncated = truncated;
         }
 
         public String getContent() { return content; }
         public TokenUsage getUsage() { return usage; }
+        /** True when the provider stopped at its output cap, so {@code content} is partial. */
+        public boolean isTruncated() { return truncated; }
     }
 }

@@ -10,6 +10,8 @@ public class SseDoneEvent {
     private boolean fromSharedTranslation;
     /** @see TranslateResponse#fromCache */
     private boolean fromCache;
+    /** @see TranslateResponse#isTruncated() */
+    private boolean truncated;
 
     public SseDoneEvent() {}
 
@@ -84,5 +86,13 @@ public class SseDoneEvent {
 
     public void setFromCache(boolean fromCache) {
         this.fromCache = fromCache;
+    }
+
+    public boolean isTruncated() {
+        return truncated;
+    }
+
+    public void setTruncated(boolean truncated) {
+        this.truncated = truncated;
     }
 }

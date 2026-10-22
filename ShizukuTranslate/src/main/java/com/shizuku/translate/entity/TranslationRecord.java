@@ -44,6 +44,12 @@ public class TranslationRecord {
      */
     @Column(length = 36)
     private String requestId;
+    /**
+     * True when the model stopped at its output cap, so {@code translatedText} is only a prefix
+     * of the translation. Nullable on purpose: Hibernate's schema update adds the column as
+     * nullable, and every row written before it existed is "not known to be truncated".
+     */
+    private Boolean truncated;
     private LocalDateTime createdAt;
 
     @PrePersist

@@ -4,6 +4,7 @@
       <h2>{{ t('history.detail.title') }}</h2>
       <div><strong>{{ t('history.detail.source') }}</strong><pre>{{ detail.sourceText }}</pre></div>
       <div><strong>{{ t('history.detail.translated') }}</strong><pre>{{ detail.translatedText }}</pre></div>
+      <p v-if="detail.truncated" class="truncated-hint">{{ t('components.translateResult.truncatedHint') }}</p>
       <div><strong>{{ t('history.detail.model') }}</strong>{{ detail.model }}</div>
       <div><strong>{{ t('history.detail.customPrompt') }}</strong>{{ detail.customPrompt || t('history.detail.default') }}</div>
       <div><strong>{{ t('history.detail.time') }}</strong>{{ detail.createdAt }}</div>
@@ -33,3 +34,15 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.truncated-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #e03131;
+  background: #fff5f5;
+  color: #8a1f1f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+</style>

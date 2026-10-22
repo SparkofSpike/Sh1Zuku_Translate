@@ -104,13 +104,13 @@ class ImageStreamEndpointTest {
             @SuppressWarnings("unchecked")
             java.util.function.Consumer<String> onToken = invocation.getArgument(4);
             @SuppressWarnings("unchecked")
-            java.util.function.Consumer<TokenUsage> onComplete = invocation.getArgument(5);
+            java.util.function.Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(5);
             onToken.accept("第一页译文");
             if (!allowSecondToken.await(20, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("client never read the first token; stream is buffered");
             }
             onToken.accept("第二页译文");
-            onComplete.accept(new TokenUsage());
+            onComplete.accept(new AiModelClient.StreamCompletion(new TokenUsage(), true));
             return null;
         }).when(aiModelClient).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelClient.AiModelConfig.class),
                 any(), any(), any(), any(), any());
@@ -131,6 +131,7 @@ class ImageStreamEndpointTest {
         List<String> tokens = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         boolean done = false;
+        boolean truncated = false;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -149,6 +150,9 @@ class ImageStreamEndpointTest {
                 if (event.get("error") != null) errors.add(String.valueOf(event.get("error")));
                 if (Boolean.TRUE.equals(event.get("done"))) {
                     done = true;
+                    // The controller has to copy the truncation flag onto the done event; without
+                    // this assertion a capped answer would look complete in the browser.
+                    truncated = Boolean.TRUE.equals(event.get("truncated"));
                     break;
                 }
             }
@@ -156,6 +160,7 @@ class ImageStreamEndpointTest {
 
         assertEquals(List.of(), errors);
         assertTrue(done, "stream ended without a done event");
+        assertTrue(truncated, "a capped model answer must reach the client flagged as truncated");
         assertEquals(List.of("第一页译文", "第二页译文"), tokens);
         assertEquals(1, imagesInRequest.get(), "the uploaded page must reach the model client");
     }
