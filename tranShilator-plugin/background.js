@@ -919,14 +919,22 @@ function buildGithubBatchSource(blocks) {
 // A single block longer than the char limit still gets its own batch: the
 // backend accepts long input, and truncating a paragraph would silently
 // drop part of the page.
-function buildGithubBatches(blocks) {
+//
+// blockLimit lets a caller shrink the batch. The GitHub content script
+// uses it when re-requesting blocks the model dropped: a batch that got
+// cut off by the output-token cap will be cut off again at the same size,
+// so the retry has to ask for fewer blocks at a time.
+function buildGithubBatches(blocks, blockLimit = GITHUB_BATCH_BLOCK_LIMIT) {
+  const limit = Number.isInteger(blockLimit) && blockLimit > 0
+    ? Math.min(blockLimit, GITHUB_BATCH_BLOCK_LIMIT)
+    : GITHUB_BATCH_BLOCK_LIMIT;
   const batches = [];
   let current = [];
   let chars = 0;
   for (const block of blocks) {
     const size = String(block.text || '').length + 8;
     if (current.length
-        && (current.length >= GITHUB_BATCH_BLOCK_LIMIT || chars + size > GITHUB_BATCH_CHAR_LIMIT)) {
+        && (current.length >= limit || chars + size > GITHUB_BATCH_CHAR_LIMIT)) {
       batches.push(current);
       current = [];
       chars = 0;
@@ -971,7 +979,7 @@ async function startGithubTranslation(payload, tabId, requestId) {
     ]);
     const targetLang = payload.targetLang || 'zh';
     const targetLangName = targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文';
-    const batches = buildGithubBatches(blocks);
+    const batches = buildGithubBatches(blocks, payload.blockLimit);
     const basePrompt = buildGithubPrompt(targetLangName);
 
     await notifyTab(tabId, {

@@ -660,7 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // in-flight one), so re-running after a finished translation simply
   // retranslates.
 
-  async function startTranslate() {
+  async function startTranslate(force = false) {
     if (!await ensureBackendHostPermission(backendUrlInput.value.trim(), true)) {
       return;
     }
@@ -688,7 +688,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       await chrome.tabs.sendMessage(tab.id, {
-        type: githubPage ? 'GH_MANUAL_TRANSLATE' : 'MANUAL_TRANSLATE'
+        type: githubPage ? 'GH_MANUAL_TRANSLATE' : 'MANUAL_TRANSLATE',
+        // "重新翻译" forces a fresh pass; the primary button lets the page
+        // fill in whatever is still missing first.
+        force: !!force
       });
       window.close();
     } catch (e) {
@@ -696,9 +699,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  translateBtn.addEventListener('click', startTranslate);
+  translateBtn.addEventListener('click', () => startTranslate(false));
   const retranslateBtn = document.getElementById('retranslateBtn');
-  retranslateBtn.addEventListener('click', startTranslate);
+  retranslateBtn.addEventListener('click', () => startTranslate(true));
 
   // ─── Status helper ───────────────────────────────────────
 

@@ -47,6 +47,14 @@
   const SETTINGS_TIMEOUT_MS = 5000;
   const PANEL_ID = 'pnt-gh-panel-host';
 
+  // A batch can come back missing some of the ids it was asked for: the
+  // model skips a paragraph, or the answer hits the output-token cap and
+  // stops mid-list. Re-asking for just the missing blocks fixes the common
+  // case; each retry uses smaller batches, because a request that was cut
+  // off at one size gets cut off again at the same size.
+  const MAX_REPAIR_ROUNDS = 2;
+  const MIN_REPAIR_BATCH = 5;
+
   // ─── State ──────────────────────────────────────────────────
 
   const state = {
@@ -60,6 +68,8 @@
     batchTotal: 0,
     batchIds: [],
     pendingIds: [],
+    repairRounds: 0,
+    staleRequestIds: new Set(),
     buffer: '',
     error: '',
     truncated: false,
@@ -250,7 +260,7 @@
     return { parent: el, inside: false };
   }
 
-  function renderTranslation(block, text, { loading = false } = {}) {
+  function renderTranslation(block, text, { loading = false, error = false } = {}) {
     if (!block.el.isConnected) return;
     let node = state.nodes.get(block.id);
     if (!node) {
@@ -267,7 +277,8 @@
       state.nodes.set(block.id, node);
     }
     node.classList.toggle('pnt-gh-loading', !!loading);
-    node.classList.toggle('pnt-gh-error', !loading && !!text && text.indexOf('翻译失败') === 0);
+    node.classList.toggle('pnt-gh-error',
+      !loading && (error || (!!text && text.indexOf('翻译失败') === 0)));
     node.textContent = text;
     node.style.display = state.hidden ? 'none' : '';
   }
@@ -364,7 +375,9 @@
         state.translations.delete(id);
         continue;
       }
-      count++;
+      // A node without a translation is a placeholder ("翻译中…",
+      // "未返回译文"), not a finished paragraph.
+      if (state.translations.has(id)) count++;
     }
     return count;
   }
@@ -489,7 +502,7 @@
       const button = event.target.closest('[data-action]');
       if (!button) return;
       const action = button.dataset.action;
-      if (action === 'translate') startTranslation(countRendered() > 0);
+      if (action === 'translate') startTranslation(pendingCount() === 0);
       else if (action === 'cancel') cancelTranslation();
       else if (action === 'toggle') toggleTranslations();
       else if (action === 'collapse') toggleCollapsed();
@@ -543,8 +556,12 @@
     // 段" and the user never learns why nothing was translated.
     if (state.error && !state.translating) {
       const renderedOnError = countRendered();
+      // Unanswered blocks are a repair target, not a reason to redo the
+      // whole page: only offer "重新翻译" when everything already has a
+      // translation.
+      const stillPending = pendingCount();
       setPanelState(state.errorKind || 'error', state.error, {
-        translateLabel: renderedOnError ? '重新翻译' : '翻译本页',
+        translateLabel: stillPending ? '补译缺失段落' : '重新翻译',
         translateHidden: false,
         cancelHidden: true,
         toggleHidden: !renderedOnError,
@@ -649,6 +666,8 @@
     state.batchTotal = 0;
     state.batchIds = [];
     state.pendingIds = [];
+    state.repairRounds = 0;
+    state.staleRequestIds.clear();
     state.buffer = '';
     state.error = '';
     state.errorKind = '';
@@ -657,6 +676,10 @@
 
   async function startTranslation(skipCache) {
     if (state.translating) return;
+
+    // A new run clears any warning left by the previous one.
+    state.error = '';
+    state.errorKind = '';
 
     const settings = await loadSettings();
     state.targetLang = settings.targetLang;
@@ -691,20 +714,39 @@
       toggleHidden: true
     });
 
+    await requestTranslation(queue, { skipCache: !!skipCache });
+  }
+
+  // Send one set of blocks to the worker. Every round — the first pass and
+  // every repair — goes through here, so the request shape cannot drift.
+  async function requestTranslation(blocks, { skipCache = false, blockLimit = 0 } = {}) {
+    // A new round gets a new request id. Retire the previous one first so a
+    // late event from the finished stream cannot claim this round and then
+    // reject the real one.
+    if (state.requestId) state.staleRequestIds.add(state.requestId);
+    state.requestId = '';
+    state.batchIndex = 0;
+    state.batchTotal = 0;
+    state.batchIds = [];
+    state.buffer = '';
+
     const response = await sendToBackground('TRANSLATE_GITHUB_STREAM', {
-      blocks: queue.map((block) => ({ id: block.id, text: block.text })),
+      blocks: blocks.map((block) => ({ id: block.id, text: block.text })),
       targetLang: state.targetLang,
       thinkingType: state.thinkingType,
-      skipCache: !!skipCache
+      skipCache: !!skipCache,
+      // 0 means "worker default"; a repair round passes a smaller cap.
+      blockLimit: blockLimit || undefined
     });
 
     if (!response.success) {
       failRun(response.error || '无法启动翻译');
-      return;
+      return false;
     }
-    // The background creates the id synchronously; events may already be
-    // in flight, so only adopt it when no event has claimed one yet.
+    // The worker creates the id synchronously; events may already be in
+    // flight, so only adopt it when no event has claimed one yet.
     if (!state.requestId && response.requestId) state.requestId = String(response.requestId);
+    return true;
   }
 
   async function cancelTranslation() {
@@ -730,7 +772,7 @@
       const block = state.byId.get(id);
       if (!block) continue;
       if (cancelled) removeTranslationNode(id);
-      else renderTranslation(block, '翻译失败，可重试');
+      else renderTranslation(block, '翻译失败，可重试', { error: true });
     }
   }
 
@@ -757,14 +799,67 @@
     scheduleScan();
   }
 
-  function finishRun() {
+  // Blocks this run asked for that produced no translation. countRendered()
+  // first, so records whose DOM node was replaced by hydration do not count
+  // as answered.
+  function missingBlocks() {
+    countRendered();
+    const asked = new Set(state.pendingIds);
+    return state.blocks.filter((block) =>
+      asked.has(block.id) && !state.translations.has(block.id));
+  }
+
+  // Blocks on this page that still have no translation.
+  function pendingCount() {
+    countRendered();
+    return state.blocks.reduce(
+      (total, block) => total + (state.translations.has(block.id) ? 0 : 1), 0);
+  }
+
+  // NO block may be left in the "翻译中…" placeholder when a run ends. The
+  // old code only counted the gap in the panel text, so a paragraph the
+  // model skipped kept saying "翻译中…" forever and the page looked stuck.
+  function settleMissing(missing) {
+    for (const block of missing) {
+      renderTranslation(block, '未返回译文，可点「重新翻译」', { error: true });
+    }
+  }
+
+  async function finishRun() {
     if (!state.translating) return;
+    const missing = missingBlocks();
+
+    if (missing.length && state.repairRounds < MAX_REPAIR_ROUNDS) {
+      state.repairRounds++;
+      // Halve the batch every round. A skipped paragraph is random, but an
+      // answer cut off by the output-token cap repeats at the size that
+      // produced it, so the retry must ask for less.
+      const limit = Math.max(
+        MIN_REPAIR_BATCH,
+        Math.ceil(missing.length / Math.pow(2, state.repairRounds))
+      );
+      setPanelState('running',
+        '补译遗漏的 ' + missing.length + ' 段…', { cancelHidden: false, toggleHidden: true });
+      const started = await requestTranslation(missing, { blockLimit: limit });
+      // A failed start already reset the panel through failRun.
+      if (!started) return;
+      return;
+    }
+
     state.translating = false;
+    settleMissing(missing);
     const rendered = countRendered();
-    const missing = state.blocks.length - rendered;
     let status = '已翻译 ' + rendered + ' 段';
-    if (state.truncated) status += '（部分内容被截断）';
-    else if (missing > 0) status += '，' + missing + ' 段未返回译文';
+    if (missing.length) {
+      status += '，' + missing.length + ' 段补译后仍未返回';
+      // The re-scan below repaints the panel from updateIdlePanel(). Keep
+      // the warning there too, or it is replaced by a cheerful
+      // "可翻译 N 段" one tick after the failure.
+      state.error = missing.length + ' 段补译后仍未返回译文，可点「重新翻译」重试';
+      state.errorKind = 'error';
+    } else if (state.truncated) {
+      status += '（部分内容被截断）';
+    }
     setPanelState('done', status, {
       translateLabel: '重新翻译',
       translateHidden: false,
@@ -788,11 +883,14 @@
 
   function acceptRequest(requestId) {
     if (!state.translating) return false;
+    const id = String(requestId || '');
+    // Events from an earlier round of this same run are stale by definition.
+    if (id && state.staleRequestIds.has(id)) return false;
     if (!state.requestId) {
-      state.requestId = String(requestId || '');
+      state.requestId = id;
       return true;
     }
-    return String(requestId || '') === state.requestId;
+    return id === state.requestId;
   }
 
   function batchProgressText() {
@@ -861,7 +959,9 @@
         break;
       }
       case 'GH_DONE': {
-        finishRun();
+        finishRun().catch((error) => {
+          failRun('翻译处理出错：' + (error && error.message ? error.message : error));
+        });
         break;
       }
       case 'GH_ERROR': {
@@ -948,7 +1048,10 @@
       return false;
     }
     if (message.type === 'GH_MANUAL_TRANSLATE') {
-      startTranslation(countRendered() > 0).catch((e) => failRun(e && e.message ? e.message : String(e)));
+      // "重新翻译" from the popup forces a fresh pass; the primary button
+      // first fills in any block that has no translation yet.
+      startTranslation(!!message.force || pendingCount() === 0)
+        .catch((e) => failRun(e && e.message ? e.message : String(e)));
       sendResponse({ ok: true });
       return false;
     }
