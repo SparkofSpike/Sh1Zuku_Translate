@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pixiv Novel Translator",
-  "version": "1.4.8",
-  "description": "Translate Pixiv Japanese novels with AI — powered by ShizukuTranslate",
+  "name": "Pixiv & GitHub Translator",
+  "version": "1.4.9",
+  "description": "Translate Pixiv Japanese novels and GitHub pages with AI — powered by ShizukuTranslate",
   "permissions": [
     "activeTab",
     "alarms",
@@ -25,11 +25,17 @@
       "js": ["version.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["version.js", "github-content.js"],
+      "css": ["github-styles.css"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Pixiv Novel Translator",
+    "default_title": "Pixiv & GitHub Translator",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

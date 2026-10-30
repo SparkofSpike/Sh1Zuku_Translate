@@ -603,6 +603,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     }
 
+    case 'TRANSLATE_GITHUB_STREAM': {
+      // Same contract as the novel path: acknowledge immediately, stream
+      // progress back through tabs.sendMessage. The content script passed
+      // pre-numbered blocks, so the worker never touches the DOM.
+      const tabId = sender.tab?.id ?? null;
+      const requestId = String(Date.now()) + '-' + (++requestSeq);
+      startGithubTranslation(message, tabId, requestId).catch((error) => {
+        const msg = error && error.message ? error.message : String(error);
+        if (/abort|取消/i.test(msg)) {
+          console.warn('[PixivTranslator] GitHub translation cancelled:', msg);
+          notifyTab(tabId, { type: 'GH_CANCELLED', requestId });
+        } else {
+          console.error('[PixivTranslator] GitHub translation error:', msg);
+          recordPluginError(msg);
+          notifyTab(tabId, { type: 'GH_ERROR', requestId, error: msg });
+        }
+      });
+      sendResponse({ success: true, requestId });
+      break;
+    }
+
+    case 'CANCEL_GITHUB_TRANSLATE': {
+      const key = sender.tab?.id ?? 'unknown';
+      const controller = activeControllers.get(key);
+      if (controller) {
+        controller.abort();
+        activeControllers.delete(key);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: '没有进行中的翻译' });
+      }
+      break;
+    }
+
     case 'CANCEL_TRANSLATE': {
       // Cancel by tab so a request in another tab is never aborted.
       const key = sender.tab?.id ?? 'unknown';
@@ -837,6 +871,169 @@ async function startStreamingTranslation(novelId, targetLang, tabId, selectedPre
   } finally {
     // Clean up controller + keepalive on every exit path, STEP1/2
     // failures included — not only after the stream completes.
+    if (activeControllers.get(key) === controller) {
+      activeControllers.delete(key);
+    }
+    keepaliveStop();
+  }
+}
+
+// ─── GitHub page translation ────────────────────────────────
+// The GitHub content script collects natural-language blocks (README body,
+// issue/PR descriptions, comments, wiki pages) and asks the worker to
+// translate them. Blocks arrive with caller-assigned ids; the answer comes
+// back as JSON Lines so each translation maps onto the exact DOM block even
+// when the model merges or splits a paragraph.
+//
+// The work is split into batches. A long thread or a release page can hold
+// hundreds of blocks, and one enormous prompt would either be truncated by
+// the model or waste tokens on a retry after a single bad line. Every batch
+// is an ordinary /translate/stream call, so auth, caching, model selection,
+// timeouts and error reporting stay identical to the novel path.
+
+const GITHUB_BATCH_CHAR_LIMIT = 12000;
+const GITHUB_BATCH_BLOCK_LIMIT = 60;
+const GITHUB_MAX_BLOCKS = 400;
+const GITHUB_MAX_TOTAL_CHARS = 60000;
+
+function buildGithubPrompt(targetLangName) {
+  return `请将下面来自 GitHub 页面的外文内容翻译为${targetLangName}。
+
+这是技术社区页面（仓库 README、issue、PR 描述或评论）。要求：
+1. 原文每一段都以 [编号] 开头，请逐段翻译并输出 JSON Lines：每行一个完整、合法的 JSON 对象，格式为 {"id":数字,"text":"译文"}；
+2. 每个输入编号必须输出且只能输出一个 JSON 对象，顺序严格按编号递增，禁止合并、拆分、遗漏或重复；
+3. 保留 Markdown 结构（标题、列表、引用、链接语法）；行内代码请连同反引号原样保留，不要翻译代码；
+4. 代码块、命令行、URL、邮箱、文件名、路径、变量名、API/函数/类名、包名、标签名保持英文原样；
+5. 产品名、库名、公司名等专有名词保留英文；技术术语使用中文技术社区的通用译法；
+6. 不要输出任何解释、注释、Markdown 代码块围栏或额外文字。`;
+}
+
+function buildGithubBatchSource(blocks) {
+  const lines = blocks.map((block) =>
+    `[${block.id}] ${String(block.text || '').replace(/\s+/g, ' ').trim()}`
+  );
+  return `【GitHub 页面内容（段落已编号）】\n` + lines.join('\n');
+}
+
+// Split blocks into batches bounded by both block count and source size.
+// A single block longer than the char limit still gets its own batch: the
+// backend accepts long input, and truncating a paragraph would silently
+// drop part of the page.
+function buildGithubBatches(blocks) {
+  const batches = [];
+  let current = [];
+  let chars = 0;
+  for (const block of blocks) {
+    const size = String(block.text || '').length + 8;
+    if (current.length
+        && (current.length >= GITHUB_BATCH_BLOCK_LIMIT || chars + size > GITHUB_BATCH_CHAR_LIMIT)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(block);
+    chars += size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+async function startGithubTranslation(payload, tabId, requestId) {
+  const rawBlocks = Array.isArray(payload && payload.blocks) ? payload.blocks : [];
+  const blocks = [];
+  const seenIds = new Set();
+  let totalChars = 0;
+  for (const raw of rawBlocks) {
+    const id = Number(raw && raw.id);
+    const text = String((raw && raw.text) || '').replace(/\s+/g, ' ').trim();
+    if (!Number.isInteger(id) || id <= 0 || !text || seenIds.has(id)) continue;
+    if (blocks.length >= GITHUB_MAX_BLOCKS || totalChars + text.length > GITHUB_MAX_TOTAL_CHARS) break;
+    seenIds.add(id);
+    blocks.push({ id, text });
+    totalChars += text.length;
+  }
+  if (!blocks.length) {
+    throw new Error('当前页面没有可翻译的正文段落');
+  }
+
+  const controller = new AbortController();
+  const key = tabId ?? 'unknown';
+  const previous = activeControllers.get(key);
+  if (previous) previous.abort();
+  activeControllers.set(key, controller);
+  keepaliveStart();
+
+  try {
+    const settings = await Promise.race([
+      loadSettings(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('读取插件设置超时，请重试')), STEP2_TIMEOUT_MS))
+    ]);
+    const targetLang = payload.targetLang || 'zh';
+    const targetLangName = targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文';
+    const batches = buildGithubBatches(blocks);
+    const basePrompt = buildGithubPrompt(targetLangName);
+
+    await notifyTab(tabId, {
+      type: 'GH_START',
+      requestId,
+      data: { totalBlocks: blocks.length, batches: batches.length }
+    });
+
+    for (let i = 0; i < batches.length; i++) {
+      if (controller.signal.aborted) throw new Error('翻译已取消');
+      const batch = batches[i];
+      const ids = batch.map((block) => block.id);
+      let batchFailed = false;
+      await notifyTab(tabId, {
+        type: 'GH_BATCH_START',
+        requestId,
+        data: { index: i, total: batches.length, ids }
+      });
+      await streamTranslateApi(
+        settings.backendUrl,
+        settings.apiKey,
+        settings.model,
+        settings.modelProfileId,
+        buildGithubBatchSource(batch),
+        targetLang,
+        [],
+        '',
+        payload.thinkingType,
+        controller,
+        async () => { await notifyTab(tabId, { type: 'GH_CONNECTED', requestId }); },
+        async (token) => { await notifyTab(tabId, { type: 'GH_TOKEN', requestId, token }); },
+        async (result) => {
+          await notifyTab(tabId, {
+            type: 'GH_BATCH_DONE',
+            requestId,
+            data: {
+              index: i,
+              ids,
+              translatedText: result.translatedText || '',
+              truncated: result.truncated === true
+            }
+          });
+        },
+        async (error) => {
+          // A terminal error event from the backend ends the whole run:
+          // the content script has already reset its UI, and translating
+          // the remaining batches would bill the user for output nobody
+          // will ever see.
+          batchFailed = true;
+          recordPluginError(error);
+          await notifyTab(tabId, { type: 'GH_ERROR', requestId, error });
+        },
+        !!payload.skipCache,
+        'p',
+        async () => { await notifyTab(tabId, { type: 'GH_SERVER_ACK', requestId }); },
+        { basePrompt, numbered: true }
+      );
+      if (batchFailed) return;
+    }
+
+    await notifyTab(tabId, { type: 'GH_DONE', requestId, data: { blocks: blocks.length } });
+  } finally {
     if (activeControllers.get(key) === controller) {
       activeControllers.delete(key);
     }
@@ -1104,7 +1301,7 @@ async function loadSettings() {
 
 // ─── Step 3: Call Backend SSE Stream API ─────────────────────
 
-async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false, inlineSeparator = 'p', onServerResponded) {
+async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, text, targetLang, selectedPresets, customPrompt, thinkingType, controller, onConnected, onToken, onDone, onError, skipCache = false, inlineSeparator = 'p', onServerResponded, promptOptions = null) {
   if (!backendUrl) {
     throw new Error('请先在插件设置中配置后端地址');
   }
@@ -1115,8 +1312,14 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   const url = backendUrl.replace(/\/+$/, '') + '/api/v1/translate/stream';
   const targetLangName = targetLang === 'en' ? '英语' : targetLang === 'ko' ? '韩语' : '简体中文';
 
-  // Merge base prompt with user custom prompt
-  let prompt = `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`;
+  // promptOptions lets a non-novel surface (the GitHub page translator)
+  // supply its own base prompt and decide the numbered/JSON-Lines mode.
+  // It is the last parameter on purpose: every existing positional caller
+  // keeps its arguments unchanged, and the novel path never passes it.
+  const opts = promptOptions || {};
+  let prompt = opts.basePrompt
+    ? String(opts.basePrompt).replace(/\{language\}/g, targetLangName)
+    : `请将以下日语小说内容翻译为${targetLangName}。保留原文的段落结构和换行。`;
   if (customPrompt && customPrompt.trim()) {
     prompt += `\n\n用户额外指示：` + customPrompt.trim();
   }
@@ -1126,7 +1329,10 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   // The example lines matter: without them the flash model drifts into
   // plain-text output, which the fallback renderer maps by position and
   // misaligns as soon as one paragraph is merged or split.
-  if (text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本') || text.includes('【补译任务')) {
+  const numberedRequest = opts.numbered !== undefined
+    ? !!opts.numbered
+    : (text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本') || text.includes('【补译任务'));
+  if (numberedRequest) {
     prompt += `
 
 请只翻译标记了 [编号] 的段落，逐段输出 JSON Lines 格式：每一行是一个完整、合法的 JSON 对象，id 与输入的段落编号一一对应，text 是该段的译文。`;
@@ -1202,7 +1408,7 @@ async function streamTranslateApi(backendUrl, apiKey, model, modelProfileId, tex
   armIdleTimer();
   console.log('[PNT][request]', {
     separator: inlineSeparator,
-    numbered: text.includes('【当前页') || text.includes('【全文翻译') || text.includes('【待翻译文本'),
+    numbered: numberedRequest,
     sourceChars: text.length,
     sourceLines: text.split('\\n').length
   });

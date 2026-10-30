@@ -71,11 +71,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── Check current tab on open ──────────────────────────
 
+  function isGithubUrl(url) {
+    return /^https:\/\/github\.com\//.test(url || '');
+  }
+
+  function isPixivNovelUrl(url) {
+    return !!(url || '').includes('pixiv.net/novel/');
+  }
+
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    const isNovelPage = !!tab?.url && tab.url.includes('pixiv.net/novel/');
-    pageStatus.textContent = isNovelPage ? '当前在 Pixiv 小说页面' : '请在 Pixiv 小说页面使用';
-    pageStatus.className = isNovelPage ? 'status-ok' : 'status-err';
-    translateBtn.disabled = !isNovelPage;
+    const isNovelPage = isPixivNovelUrl(tab?.url);
+    const isGithubPage = isGithubUrl(tab?.url);
+    const supported = isNovelPage || isGithubPage;
+    if (isGithubPage) pageStatus.textContent = '当前在 GitHub 页面';
+    else if (isNovelPage) pageStatus.textContent = '当前在 Pixiv 小说页面';
+    else pageStatus.textContent = '请在 Pixiv 小说页面或 GitHub 页面使用';
+    pageStatus.className = supported ? 'status-ok' : 'status-err';
+    translateBtn.disabled = !supported;
+    translateBtn.textContent = isGithubPage ? '翻译此 GitHub 页面' : '翻译当前小说';
+
+    // The GitHub translator always works on demand; auto-translate and the
+    // novel-specific display options would only mislead here.
+    if (isGithubPage) {
+      [
+        document.getElementById('displayMode')?.closest('.field'),
+        document.getElementById('inlineOptions'),
+        document.getElementById('presetsGroup')?.closest('.field'),
+        document.getElementById('customPrompt')?.closest('.field'),
+        document.getElementById('autoTranslate')?.closest('.field')
+      ].forEach((field) => { if (field) field.style.display = 'none'; });
+    }
   });
 
   // ─── Load saved settings ─────────────────────────────────
@@ -573,21 +598,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── Inject content script if needed ────────────────────
 
-  async function ensureContentScript(tabId) {
+  async function ensureContentScript(tab) {
+    const github = isGithubUrl(tab && tab.url);
+    // Manifest-declared scripts should already be present; this is the
+    // fallback for a tab opened before the extension was (re)loaded.
+    const files = github
+      ? ['version.js', 'github-content.js']
+      : ['version.js', 'content.js'];
+    const css = github ? 'github-styles.css' : 'styles.css';
     try {
-      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+      await chrome.tabs.sendMessage(tab.id, { type: 'PING' });
       return true;
     } catch {
       try {
         await chrome.scripting.executeScript({
-          target: { tabId },
-          // version.js first: content.js reads EXTENSION_VERSION for the
-          // badge, matching the manifest-declared script order.
-          files: ['version.js', 'content.js']
+          target: { tabId: tab.id },
+          // version.js first: the content scripts read EXTENSION_VERSION
+          // for the badge, matching the manifest-declared script order.
+          files
         });
         await chrome.scripting.insertCSS({
-          target: { tabId },
-          files: ['styles.css']
+          target: { tabId: tab.id },
+          files: [css]
         });
         await new Promise(r => setTimeout(r, 200));
         return true;
@@ -616,24 +648,27 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (!tab.url || !tab.url.includes('pixiv.net/novel/')) {
-      showStatus('请在 Pixiv 小说页面使用', 'err');
+    if (!tab.url || (!isPixivNovelUrl(tab.url) && !isGithubUrl(tab.url))) {
+      showStatus('请在 Pixiv 小说页面或 GitHub 页面使用', 'err');
       return;
     }
 
+    const githubPage = isGithubUrl(tab.url);
     showStatus('正在连接...', 'ok');
 
-    const injected = await ensureContentScript(tab.id);
+    const injected = await ensureContentScript(tab);
     if (!injected) {
       showStatus('注入失败，请刷新页面重试', 'err');
       return;
     }
 
     try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'MANUAL_TRANSLATE' });
+      await chrome.tabs.sendMessage(tab.id, {
+        type: githubPage ? 'GH_MANUAL_TRANSLATE' : 'MANUAL_TRANSLATE'
+      });
       window.close();
     } catch (e) {
-      showStatus('请刷新 Pixiv 小说页面后重试', 'err');
+      showStatus(githubPage ? '请刷新 GitHub 页面后重试' : '请刷新 Pixiv 小说页面后重试', 'err');
     }
   }
 

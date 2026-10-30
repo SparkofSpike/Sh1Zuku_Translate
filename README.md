@@ -28,12 +28,13 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv Novel Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.4.8` (build metadata in `version.js` is generated from the release commit).
+The `tranShilator-plugin/` directory contains the **Pixiv & GitHub Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.4.9` (build metadata in `version.js` is generated from the release commit).
 
 The extension supports:
 
 - A floating side-panel translation view (used as a fallback when inline paragraphs cannot be located).
 - Inline translation under paragraphs on the current Pixiv page (the default display mode).
+- **GitHub page translation**: on any `github.com` page a floating panel collects the natural-language body (README, issue and PR descriptions, comments, release notes, wiki pages), translates it in numbered batches, and streams each paragraph's translation under its source block. Code blocks, file lists, diffs, navigation and page chrome are never translated; the translated text is rendered as plain text, so links and emphasis are flattened. A Turbo navigation clears the previous page's translations before the new body is scanned.
 - Full-novel inline translation with global paragraph IDs mapped across Pixiv page breaks.
 - Paged mode that translates the whole novel at once and renders it in the floating window, split into blocks at Pixiv's `[newpage]` markers.
 - Chinese, English, and Korean output.
@@ -48,7 +49,7 @@ The extension supports:
 - Release update checks at browser startup and every six hours, plus a manual update check in the popup.
 - One-click authorization: the popup requests a device code, opens the consent page in a new tab, and stores the resulting API key by itself. Manual key entry stays available as a fallback.
 
-The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. All translations require a reachable ShizukuTranslate backend URL and an extension API key, either fetched with the popup's one-click authorization or generated on the profile page and pasted in by hand. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
+The extension can translate public Pixiv novels without a Pixiv login; login-gated novels additionally require an authenticated Pixiv session. GitHub pages are translated on demand from the in-page panel or the popup, with no automatic translation. All translations require a reachable ShizukuTranslate backend URL and an extension API key, either fetched with the popup's one-click authorization or generated on the profile page and pasted in by hand. Because users may configure any HTTP(S) deployment and change it without rebuilding the extension, the Manifest V3 package requests HTTP/HTTPS host access. The extension uses that access for the configured backend and Pixiv requests, and injects a content script only on `pixiv.net/novel/*` and `github.com/*`; it does not inject content scripts into arbitrary sites. Unpacked browser extensions cannot silently replace their own files, so updates must be applied through the bundled Windows updater and then reloaded in the browser's extension management page.
 
 ## Architecture
 
@@ -86,6 +87,17 @@ The extension can translate public Pixiv novels without a Pixiv login; login-gat
 3. background.js sends the source text to /api/v1/translate/stream with X-API-Key.
 4. The backend calls the selected model provider and returns SSE events.
 5. background.js forwards tokens to content.js, which renders the selected view.
+```
+
+GitHub pages take a shorter path with the same backend contract:
+
+```text
+1. github-content.js collects leaf blocks inside .markdown-body and numbers them [1]..[N].
+2. background.js splits the blocks into batches (60 blocks / 12k chars) and sends
+   the numbered source plus a GitHub-specific prompt to /api/v1/translate/stream.
+3. The model answers with JSON Lines ({"id":N,"text":"..."}), streamed as tokens.
+4. github-content.js accumulates the stream, parses complete objects and renders each
+   translation directly under its source block.
 ```
 
 The extension makes a best-effort `PHPSESSID` check before requesting a novel and includes browser-managed Pixiv credentials for login-gated content. It does not expose the user's configured model API keys to the extension: model profile responses requested with an extension API key omit API key previews.

@@ -1,0 +1,98 @@
+/* ============================================================
+   GitHub Page Translator — injected styles
+   ------------------------------------------------------------
+   Only the translation blocks live here. The floating panel is
+   rendered inside a shadow root, so none of these rules (and none
+   of GitHub's) can reach it.
+   ============================================================ */
+
+.pnt-gh-trans {
+  display: block;
+  margin: 6px 0 12px;
+  padding: 6px 12px;
+  border-left: 3px solid #1a7f37;
+  border-radius: 0 6px 6px 0;
+  background: rgba(26, 127, 55, 0.06);
+  color: #1f2328;
+  font-size: 0.95em;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: normal;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+/* While streaming, the placeholder must not look like a finished
+   translation, and must not shift the surrounding layout. */
+.pnt-gh-trans.pnt-gh-loading {
+  border-left-color: #d0d7de;
+  background: transparent;
+  color: #57606a;
+  font-style: italic;
+}
+
+.pnt-gh-trans.pnt-gh-error {
+  border-left-color: #cf222e;
+  background: rgba(207, 34, 46, 0.06);
+  color: #cf222e;
+  font-style: normal;
+}
+
+/* A translation inside a list item or table cell inherits the
+   surrounding indent instead of reopening the list spacing. */
+li > .pnt-gh-trans {
+  margin-bottom: 4px;
+}
+
+td > .pnt-gh-trans,
+th > .pnt-gh-trans {
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  font-size: 0.92em;
+}
+
+/* GitHub stores the user's colour mode on <html>. Honouring it matters:
+   the injected block must stay readable in both themes. */
+[data-color-mode="dark"] .pnt-gh-trans,
+[data-dark-theme] .pnt-gh-trans {
+  border-left-color: #3fb950;
+  background: rgba(63, 185, 80, 0.1);
+  color: #e6edf3;
+}
+
+[data-color-mode="dark"] .pnt-gh-trans.pnt-gh-loading,
+[data-dark-theme] .pnt-gh-trans.pnt-gh-loading {
+  border-left-color: #30363d;
+  background: transparent;
+  color: #8b949e;
+}
+
+[data-color-mode="dark"] .pnt-gh-trans.pnt-gh-error,
+[data-dark-theme] .pnt-gh-trans.pnt-gh-error {
+  border-left-color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+  color: #ff7b72;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-color-mode="auto"] .pnt-gh-trans {
+    border-left-color: #3fb950;
+    background: rgba(63, 185, 80, 0.1);
+    color: #e6edf3;
+  }
+
+  [data-color-mode="auto"] .pnt-gh-trans.pnt-gh-loading {
+    border-left-color: #30363d;
+    background: transparent;
+    color: #8b949e;
+  }
+
+  [data-color-mode="auto"] .pnt-gh-trans.pnt-gh-error {
+    border-left-color: #f85149;
+    background: rgba(248, 81, 73, 0.1);
+    color: #ff7b72;
+  }
+}
