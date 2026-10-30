@@ -61,8 +61,6 @@
     batchIds: [],
     pendingIds: [],
     buffer: '',
-    doneCount: 0,
-    failedCount: 0,
     error: '',
     truncated: false,
     hidden: false,
@@ -75,8 +73,7 @@
     observer: null,
     panel: null,
     shadow: null,
-    els: {},
-    lastStatus: ''
+    els: {}
   };
 
   // ─── Small helpers ──────────────────────────────────────────
@@ -533,7 +530,6 @@
     state.els.dot.className = 'dot' + (kind ? ' ' + kind : '');
     state.els.status.textContent = status;
     state.els.status.classList.toggle('error', kind === 'error');
-    state.lastStatus = status;
     if (translateLabel !== undefined) state.els.translate.textContent = translateLabel;
     if (translateHidden !== undefined) state.els.translate.hidden = !!translateHidden;
     if (cancelHidden !== undefined) state.els.cancel.hidden = !!cancelHidden;
@@ -654,8 +650,6 @@
     state.batchIds = [];
     state.pendingIds = [];
     state.buffer = '';
-    state.doneCount = 0;
-    state.failedCount = 0;
     state.error = '';
     state.errorKind = '';
     state.truncated = false;
