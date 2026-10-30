@@ -1,5 +1,8 @@
 package com.shizuku.translate.service;
 
+import com.shizuku.translate.service.longform.ChunkedTranslationSupport;
+
+import com.shizuku.translate.dto.TokenUsage;
 import com.shizuku.translate.dto.TranslateRequest;
 import com.shizuku.translate.dto.TranslateResponse;
 import com.shizuku.translate.entity.Preset;
@@ -12,6 +15,7 @@ import com.shizuku.translate.repository.PresetRepository;
 import com.shizuku.translate.repository.TranslationCacheRepository;
 import com.shizuku.translate.repository.TranslationRecordRepository;
 import com.shizuku.translate.service.feedback.TranslationFeedbackService;
+import com.shizuku.translate.service.longform.TerminologyService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +31,8 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -79,6 +85,9 @@ class TranslationServiceTest {
     @Mock
     private TranslationFeedbackService feedbackService;
 
+    @Mock
+    private TerminologyService terminologyService;
+
     private User user;
 
     @BeforeEach
@@ -91,7 +100,7 @@ class TranslationServiceTest {
         // the shared mocks injected.
         promptTemplateService = new PromptTemplateService(new AppConfigStub(), new GlossaryService(null), presetRepository);
         service = new TranslationService(aiModelClient, recordRepository, cacheRepository,
-                userService, promptTemplateService, usageService, resultWriter, feedbackService);
+                userService, promptTemplateService, usageService, resultWriter, feedbackService, terminologyService);
         lenient().when(presetRepository.findAll()).thenReturn(List.of(
                 Preset.builder().id(1L).name("NSFW破甲").prompt("preset-rule").build()));
         // The writer normally returns the persisted response; give the mock one so the
@@ -282,12 +291,11 @@ class TranslationServiceTest {
             rec.setId(9L);
             return rec;
         });
-        // Term pre-extraction only runs inside the chunked pipeline; a valid JSON answer keeps
-        // the audit stage a no-op while still proving the pipeline was entered.
-        when(aiModelClient.chat(anyString(), anyString(), any(AiModelConfig.class)))
-                .thenReturn(new AiModelClient.DeepSeekResult(
-                        "[{\"term\":\"甲\",\"translation\":\"甲\",\"type\":\"person\"}]",
-                        new com.shizuku.translate.dto.TokenUsage()));
+        // Term pre-extraction only runs inside the chunked pipeline, so stubbing it is what
+        // proves the pipeline was entered; the extraction logic itself is covered by
+        // TerminologyServiceTest.
+        lenient().when(terminologyService.extractTerms(any(AiModelConfig.class), anyString()))
+                .thenReturn(List.of(new TerminologyService.TermPair("甲", "甲")));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(3);
             Consumer<AiModelClient.StreamCompletion> onComplete = invocation.getArgument(4);
@@ -306,9 +314,9 @@ class TranslationServiceTest {
         service.translateStream("alice", req, false,
                 tokens::add, done::add, error -> { }, () -> { });
 
-        // The pre-extraction call proves the chunked pipeline ran (single-pass never calls chat).
-        verify(aiModelClient, org.mockito.Mockito.atLeastOnce())
-                .chat(anyString(), anyString(), any(AiModelConfig.class));
+        // Single-pass translation never touches the terminology service.
+        verify(terminologyService, org.mockito.Mockito.atLeastOnce())
+                .extractTerms(any(AiModelConfig.class), anyString());
         assertEquals("短文", done.get(0).getTranslatedText());
     }
 
@@ -705,7 +713,7 @@ class TranslationServiceTest {
         // Following the newline rule blindly turned a 20k-char single-line text into one 20k
         // chunk, which no 6000-char budget can hold.
         String noNewlines = "あ".repeat(20000);
-        List<String> chunks = TranslationService.splitIntoChunks(noNewlines, 6000);
+        List<String> chunks = ChunkedTranslationSupport.splitIntoChunks(noNewlines, 6000);
 
         assertTrue(chunks.size() > 1, "a 20k single line must be split, got " + chunks.size() + " chunk(s)");
         for (String chunk : chunks) {
@@ -721,7 +729,7 @@ class TranslationServiceTest {
         for (int i = 0; i < 200; i++) {
             text.append("x".repeat(100)).append('\n');
         }
-        List<String> chunks = TranslationService.splitIntoChunks(text.toString(), 6000);
+        List<String> chunks = ChunkedTranslationSupport.splitIntoChunks(text.toString(), 6000);
 
         // Every chunk but the last should end on a line break.
         for (int i = 0; i < chunks.size() - 1; i++) {
@@ -770,5 +778,36 @@ class TranslationServiceTest {
                         token -> { }, response -> { }, error -> { }, () -> { }, () -> false));
         verify(aiModelClient, never()).chatStreamWithImages(anyString(), anyString(), any(), any(AiModelConfig.class),
                 any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void mergeUsageSumsFieldsAcrossChunks() {
+        TokenUsage a = new TokenUsage();
+        a.setPromptTokens(100);
+        a.setCompletionTokens(200);
+        a.setTotalTokens(300);
+        TokenUsage b = new TokenUsage();
+        b.setPromptTokens(10);
+        b.setCompletionTokens(20);
+        b.setTotalTokens(30);
+
+        TokenUsage merged = service.mergeUsage(a, b);
+        assertEquals(110, merged.getPromptTokens());
+        assertEquals(220, merged.getCompletionTokens());
+        assertEquals(330, merged.getTotalTokens());
+    }
+
+    @Test
+    void mergeUsageHandlesNullSides() {
+        TokenUsage a = new TokenUsage();
+        a.setPromptTokens(1);
+        a.setCompletionTokens(2);
+        a.setTotalTokens(3);
+
+        // Merging against null returns the other side unchanged, so a single chunk
+        // whose usage is present still records correctly.
+        assertSame(a, service.mergeUsage(a, null));
+        assertSame(a, service.mergeUsage(null, a));
+        assertNull(service.mergeUsage(null, null));
     }
 }
