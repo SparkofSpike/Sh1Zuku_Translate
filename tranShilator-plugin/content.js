@@ -1146,6 +1146,46 @@ function clearMissingHint(el) {
   el.onclick = null;
 }
 
+// 收尾逐槽位核对。
+//
+// validateNumberedStream 依赖 expectedParagraphCount，而它在正文晚于 done
+// 到达、或校验根本没跑（页面未渲染）时是 0 / 不执行；那些段落于是既没有
+// 译文、也不在 missingParagraphIds 里 —— 用户看到的就是一段永久空着的
+// 「没翻完」。这里按 DOM 槽位兜底：任何既没有译文文字、也没有缺失提示的
+// 槽位都登记成缺失，显示可点击补译的提示。
+function reconcileInlineGaps() {
+  if (state.mode !== 'inline') return;
+  const els = state.inlineTransEls || [];
+  if (!els.length) return;
+
+  const missing = new Set(state.missingParagraphIds);
+  let added = 0;
+  els.forEach((el) => {
+    if (!el || !el.dataset || !el.dataset.pid) return;
+    // 有文字说明已经渲染了译文或缺失提示，不用管。
+    if (el.textContent && el.textContent.trim()) return;
+    const id = Number(el.dataset.pid);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (!missing.has(id)) {
+      missing.add(id);
+      added++;
+    }
+  });
+
+  if (added > 0) {
+    state.missingParagraphIds = [...missing].sort((a, b) => a - b);
+    recordContentError('收尾核对发现 ' + added + ' 段没有译文（模型可能漏段），已标记为待补译');
+    rerenderTranslation();
+    return;
+  }
+
+  // 没有新增，但已有清单可能还没画出来（done 早于 DOM 建好）：补画一次。
+  state.missingParagraphIds.forEach((id) => {
+    const el = els.find((item) => item && item.dataset && item.dataset.pid === String(id));
+    if (el && !el.textContent.trim()) makeMissingHint(el, id);
+  });
+}
+
 // Fill the translation divs from JSON Lines entries, mapped by id.
 function renderInlineJsonLines(entries) {
   const transEls = state.inlineTransEls || [];
@@ -2055,6 +2095,14 @@ function finishTranslate(success, errorMsg, data) {
     state.inlineWaitCleanup();
     state.inlineWaitCleanup = null;
   }
+
+  // 收尾逐槽位核对：模型漏段但编号校验漏判时（正文晚于 done 到达、
+  // expectedParagraphCount 为 0 等），那些段落会永久空着。取消不算 ——
+  // 用户主动放弃翻译，不该刷一屏缺失提示。
+  const cancelledByUser = !success && !!errorMsg
+    && (errorMsg.includes('abort') || errorMsg.includes('取消'));
+  if (!cancelledByUser) reconcileInlineGaps();
+
   updateTranslateButton('idle');
 
   if (state.cancelBtn) state.cancelBtn.style.display = 'none';

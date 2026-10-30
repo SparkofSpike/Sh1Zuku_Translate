@@ -422,9 +422,10 @@
     .body { padding: 9px 10px 10px; }
     .status { color: #57606a; min-height: 16px; word-break: break-word; }
     .status.error { color: #cf222e; }
-    .actions { display: flex; gap: 6px; margin-top: 8px; }
+    .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
     button.action {
-      flex: 1;
+      flex: 1 1 calc(50% - 3px);
+      min-width: 72px;
       border: 1px solid rgba(31,35,40,.15);
       border-radius: 6px;
       background: #f6f8fa;
@@ -476,6 +477,7 @@
       '  <div class="status">正在扫描页面…</div>',
       '  <div class="actions">',
       '    <button class="action primary" data-action="translate">翻译本页</button>',
+      '    <button class="action" data-action="repair" hidden>补译缺失</button>',
       '    <button class="action" data-action="cancel" hidden>取消</button>',
       '    <button class="action" data-action="toggle" hidden>显示原文</button>',
       '  </div>',
@@ -493,6 +495,7 @@
       status: shadow.querySelector('.status'),
       body: shadow.querySelector('.body'),
       translate: shadow.querySelector('[data-action="translate"]'),
+      repair: shadow.querySelector('[data-action="repair"]'),
       cancel: shadow.querySelector('[data-action="cancel"]'),
       toggle: shadow.querySelector('[data-action="toggle"]'),
       collapse: shadow.querySelector('[data-action="collapse"]')
@@ -502,7 +505,8 @@
       const button = event.target.closest('[data-action]');
       if (!button) return;
       const action = button.dataset.action;
-      if (action === 'translate') startTranslation(pendingCount() === 0);
+      if (action === 'translate') startTranslation(true);
+      else if (action === 'repair') startTranslation(false);
       else if (action === 'cancel') cancelTranslation();
       else if (action === 'toggle') toggleTranslations();
       else if (action === 'collapse') toggleCollapsed();
@@ -538,13 +542,18 @@
     window.addEventListener('mouseup', () => { dragging = null; });
   }
 
-  function setPanelState(kind, status, { translateLabel, translateHidden, cancelHidden, toggleHidden, toggleLabel } = {}) {
+  function setPanelState(kind, status, { translateLabel, translateHidden, repairLabel, repairHidden, cancelHidden, toggleHidden, toggleLabel } = {}) {
     if (!state.els.panel) return;
+    // While a run is in flight every action except cancel is meaningless:
+    // the repair button must not stay clickable mid-stream.
+    if (kind === 'running' && repairHidden === undefined) repairHidden = true;
     state.els.dot.className = 'dot' + (kind ? ' ' + kind : '');
     state.els.status.textContent = status;
     state.els.status.classList.toggle('error', kind === 'error');
     if (translateLabel !== undefined) state.els.translate.textContent = translateLabel;
     if (translateHidden !== undefined) state.els.translate.hidden = !!translateHidden;
+    if (repairLabel !== undefined && state.els.repair) state.els.repair.textContent = repairLabel;
+    if (repairHidden !== undefined && state.els.repair) state.els.repair.hidden = !!repairHidden;
     if (cancelHidden !== undefined) state.els.cancel.hidden = !!cancelHidden;
     if (toggleHidden !== undefined) state.els.toggle.hidden = !!toggleHidden;
     if (toggleLabel !== undefined) state.els.toggle.textContent = toggleLabel;
@@ -556,13 +565,14 @@
     // 段" and the user never learns why nothing was translated.
     if (state.error && !state.translating) {
       const renderedOnError = countRendered();
-      // Unanswered blocks are a repair target, not a reason to redo the
-      // whole page: only offer "重新翻译" when everything already has a
-      // translation.
       const stillPending = pendingCount();
       setPanelState(state.errorKind || 'error', state.error, {
-        translateLabel: stillPending ? '补译缺失段落' : '重新翻译',
+        translateLabel: '重新翻译',
         translateHidden: false,
+        // Repairing is its own action: it re-asks only for the blocks that
+        // have no translation, without paying for the whole page again.
+        repairLabel: '补译缺失 ' + stillPending + ' 段',
+        repairHidden: stillPending === 0,
         cancelHidden: true,
         toggleHidden: !renderedOnError,
         toggleLabel: state.hidden ? '显示译文' : '显示原文'
@@ -588,6 +598,8 @@
       {
         translateLabel: rendered ? '重新翻译' : '翻译本页',
         translateHidden: !state.blocks.length,
+        repairLabel: '补译缺失 ' + pending + ' 段',
+        repairHidden: pending === 0 || !rendered,
         cancelHidden: true,
         toggleHidden: !rendered,
         toggleLabel: state.hidden ? '显示译文' : '显示原文'
@@ -710,6 +722,7 @@
     for (const block of queue) renderTranslation(block, '翻译中…', { loading: true });
     setPanelState('running', '正在连接翻译服务…', {
       translateHidden: true,
+      repairHidden: true,
       cancelHidden: false,
       toggleHidden: true
     });
@@ -751,7 +764,7 @@
 
   async function cancelTranslation() {
     if (!state.translating) return;
-    setPanelState('running', '正在取消…', { cancelHidden: true });
+    setPanelState('running', '正在取消…', { cancelHidden: true, repairHidden: true });
     await sendToBackground('CANCEL_GITHUB_TRANSLATE');
     // The worker sends GH_CANCELLED; a missing message must not strand
     // the panel, so restore the UI after a short grace period.
@@ -789,6 +802,8 @@
       {
         translateLabel: rendered ? '重新翻译' : '翻译本页',
         translateHidden: false,
+        repairLabel: '补译缺失 ' + pendingCount() + ' 段',
+        repairHidden: pendingCount() === 0,
         cancelHidden: true,
         toggleHidden: !rendered,
         toggleLabel: state.hidden ? '显示译文' : '显示原文'
@@ -821,7 +836,7 @@
   // model skipped kept saying "翻译中…" forever and the page looked stuck.
   function settleMissing(missing) {
     for (const block of missing) {
-      renderTranslation(block, '未返回译文，可点「重新翻译」', { error: true });
+      renderTranslation(block, '未返回译文，可点「补译缺失」重试', { error: true });
     }
   }
 
@@ -839,7 +854,8 @@
         Math.ceil(missing.length / Math.pow(2, state.repairRounds))
       );
       setPanelState('running',
-        '补译遗漏的 ' + missing.length + ' 段…', { cancelHidden: false, toggleHidden: true });
+        '补译遗漏的 ' + missing.length + ' 段…',
+        { cancelHidden: false, toggleHidden: true, repairHidden: true });
       const started = await requestTranslation(missing, { blockLimit: limit });
       // A failed start already reset the panel through failRun.
       if (!started) return;
@@ -855,7 +871,7 @@
       // The re-scan below repaints the panel from updateIdlePanel(). Keep
       // the warning there too, or it is replaced by a cheerful
       // "可翻译 N 段" one tick after the failure.
-      state.error = missing.length + ' 段补译后仍未返回译文，可点「重新翻译」重试';
+      state.error = missing.length + ' 段补译后仍未返回译文，可点「补译缺失」重试';
       state.errorKind = 'error';
     } else if (state.truncated) {
       status += '（部分内容被截断）';
@@ -863,6 +879,8 @@
     setPanelState('done', status, {
       translateLabel: '重新翻译',
       translateHidden: false,
+      repairLabel: '补译缺失 ' + missing.length + ' 段',
+      repairHidden: missing.length === 0,
       cancelHidden: true,
       toggleHidden: !rendered,
       toggleLabel: state.hidden ? '显示译文' : '显示原文'
