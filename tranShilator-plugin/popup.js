@@ -79,6 +79,27 @@ document.addEventListener('DOMContentLoaded', () => {
     return !!(url || '').includes('pixiv.net/novel/');
   }
 
+  // True while the popup was opened on a GitHub tab. The two reads below
+  // (tabs.query here, storage.get further down) resolve in an unspecified
+  // order, and the storage callback re-runs updateInlineOptions() — without
+  // this flag that call sets the inline-scope block back to `block` and the
+  // Pixiv-only "翻译全篇" selector reappears on GitHub pages.
+  let githubMode = false;
+
+  function novelOnlyFields() {
+    return [
+      document.getElementById('displayMode')?.closest('.field'),
+      document.getElementById('inlineOptions'),
+      document.getElementById('presetsGroup')?.closest('.field'),
+      document.getElementById('customPrompt')?.closest('.field'),
+      document.getElementById('autoTranslate')?.closest('.field')
+    ].filter(Boolean);
+  }
+
+  function hideNovelControls() {
+    for (const field of novelOnlyFields()) field.style.display = 'none';
+  }
+
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     const isNovelPage = isPixivNovelUrl(tab?.url);
     const isGithubPage = isGithubUrl(tab?.url);
@@ -93,13 +114,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // The GitHub translator always works on demand; auto-translate and the
     // novel-specific display options would only mislead here.
     if (isGithubPage) {
-      [
-        document.getElementById('displayMode')?.closest('.field'),
-        document.getElementById('inlineOptions'),
-        document.getElementById('presetsGroup')?.closest('.field'),
-        document.getElementById('customPrompt')?.closest('.field'),
-        document.getElementById('autoTranslate')?.closest('.field')
-      ].forEach((field) => { if (field) field.style.display = 'none'; });
+      githubMode = true;
+      hideNovelControls();
+      // Re-assert after any earlier/later storage callback has run.
+      updateInlineOptions();
     }
   });
 
@@ -577,6 +595,12 @@ document.addEventListener('DOMContentLoaded', () => {
     el.addEventListener('change', () => saveSettings(false));
   });
   function updateInlineOptions() {
+    // On GitHub there is no paragraph padding or scope choice: keep the
+    // whole block hidden regardless of the saved display mode.
+    if (githubMode) {
+      inlineOptions.style.display = 'none';
+      return;
+    }
     inlineOptions.style.display = displayModeSelect.value === 'inline' ? 'block' : 'none';
   }
 
