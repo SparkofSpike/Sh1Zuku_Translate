@@ -28,7 +28,7 @@ ShizukuTranslate is an AI translation service for Japanese, Korean, and Chinese 
 
 ### Browser extension
 
-The `tranShilator-plugin/` directory contains the **Pixiv & GitHub Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.4.9` (build metadata in `version.js` is generated from the release commit).
+The `tranShilator-plugin/` directory contains the **Pixiv & GitHub Translator** Chrome/Edge Manifest V3 extension. The current manifest version is `1.5.0` (build metadata in `version.js` is generated from the release commit).
 
 The extension supports:
 
