@@ -355,16 +355,15 @@ internal sealed class UpdateService
         // 跨卷的 Directory.Move 会退化成复制，那就又回到「失败时留下半截目录」的老问题。
         var stagingDirectory = $"{targetDirectory}.staging-{Guid.NewGuid():N}";
 
-        string? updaterBackup = null;
+        // 当前进程的镜像就是一个可用的更新器。包里没有 CheckUpdate.exe 时用它回填，
+        // 否则更新完插件目录里就没有更新器了（下次更新便没有入口）。
+        // 以前这里额外要求「更新器自己就在目标目录内」，但更新器现在总是先把自己
+        // 复制到 %TEMP% 再重启，那个条件恒为 false —— 恰好把要防的情况全部放过。
+        // 正在运行的镜像允许被读复制，从哪里跑都能用。
         var runningUpdater = Environment.ProcessPath;
-        var updaterInTarget = runningUpdater is not null
-            && File.Exists(runningUpdater)
-            && IsPathInside(runningUpdater, targetDirectory);
-
-        if (updaterInTarget)
+        if (runningUpdater is not null && !File.Exists(runningUpdater))
         {
-            updaterBackup = Path.Combine(Path.GetTempPath(), $"pnt-updater-{Guid.NewGuid():N}.exe");
-            File.Copy(runningUpdater!, updaterBackup, overwrite: true);
+            runningUpdater = null;
         }
 
         var hadPreviousVersion = Directory.Exists(targetDirectory);
@@ -379,9 +378,19 @@ internal sealed class UpdateService
                 CopyDirectory(sourceDirectory, stagingDirectory);
                 var packagedUpdater = Path.Combine(sourceDirectory, "CheckUpdate.exe");
                 var stagedUpdater = Path.Combine(stagingDirectory, "CheckUpdate.exe");
-                if (!File.Exists(packagedUpdater) && updaterBackup is not null)
+                if (!File.Exists(packagedUpdater))
                 {
-                    File.Copy(updaterBackup, stagedUpdater, overwrite: true);
+                    if (runningUpdater is not null)
+                    {
+                        File.Copy(runningUpdater, stagedUpdater, overwrite: true);
+                        log("  发布包不含 CheckUpdate.exe，已用当前更新器补齐。\n");
+                    }
+                    else
+                    {
+                        // 无法自愈时至少要说出来：更新后这个目录里将没有更新器。
+                        log("  发布包不含 CheckUpdate.exe，且无法读取当前更新器，"
+                            + "更新后将没有可用的更新器。\n");
+                    }
                 }
             }
             catch
@@ -422,7 +431,6 @@ internal sealed class UpdateService
         }
         finally
         {
-            if (updaterBackup is not null) TryDeleteFile(updaterBackup);
             // 换位成功时 staging 已不存在，这里是 no-op；任何提前失败都要把残留清掉。
             TryDeleteDirectory(stagingDirectory);
         }
@@ -430,13 +438,6 @@ internal sealed class UpdateService
         log(hadPreviousVersion
             ? $"  文件已安装。旧版本备份: {backupDirectory}\n"
             : "  文件已安装。\n");
-    }
-
-    private static bool IsPathInside(string filePath, string directory)
-    {
-        var file = Path.GetFullPath(filePath);
-        var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return file.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void CopyDirectory(string source, string target)
