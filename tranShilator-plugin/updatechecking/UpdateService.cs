@@ -485,33 +485,45 @@ internal sealed class UpdateService
 
         // 备份里带着自包含的更新器，每份约 150 MB。以前每次更新都留一份且从不回收，
         // 更新十次就白占一点多 GB。只保留最新的一份作回滚点。
-        PruneOldBackups(targetDirectory, keep: backupDirectory);
+        //
+        // 本次没有旧版本可备份时一律不删：上一次安装可能死在两次 rename 之间，
+        // 那时旧版本只剩 .backup-* 里那一份，删了就真的找不回来了。
+        if (hadPreviousVersion) PruneOldBackups(targetDirectory, keep: backupDirectory);
     }
 
     /// <summary>
-    /// 删掉 <paramref name="targetDirectory"/> 下除 <paramref name="keep"/> 之外的历史备份。
+    /// 删掉 <paramref name="targetDirectory"/> 下除 <paramref name="keep"/> 之外的旧备份。
     /// 全部 best-effort：删不掉（被占用、权限不足）就留着，不影响安装结果。
     /// </summary>
     private static void PruneOldBackups(string targetDirectory, string keep)
     {
         var parent = Path.GetDirectoryName(targetDirectory)!;
-        var prefix = Path.GetFileName(targetDirectory) + ".backup-";
+        var name = Path.GetFileName(targetDirectory);
+
+        // 只认本方法自己生成的名字：<name>.backup-yyyyMMdd-HHmmss（撞名时再接 -<guid>）。
+        // 用裸前缀匹配会连用户自己的「<name>.backup-manual」「.backup-before-1.6」一起
+        // 递归删掉——那是不折不扣的数据事故，而且悄无声息。
+        var pattern = new Regex(
+            "^" + Regex.Escape(name) + @"\.backup-\d{8}-\d{6}(-[0-9a-f]{32})?$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         string[] candidates;
         try
         {
-            candidates = Directory.GetDirectories(parent, prefix + "*");
+            candidates = Directory.GetDirectories(parent);
         }
         catch
         {
             return;
         }
 
+        var keepPath = Path.TrimEndingDirectorySeparator(keep);
         foreach (var directory in candidates)
         {
+            if (!pattern.IsMatch(Path.GetFileName(directory))) continue;
             if (string.Equals(
                     Path.TrimEndingDirectorySeparator(directory),
-                    Path.TrimEndingDirectorySeparator(keep),
+                    keepPath,
                     StringComparison.OrdinalIgnoreCase))
             {
                 continue;
