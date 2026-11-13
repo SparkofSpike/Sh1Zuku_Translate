@@ -324,7 +324,9 @@ internal sealed class UpdateService
         var expected = digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
             ? digest["sha256:".Length..]
             : digest;
-        var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zipPath))).ToLowerInvariant();
+        // 更新包可以有几十 MB，没必要整份读进内存再算哈希。
+        using var stream = File.OpenRead(zipPath);
+        var actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
         if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("更新包 SHA-256 校验失败，已停止安装。");
