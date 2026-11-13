@@ -139,13 +139,18 @@ internal sealed class UpdateService
     {
         if (!string.IsNullOrWhiteSpace(requestedPath))
         {
-            return Path.GetFullPath(Environment.ExpandEnvironmentVariables(requestedPath));
+            // 必须去掉末尾的分隔符。带末尾反斜杠的路径会让 InstallExtension 拼出
+            // “ext/.staging-<guid>”，也就是把临时目录建在插件目录内部，随后
+            // Directory.Move 直接报「参数错误」，更新永远装不上。
+            // PowerShell 的 Tab 补全会自动带上末尾反斜杠，所以这很容易碰到。
+            return TrimTrailingSeparator(
+                Path.GetFullPath(Environment.ExpandEnvironmentVariables(requestedPath)));
         }
 
         var updaterDirectory = Path.GetFullPath(AppContext.BaseDirectory);
         if (File.Exists(Path.Combine(updaterDirectory, "manifest.json")))
         {
-            return updaterDirectory;
+            return TrimTrailingSeparator(updaterDirectory);
         }
 
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -166,8 +171,14 @@ internal sealed class UpdateService
             }
         }
 
-        return installed;
+        return TrimTrailingSeparator(installed);
     }
+
+    /// <summary>
+    /// 去掉末尾目录分隔符，但保留根目录本身。
+    /// </summary>
+    private static string TrimTrailingSeparator(string path) =>
+        Path.TrimEndingDirectorySeparator(path);
 
     private static HttpClient CreateHttpClient()
     {
@@ -340,6 +351,8 @@ internal sealed class UpdateService
 
     private static void InstallExtension(string sourceDirectory, string targetDirectory, Action<string> log)
     {
+        // 再兼一道：这里拿到的可能是调用方直接传进来的路径。
+        targetDirectory = Path.TrimEndingDirectorySeparator(targetDirectory);
         var parent = Path.GetDirectoryName(targetDirectory)!;
         Directory.CreateDirectory(parent);
 
