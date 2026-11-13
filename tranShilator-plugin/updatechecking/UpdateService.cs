@@ -382,6 +382,43 @@ internal sealed class UpdateService
 
     private static void InstallExtension(string sourceDirectory, string targetDirectory, Action<string> log)
     {
+        // 两个更新器同时安装会互相破坏：两边都做两次 rename，一侧的回滚点可能
+        // 被另一侧的清理删掉，随后这一侧的回滚又因目标已存在而失败，最终报出
+        // 「旧版本完整保存在备份目录中」——一个已经不存在的目录。
+        // 双击很容易触发：父进程把自己复制到 %TEMP% 后立即返回，第二个窗口
+        // 往往在第一个还没弹出来时就起来了。
+        using var gate = new Mutex(initiallyOwned: false, @"Local\ShizukuTranslateUpdater-Install");
+        var owned = false;
+        try
+        {
+            try
+            {
+                owned = gate.WaitOne(TimeSpan.Zero);
+            }
+            catch (AbandonedMutexException)
+            {
+                // 上一个持有者崩在半路。我们已经拿到这把锁，可以继续。
+                owned = true;
+            }
+
+            if (!owned)
+            {
+                // 刻意不是 IOException：那条分支会让用户去关浏览器，而这里的问题是
+                // 另一个窗口在跑。
+                throw new InvalidOperationException(
+                    "另一个更新窗口正在安装，请先关闭多余的窗口再试。");
+            }
+
+            InstallExtensionCore(sourceDirectory, targetDirectory, log);
+        }
+        finally
+        {
+            if (owned) gate.ReleaseMutex();
+        }
+    }
+
+    private static void InstallExtensionCore(string sourceDirectory, string targetDirectory, Action<string> log)
+    {
         // 再兼一道：这里拿到的可能是调用方直接传进来的路径。
         targetDirectory = Path.TrimEndingDirectorySeparator(targetDirectory);
         var parent = Path.GetDirectoryName(targetDirectory)!;
@@ -411,6 +448,18 @@ internal sealed class UpdateService
         }
 
         var hadPreviousVersion = Directory.Exists(targetDirectory);
+
+        // 目标存在、里面有东西、却没有 manifest.json —— 这不是一个扩展目录，
+        // 而下面那一步会把它整个改名成 .backup-* 再播插件进去。用户点错一次
+        // 「选择目录」（比如选了上一层的 PixivNovelTranslator）就能把无关目录弄走，
+        // 而界面上只有一行事后日志。空目录和全新目录照旧允许。
+        if (hadPreviousVersion
+            && !File.Exists(Path.Combine(targetDirectory, "manifest.json"))
+            && Directory.EnumerateFileSystemEntries(targetDirectory).Any())
+        {
+            throw new InvalidOperationException(
+                $"目标目录不是插件目录（没有 manifest.json），已停止安装，未改动任何文件：{targetDirectory}");
+        }
 
         try
         {
