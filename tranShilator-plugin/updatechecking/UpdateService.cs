@@ -482,6 +482,42 @@ internal sealed class UpdateService
         log(hadPreviousVersion
             ? $"  文件已安装。旧版本备份: {backupDirectory}\n"
             : "  文件已安装。\n");
+
+        // 备份里带着自包含的更新器，每份约 150 MB。以前每次更新都留一份且从不回收，
+        // 更新十次就白占一点多 GB。只保留最新的一份作回滚点。
+        PruneOldBackups(targetDirectory, keep: backupDirectory);
+    }
+
+    /// <summary>
+    /// 删掉 <paramref name="targetDirectory"/> 下除 <paramref name="keep"/> 之外的历史备份。
+    /// 全部 best-effort：删不掉（被占用、权限不足）就留着，不影响安装结果。
+    /// </summary>
+    private static void PruneOldBackups(string targetDirectory, string keep)
+    {
+        var parent = Path.GetDirectoryName(targetDirectory)!;
+        var prefix = Path.GetFileName(targetDirectory) + ".backup-";
+
+        string[] candidates;
+        try
+        {
+            candidates = Directory.GetDirectories(parent, prefix + "*");
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var directory in candidates)
+        {
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(directory),
+                    Path.TrimEndingDirectorySeparator(keep),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            TryDeleteDirectory(directory);
+        }
     }
 
     private static void CopyDirectory(string source, string target)
