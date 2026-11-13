@@ -504,8 +504,8 @@ internal sealed class UpdateService
 
     private static int CompareVersions(string left, string right)
     {
-        var a = left.Split('.').Select(int.Parse).ToArray();
-        var b = right.Split('.').Select(int.Parse).ToArray();
+        var a = ParseVersionParts(left);
+        var b = ParseVersionParts(right);
         for (var i = 0; i < Math.Max(a.Length, b.Length); i++)
         {
             var x = i < a.Length ? a[i] : 0;
@@ -514,6 +514,17 @@ internal sealed class UpdateService
         }
         return 0;
     }
+
+    /// <summary>
+    /// 解析版本号里的数字段。NormalizeVersion 只保证「数字和点」，不限位数；
+    /// 某一段超出 int（手写的 tag 就可能）时 int.Parse 会抛 OverflowException，
+    /// 把一次正常的更新检查变成「检查失败」。这里饱和到 int.MaxValue：
+    /// 超长版本号在语义上就是「很大」，比较结果仍然单调。
+    /// </summary>
+    private static int[] ParseVersionParts(string version) =>
+        version.Split('.')
+            .Select(part => int.TryParse(part, out var value) ? value : int.MaxValue)
+            .ToArray();
 
     private static void TryDeleteFile(string path)
     {
