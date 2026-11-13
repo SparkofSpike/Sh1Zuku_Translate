@@ -1,0 +1,72 @@
+name: Updater
+
+# 更新器（tranShilator-plugin/updatechecking，C# / WinForms / 自包含单文件）的构建与产物校验。
+#
+# 为什么单独一个 workflow：这个 exe 被 .gitignore 忽略，后端/前端的 CI 不会碰它，
+# 于是 v1.4.4 / v1.4.7 / v1.5.0 的发布包都复用了 v1.4.3 的二进制 —— 源码里的修复
+# 一个都没到用户手里。这里把「能编译」和「产物确实是当前源码」变成 CI 门禁，
+# 并把构建结果上传成 artifact，发版时直接用，不必依赖本地手工 publish。
+#
+# 发版姿势：gh run download <run-id> --name CheckUpdate-win-x64 -D <dir>
+# 然后把 <dir>/CheckUpdate.exe 打进插件 zip，再用 scripts/verify_updater_package.py 校验。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tranShilator-plugin/updatechecking/**'
+      - 'scripts/verify_updater_package.py'
+      - '.github/workflows/updater.yml'
+  pull_request:
+    paths:
+      - 'tranShilator-plugin/updatechecking/**'
+      - 'scripts/verify_updater_package.py'
+      - '.github/workflows/updater.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 用 Windows runner：这是 WinForms 项目，这是唯一与用户实际运行环境一致的选择。
+    # 跨平台 publish 也能出 win-x64 产物，但没必要为了省 runner 引入差异。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build (warnings are errors)
+        run: dotnet build tranShilator-plugin/updatechecking/CheckUpdate.csproj -c Release -warnaserror
+        shell: pwsh
+
+      - name: Publish the single-file updater
+        run: >
+          dotnet publish tranShilator-plugin/updatechecking/CheckUpdate.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o ${{ runner.temp }}/updater
+        shell: pwsh
+
+      - name: Verify the published binary
+        run: |
+          python scripts/verify_updater_package.py --exe "${{ runner.temp }}/updater/CheckUpdate.exe"
+        shell: pwsh
+
+      - name: Smoke-pack a release zip and verify it end to end
+        run: |
+          python scripts/verify_updater_package.py `
+            --exe "${{ runner.temp }}/updater/CheckUpdate.exe" `
+            --pack "${{ runner.temp }}/smoke/tranShilator-plugin-vsmoke.zip" `
+            --expect-version (Get-Content tranShilator-plugin/manifest.json -Raw | ConvertFrom-Json).version
+        shell: pwsh
+
+      - name: Upload the updater binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: CheckUpdate-win-x64
+          path: ${{ runner.temp }}/updater/CheckUpdate.exe
+          retention-days: 90
+          if-no-files-found: error
