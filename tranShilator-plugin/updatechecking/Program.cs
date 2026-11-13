@@ -76,13 +76,16 @@ internal static class Program
         // 自举就永远不会发生。
 
         var arguments = new List<string> { "--relocated" };
-        // 用户没显式给 --path 时，把「自己脚下」这个目录原样接管过来，
-        // 保证更新目标和双击之前完全一致。
-        if (options.Path is null)
-        {
-            arguments.Add("--path");
-            arguments.Add(currentDirectory);
-        }
+        // 更新目标必须由父进程算好再传下去。不传的话，副本按自己的落点
+        // （%TEMP%\pnt-updater-<guid>，旁边没有 manifest.json）去解析，一路落到
+        // %LOCALAPPDATA% 的默认目录，而用户用 --path 指定的目录自始至终没被碰过，
+        // 界面上还会显示「更新完成」。
+        // 也必须在父进程里绝对化：副本的工作目录已经搬到 %TEMP%，相对路径会指错地方。
+        arguments.Add("--path");
+        arguments.Add(options.Path is null
+            ? currentDirectory
+            : Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(Environment.ExpandEnvironmentVariables(options.Path))));
         if (options.Force) arguments.Add("--force");
         if (options.NoPause) arguments.Add("--no-pause");
 
