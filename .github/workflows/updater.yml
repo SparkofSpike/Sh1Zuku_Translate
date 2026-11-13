@@ -57,10 +57,11 @@ jobs:
 
       - name: Smoke-pack a release zip and verify it end to end
         run: |
+          $version = (Get-Content tranShilator-plugin/manifest.json -Raw | ConvertFrom-Json).version
           python scripts/verify_updater_package.py `
             --exe "${{ runner.temp }}/updater/CheckUpdate.exe" `
             --pack "${{ runner.temp }}/smoke/tranShilator-plugin-vsmoke.zip" `
-            --expect-version (Get-Content tranShilator-plugin/manifest.json -Raw | ConvertFrom-Json).version
+            --expect-version $version
         shell: pwsh
 
       - name: Upload the updater binary

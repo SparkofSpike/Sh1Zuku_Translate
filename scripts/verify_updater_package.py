@@ -32,6 +32,15 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Windows runners default stdout to the legacy code page (cp1252), which cannot
+# encode the Chinese markers this script prints. Force UTF-8 so the report is
+# readable there instead of dying with UnicodeEncodeError.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTENSION_DIR = REPO_ROOT / "tranShilator-plugin"
 
