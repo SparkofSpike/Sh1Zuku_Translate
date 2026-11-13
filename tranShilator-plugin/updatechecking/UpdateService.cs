@@ -449,6 +449,18 @@ internal sealed class UpdateService
 
         var hadPreviousVersion = Directory.Exists(targetDirectory);
 
+        // 目标存在、里面有东西、却没有 manifest.json —— 这不是一个扩展目录，
+        // 而下面那一步会把它整个改名成 .backup-* 再播插件进去。用户点错一次
+        // 「选择目录」（比如选了上一层的 PixivNovelTranslator）就能把无关目录弄走，
+        // 而界面上只有一行事后日志。空目录和全新目录照旧允许。
+        if (hadPreviousVersion
+            && !File.Exists(Path.Combine(targetDirectory, "manifest.json"))
+            && Directory.EnumerateFileSystemEntries(targetDirectory).Any())
+        {
+            throw new InvalidOperationException(
+                $"目标目录不是插件目录（没有 manifest.json），已停止安装，未改动任何文件：{targetDirectory}");
+        }
+
         try
         {
             // 第一阶段：只往 staging 里写。这里出任何错，用户正在用的扩展目录全程
