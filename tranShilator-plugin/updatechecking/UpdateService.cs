@@ -342,7 +342,19 @@ internal sealed class UpdateService
     {
         var parent = Path.GetDirectoryName(targetDirectory)!;
         Directory.CreateDirectory(parent);
-        var backupDirectory = targetDirectory + ".backup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var backupDirectory = $"{targetDirectory}.backup-{stamp}";
+        // 同一秒内跑两次更新时别撞名，否则第一次 rename 会因为目标已存在而失败。
+        if (Directory.Exists(backupDirectory))
+        {
+            backupDirectory = $"{targetDirectory}.backup-{stamp}-{Guid.NewGuid():N}";
+        }
+
+        // 新版本先完整复制到同一卷的同级目录，最后只靠两次 rename 换位。
+        // 跨卷的 Directory.Move 会退化成复制，那就又回到「失败时留下半截目录」的老问题。
+        var stagingDirectory = $"{targetDirectory}.staging-{Guid.NewGuid():N}";
+
         string? updaterBackup = null;
         var runningUpdater = Environment.ProcessPath;
         var updaterInTarget = runningUpdater is not null
@@ -355,32 +367,69 @@ internal sealed class UpdateService
             File.Copy(runningUpdater!, updaterBackup, overwrite: true);
         }
 
+        var hadPreviousVersion = Directory.Exists(targetDirectory);
+
         try
         {
-            if (Directory.Exists(targetDirectory)) Directory.Move(targetDirectory, backupDirectory);
+            // 第一阶段：只往 staging 里写。这里出任何错，用户正在用的扩展目录全程
+            // 没被碰过 —— 不需要回滚，也不可能出现半写状态。异常原样上抛，
+            // 调用方拿到的就是真实原因。
             try
             {
-                CopyDirectory(sourceDirectory, targetDirectory);
+                CopyDirectory(sourceDirectory, stagingDirectory);
                 var packagedUpdater = Path.Combine(sourceDirectory, "CheckUpdate.exe");
-                var installedUpdater = Path.Combine(targetDirectory, "CheckUpdate.exe");
+                var stagedUpdater = Path.Combine(stagingDirectory, "CheckUpdate.exe");
                 if (!File.Exists(packagedUpdater) && updaterBackup is not null)
                 {
-                    File.Copy(updaterBackup, installedUpdater, overwrite: true);
+                    File.Copy(updaterBackup, stagedUpdater, overwrite: true);
                 }
             }
             catch
             {
-                TryDeleteDirectory(targetDirectory);
-                if (Directory.Exists(backupDirectory)) Directory.Move(backupDirectory, targetDirectory);
+                TryDeleteDirectory(stagingDirectory);
+                throw;
+            }
+
+            // 第二阶段：两次 rename 换位。第一次失败时源目录原样保留，是干净的 no-op。
+            if (hadPreviousVersion) Directory.Move(targetDirectory, backupDirectory);
+
+            try
+            {
+                Directory.Move(stagingDirectory, targetDirectory);
+            }
+            catch (Exception swapError)
+            {
+                // 新版本没能就位，旧版本必须回去。
+                if (hadPreviousVersion)
+                {
+                    try
+                    {
+                        Directory.Move(backupDirectory, targetDirectory);
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        // 回滚也失败：把两条异常都带上。以前这里吞掉回滚异常，
+                        // 用户只会看到「目标已存在」，真实原因（复制失败）反而被盖住。
+                        throw new AggregateException(
+                            "新版本安装失败，且旧版本回滚也失败。扩展目录可能不完整；"
+                            + "旧版本完整保存在备份目录中，可手动改名恢复。",
+                            swapError,
+                            rollbackError);
+                    }
+                }
                 throw;
             }
         }
         finally
         {
             if (updaterBackup is not null) TryDeleteFile(updaterBackup);
+            // 换位成功时 staging 已不存在，这里是 no-op；任何提前失败都要把残留清掉。
+            TryDeleteDirectory(stagingDirectory);
         }
 
-        log($"  文件已安装。旧版本备份: {backupDirectory}\n");
+        log(hadPreviousVersion
+            ? $"  文件已安装。旧版本备份: {backupDirectory}\n"
+            : "  文件已安装。\n");
     }
 
     private static bool IsPathInside(string filePath, string directory)
@@ -439,7 +488,29 @@ internal sealed class UpdateService
 
     private static void TryDeleteDirectory(string path)
     {
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
+        try
+        {
+            if (!Directory.Exists(path)) return;
+            Directory.Delete(path, recursive: true);
+            return;
+        }
+        catch
+        {
+            // File.Copy 会把只读属性一起带过来，递归删除遇到只读文件会直接失败。
+            // 清掉属性再试一次；仍然删不掉就放弃 —— 这里本来就在失败路径上，
+            // 不能再抛异常把原始错误盖掉。
+        }
+
+        try
+        {
+            if (!Directory.Exists(path)) return;
+            foreach (var file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+            }
+            Directory.Delete(path, recursive: true);
+        }
+        catch { }
     }
 
     private sealed record ReleaseInfo(string Version, ReleaseAsset Asset);
