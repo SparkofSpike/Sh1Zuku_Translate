@@ -117,7 +117,14 @@ internal sealed class UpdateService
             // 只有真的是文件占用类问题才让人去关浏览器。这句以前是无条件打印的，
             // 于是任何失败（网络、磁盘、权限）都被误报成「插件正在使用」，
             // 用户关浏览器、重启都无济于事。
-            if (error is IOException || error is UnauthorizedAccessException)
+            //
+            // 注意 HttpIOException 是 IOException 的子类：下载中途断线抛的就是它，
+            // 所以必须先把它挑出来，否则网络问题还是会命中下面那条「去关浏览器」。
+            if (error is HttpIOException)
+            {
+                log("下载过程中连接中断，请检查网络后重试。\n");
+            }
+            else if (error is IOException || error is UnauthorizedAccessException)
             {
                 log("看起来是文件被占用或没有写入权限。请确认浏览器已完全退出"
                     + "（任务管理器里不应有 msedge.exe），并确认对插件目录有写权限。\n");
@@ -183,13 +190,39 @@ internal sealed class UpdateService
         return client;
     }
 
+    /// <summary>
+    /// 把 API 失败转成用户能行动的说明。403/429 最常见的原因不是网络、也不是
+    /// 仓库私有，而是匿名调用被打满了配额（未认证每小时 60 次/IP）：用户看到
+    /// 「确认仓库为公开状态」时无从下手，只能一遍遍重试。
+    /// </summary>
+    private static string DescribeApiFailure(HttpResponseMessage response)
+    {
+        var status = (int)response.StatusCode;
+        var remaining = response.Headers.TryGetValues("X-RateLimit-Remaining", out var remainingValues)
+            ? remainingValues.FirstOrDefault()?.Trim()
+            : null;
+
+        if ((status == 403 || status == 429) && remaining == "0")
+        {
+            var minutes = string.Empty;
+            if (response.Headers.TryGetValues("X-RateLimit-Reset", out var resetValues)
+                && long.TryParse(resetValues.FirstOrDefault(), out var epoch))
+            {
+                var wait = DateTimeOffset.FromUnixTimeSeconds(epoch) - DateTimeOffset.Now;
+                minutes = $"约 {Math.Max(1, (int)Math.Ceiling(wait.TotalMinutes))} 分钟后";
+            }
+            return $"GitHub API 的匿名额度（每小时 60 次）已用完，请{minutes}重试。\n{ReleasePage}";
+        }
+
+        return $"无法访问 GitHub Release API（HTTP {status}）。请检查网络，或确认仓库为公开状态。\n{ReleasePage}";
+    }
+
     private static async Task<ReleaseInfo> GetLatestReleaseAsync(HttpClient client)
     {
         using var response = await client.GetAsync(ApiUrl, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"无法访问 GitHub Release API（HTTP {(int)response.StatusCode}）。请检查网络，或确认仓库为公开状态。\n{ReleasePage}");
+            throw new InvalidOperationException(DescribeApiFailure(response));
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync();
@@ -291,7 +324,9 @@ internal sealed class UpdateService
         var expected = digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
             ? digest["sha256:".Length..]
             : digest;
-        var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zipPath))).ToLowerInvariant();
+        // 更新包可以有几十 MB，没必要整份读进内存再算哈希。
+        using var stream = File.OpenRead(zipPath);
+        var actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
         if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("更新包 SHA-256 校验失败，已停止安装。");
@@ -471,8 +506,8 @@ internal sealed class UpdateService
 
     private static int CompareVersions(string left, string right)
     {
-        var a = left.Split('.').Select(int.Parse).ToArray();
-        var b = right.Split('.').Select(int.Parse).ToArray();
+        var a = ParseVersionParts(left);
+        var b = ParseVersionParts(right);
         for (var i = 0; i < Math.Max(a.Length, b.Length); i++)
         {
             var x = i < a.Length ? a[i] : 0;
@@ -481,6 +516,17 @@ internal sealed class UpdateService
         }
         return 0;
     }
+
+    /// <summary>
+    /// 解析版本号里的数字段。NormalizeVersion 只保证「数字和点」，不限位数；
+    /// 某一段超出 int（手写的 tag 就可能）时 int.Parse 会抛 OverflowException，
+    /// 把一次正常的更新检查变成「检查失败」。这里饱和到 int.MaxValue：
+    /// 超长版本号在语义上就是「很大」，比较结果仍然单调。
+    /// </summary>
+    private static int[] ParseVersionParts(string version) =>
+        version.Split('.')
+            .Select(part => int.TryParse(part, out var value) ? value : int.MaxValue)
+            .ToArray();
 
     private static void TryDeleteFile(string path)
     {

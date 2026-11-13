@@ -22,6 +22,7 @@ internal sealed class UpdateForm : Form
     private bool _running;
     private bool _started;
     private bool _settingPath;
+    private bool _installing;
 
     public UpdateForm(UpdateOptions options)
     {
@@ -328,6 +329,7 @@ internal sealed class UpdateForm : Form
     {
         if (_running || _lastCheck is null || !_lastCheck.Success || !_lastCheck.UpdateAvailable) return;
         _running = true;
+        _installing = true;
         SetBusy(true);
         _statusLabel.Text = "正在更新...";
         _statusLabel.ForeColor = Color.FromArgb(55, 60, 70);
@@ -352,9 +354,26 @@ internal sealed class UpdateForm : Form
         finally
         {
             _running = false;
+            _installing = false;
             SetBusy(false);
             _progressBar.Visible = false;
         }
+    }
+
+    /// <summary>
+    /// 安装阶段不接受用户关闭窗口：进程被终止时如果恰好卡在两步 rename 之间，
+    /// 扩展目录会不存在，而完整内容躺在 .backup-* 里没人告诉用户。
+    /// 任务管理器仍然可以强杀，那是有意保留的逃生口。
+    /// </summary>
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (_installing && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            _summaryLabel.Text = "正在安装更新，完成前无法关闭窗口。";
+            return;
+        }
+        base.OnFormClosing(e);
     }
 
     private void SetUpdateButtonEnabled(bool enabled)
@@ -377,7 +396,12 @@ internal sealed class UpdateForm : Form
         if (_progressBar.IsDisposed) return;
         if (_progressBar.InvokeRequired)
         {
-            _progressBar.BeginInvoke(new Action<int?>(SetProgress), value);
+            // 检查通过到 BeginInvoke 之间窗口可能已被销毁，那时会抛
+            // ObjectDisposedException / InvalidOperationException。进度只是展示，
+            // 不能让它把更新流程的异常处理再掀翻一次。
+            try { _progressBar.BeginInvoke(new Action<int?>(SetProgress), value); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
             return;
         }
 
@@ -447,7 +471,11 @@ internal sealed class UpdateForm : Form
         if (_logBox.IsDisposed) return;
         if (_logBox.InvokeRequired)
         {
-            _logBox.BeginInvoke(new Action<string>(AppendLog), text);
+            // 同上：窗口销毁后 BeginInvoke 会抛，而日志回调是在异常处理路径里
+            // 被调用的，在那里再抛一次就会变成未处理异常。
+            try { _logBox.BeginInvoke(new Action<string>(AppendLog), text); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
             return;
         }
         _logBox.AppendText(text.Replace("\r", string.Empty));
