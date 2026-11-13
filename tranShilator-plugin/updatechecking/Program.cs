@@ -93,7 +93,15 @@ internal static class Program
             var relocated = Path.Combine(relocatedDirectory, Path.GetFileName(self));
             File.Copy(self, relocated, overwrite: true);
 
-            var startInfo = new ProcessStartInfo(relocated) { UseShellExecute = false };
+            // 关键：不设 WorkingDirectory 时，子进程会继承父进程的当前目录，也就是插件目录。
+            // Windows 会为每个进程的当前目录保持一个不共享删除权限的句柄，于是副本虽然跑在
+            // %TEMP%，更新时对插件目录做 Directory.Move 依旧报「另一个进程正在使用此文件」——
+            // 和没有搬迁时一模一样。工作目录必须跟着一起搬到临时目录。
+            var startInfo = new ProcessStartInfo(relocated)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = relocatedDirectory
+            };
             foreach (var argument in arguments)
             {
                 startInfo.ArgumentList.Add(argument);
@@ -101,9 +109,17 @@ internal static class Program
             Process.Start(startInfo);
             return true;
         }
-        catch
+        catch (Exception error)
         {
-            // 搬迁失败就在原地照旧跑：退回原来的行为，而不是什么都不做。
+            // 退回原地运行时，只要更新目标就是当前目录，更新必定以「文件被占用」失败。
+            // 这条以前是静默吞掉的，用户只会看到一条误导性的占用提示，所以必须说出来。
+            MessageBox.Show(
+                "无法把更新器临时复制到系统临时目录，将继续在当前位置运行。\n"
+                + "如果更新目录正是当前目录，更新会失败。\n\n"
+                + error.Message,
+                "CheckUpdate",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
             return false;
         }
     }
