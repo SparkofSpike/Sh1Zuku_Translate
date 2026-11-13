@@ -88,6 +88,11 @@ internal static class Program
 
         try
         {
+            // 自举在 %TEMP% 留下一份约 150MB 的副本，而正在运行的进程删不掉自己
+            // 所在的目录，所以只能等下一次运行时回收。更新的频率远低于一天一次，
+            // 用一天的阈值就不会碰到另一个正在运行的实例。
+            PruneStaleRelocatedCopies(TimeSpan.FromDays(1));
+
             var relocatedDirectory = Path.Combine(Path.GetTempPath(), "pnt-updater-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(relocatedDirectory);
             var relocated = Path.Combine(relocatedDirectory, Path.GetFileName(self));
@@ -121,6 +126,42 @@ internal static class Program
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 清掉早于 <paramref name="minimumAge"/> 的自举残留目录。
+    /// 全部 best-effort：删不掉（另一个实例在用、权限不足）就留着，不影响本次自举。
+    /// </summary>
+    private static void PruneStaleRelocatedCopies(TimeSpan minimumAge)
+    {
+        const string Prefix = "pnt-updater-";
+
+        string[] candidates;
+        try
+        {
+            candidates = Directory.GetDirectories(Path.GetTempPath(), Prefix + "*");
+        }
+        catch
+        {
+            return;
+        }
+
+        var cutoff = DateTime.UtcNow - minimumAge;
+        foreach (var directory in candidates)
+        {
+            try
+            {
+                // 目录名必须是自举生成的 GUID（"N" 格式，32 位），别人的同名目录不碰。
+                var name = Path.GetFileName(directory);
+                if (name.Length != Prefix.Length + 32) continue;
+                if (Directory.GetCreationTimeUtc(directory) > cutoff) continue;
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // 删不掉就跳过。
+            }
         }
     }
 }
