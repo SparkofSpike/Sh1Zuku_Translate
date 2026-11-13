@@ -167,15 +167,11 @@ internal sealed class UpdateService
         var legacy = Path.Combine(localAppData, "PixivNovelTranslator", "pixiv-novel-translator");
         if (File.Exists(Path.Combine(legacy, "manifest.json")))
         {
-            try
-            {
-                Directory.Move(legacy, installed);
-                return installed;
-            }
-            catch
-            {
-                return legacy;
-            }
+            // 只解析路径，不在这里迁移目录。这个方法「检查更新」也会调用，
+            // 在检查阶段改文件系统会让用户的扩展在没点更新时就不见了：
+            // 未打包扩展是按路径加载的，目录一改名浏览器就找不到它。
+            // 原位更新即可，新旧布局对 InstallExtension 没有区别。
+            return TrimTrailingSeparator(legacy);
         }
 
         return TrimTrailingSeparator(installed);
