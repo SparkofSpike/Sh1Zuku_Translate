@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
@@ -65,7 +65,7 @@ jobs:
         shell: pwsh
 
       - name: Upload the updater binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CheckUpdate-win-x64
           path: ${{ runner.temp }}/updater/CheckUpdate.exe
